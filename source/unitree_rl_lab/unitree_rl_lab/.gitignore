@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Envs
+.env
+.venv/
+env/
+*.egg-info/
+
+# Logs / checkpoints / videos
+logs/
+outputs/
+wandb/
+runs/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.mp4
+*.avi
+
+# Isaac / temp
+tmp/
+cache/

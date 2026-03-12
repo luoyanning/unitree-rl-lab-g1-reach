@@ -404,9 +404,3 @@ class RobotPlayEnvCfg(RobotEnvCfg):
         self.scene.terrain.terrain_generator.num_rows = 2
         self.scene.terrain.terrain_generator.num_cols = 10
         self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges
-
-        # Make the recorded viewport camera follow the robot
-        self.viewer.origin_type = "asset_root"
-        self.viewer.asset_name = "robot"
-        self.viewer.eye = (3.6, -3.4, 1.9)
-        self.viewer.lookat = (0.0, 0.0, 0.65)

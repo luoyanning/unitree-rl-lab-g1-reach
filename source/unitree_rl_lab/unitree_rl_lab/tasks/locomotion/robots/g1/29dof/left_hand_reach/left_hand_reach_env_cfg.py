@@ -1,3 +1,4 @@
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
@@ -7,13 +8,20 @@ from isaaclab.utils import configclass
 import isaaclab_tasks.manager_based.manipulation.reach.mdp as reach_mdp
 
 from unitree_rl_lab.tasks.locomotion import mdp
+from ..velocity_env_cfg import CurriculumCfg as BaseCurriculumCfg
 from ..velocity_env_cfg import RobotEnvCfg
 
-from .left_hand_reach_mdp import position_command_error_obs, reach_success, root_planar_drift_l2
+from .left_hand_reach_mdp import left_hand_target_pos_levels, position_command_error_obs, reach_success, root_planar_drift_l2
 
 
 LEFT_HAND_BODY_NAME = "left_wrist_yaw_link"
 LEFT_HAND_COMMAND_NAME = "left_hand_pose"
+LEFT_HAND_REACH_START_POS_X = (0.25, 0.42)
+LEFT_HAND_REACH_FINAL_POS_X = (0.25, 0.52)
+LEFT_HAND_REACH_START_POS_Y = (0.10, 0.30)
+LEFT_HAND_REACH_FINAL_POS_Y = (0.08, 0.34)
+LEFT_HAND_REACH_START_POS_Z = (0.18, 0.34)
+LEFT_HAND_REACH_FINAL_POS_Z = (0.15, 0.36)
 LEFT_HAND_REACH_JOINTS = [
     "waist_.*_joint",
     ".*_hip_.*_joint",
@@ -26,8 +34,27 @@ LEFT_HAND_REACH_JOINTS = [
 
 
 @configclass
+class LeftHandReachCurriculumCfg(BaseCurriculumCfg):
+    left_hand_target_levels = CurrTerm(
+        func=left_hand_target_pos_levels,
+        params={
+            "command_name": LEFT_HAND_COMMAND_NAME,
+            "num_curriculum_episodes": 30,
+            "start_pos_x": LEFT_HAND_REACH_START_POS_X,
+            "final_pos_x": LEFT_HAND_REACH_FINAL_POS_X,
+            "start_pos_y": LEFT_HAND_REACH_START_POS_Y,
+            "final_pos_y": LEFT_HAND_REACH_FINAL_POS_Y,
+            "start_pos_z": LEFT_HAND_REACH_START_POS_Z,
+            "final_pos_z": LEFT_HAND_REACH_FINAL_POS_Z,
+        },
+    )
+
+
+@configclass
 class RobotLeftHandReachEnvCfg(RobotEnvCfg):
-    """Stage-2 standing reach task with limited balance-adjusting leg support."""
+    """Stage-2.1 standing reach task with easier early targets and slightly freer leg support."""
+
+    curriculum: LeftHandReachCurriculumCfg = LeftHandReachCurriculumCfg()
 
     def __post_init__(self):
         super().__post_init__()
@@ -51,9 +78,9 @@ class RobotLeftHandReachEnvCfg(RobotEnvCfg):
             resampling_time_range=(4.0, 4.0),
             debug_vis=True,
             ranges=reach_mdp.UniformPoseCommandCfg.Ranges(
-                pos_x=(0.25, 0.52),
-                pos_y=(0.08, 0.34),
-                pos_z=(0.15, 0.36),
+                pos_x=LEFT_HAND_REACH_START_POS_X,
+                pos_y=LEFT_HAND_REACH_START_POS_Y,
+                pos_z=LEFT_HAND_REACH_START_POS_Z,
                 roll=(0.0, 0.0),
                 pitch=(0.0, 0.0),
                 yaw=(-0.75, 0.75),
@@ -88,8 +115,8 @@ class RobotLeftHandReachEnvCfg(RobotEnvCfg):
         self.rewards.gait = None
         self.rewards.feet_clearance = None
         self.rewards.joint_deviation_arms = None
-        self.rewards.joint_deviation_legs.weight = -0.2
-        self.rewards.joint_deviation_waists.weight = -0.2
+        self.rewards.joint_deviation_legs.weight = -0.12
+        self.rewards.joint_deviation_waists.weight = -0.3
         self.rewards.feet_slide.weight = -0.05
         self.rewards.action_rate.weight = -0.02
         self.rewards.base_planar_drift = RewTerm(
@@ -144,6 +171,10 @@ class RobotLeftHandReachPlayEnvCfg(RobotLeftHandReachEnvCfg):
         self.viewer.eye = (3.6, -3.4, 1.9)
         self.viewer.lookat = (0.0, 0.0, 0.65)
 
+        self.commands.left_hand_pose.ranges.pos_x = LEFT_HAND_REACH_FINAL_POS_X
+        self.commands.left_hand_pose.ranges.pos_y = LEFT_HAND_REACH_FINAL_POS_Y
+        self.commands.left_hand_pose.ranges.pos_z = LEFT_HAND_REACH_FINAL_POS_Z
+        self.curriculum.left_hand_target_levels = None
         self.observations.policy.enable_corruption = False
         self.events.push_robot = None
         self.events.base_external_force_torque = None

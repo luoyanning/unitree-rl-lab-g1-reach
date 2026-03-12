@@ -135,125 +135,125 @@ class RobotBenchmarkSceneCfg(InteractiveSceneCfg):
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
 
     table_top = _kinematic_cuboid(
-        prim_path="{ENV_REGEX_NS}/Table/top",
+        prim_path="{ENV_REGEX_NS}/Table_top",
         size=(0.90, 0.60, 0.04),
         pos=(0.95, 0.0, 0.76),
         color=(0.56, 0.43, 0.30),
     )
     table_leg_front_left = _kinematic_cuboid(
-        prim_path="{ENV_REGEX_NS}/Table/leg_front_left",
+        prim_path="{ENV_REGEX_NS}/Table_leg_front_left",
         size=(0.05, 0.05, 0.74),
         pos=(0.58, 0.24, 0.37),
         color=(0.24, 0.24, 0.26),
     )
     table_leg_front_right = _kinematic_cuboid(
-        prim_path="{ENV_REGEX_NS}/Table/leg_front_right",
+        prim_path="{ENV_REGEX_NS}/Table_leg_front_right",
         size=(0.05, 0.05, 0.74),
         pos=(0.58, -0.24, 0.37),
         color=(0.24, 0.24, 0.26),
     )
     table_leg_back_left = _kinematic_cuboid(
-        prim_path="{ENV_REGEX_NS}/Table/leg_back_left",
+        prim_path="{ENV_REGEX_NS}/Table_leg_back_left",
         size=(0.05, 0.05, 0.74),
         pos=(1.32, 0.24, 0.37),
         color=(0.24, 0.24, 0.26),
     )
     table_leg_back_right = _kinematic_cuboid(
-        prim_path="{ENV_REGEX_NS}/Table/leg_back_right",
+        prim_path="{ENV_REGEX_NS}/Table_leg_back_right",
         size=(0.05, 0.05, 0.74),
         pos=(1.32, -0.24, 0.37),
         color=(0.24, 0.24, 0.26),
     )
 
     shelf_left_post_front = _kinematic_cuboid(
-        prim_path="{ENV_REGEX_NS}/Shelf/left_post_front",
+        prim_path="{ENV_REGEX_NS}/Shelf_left_post_front",
         size=(0.05, 0.05, 1.30),
         pos=(1.34, -0.63, 0.65),
         color=(0.30, 0.34, 0.38),
     )
     shelf_left_post_back = _kinematic_cuboid(
-        prim_path="{ENV_REGEX_NS}/Shelf/left_post_back",
+        prim_path="{ENV_REGEX_NS}/Shelf_left_post_back",
         size=(0.05, 0.05, 1.30),
         pos=(1.34, -0.97, 0.65),
         color=(0.30, 0.34, 0.38),
     )
     shelf_right_post_front = _kinematic_cuboid(
-        prim_path="{ENV_REGEX_NS}/Shelf/right_post_front",
+        prim_path="{ENV_REGEX_NS}/Shelf_right_post_front",
         size=(0.05, 0.05, 1.30),
         pos=(1.82, -0.63, 0.65),
         color=(0.30, 0.34, 0.38),
     )
     shelf_right_post_back = _kinematic_cuboid(
-        prim_path="{ENV_REGEX_NS}/Shelf/right_post_back",
+        prim_path="{ENV_REGEX_NS}/Shelf_right_post_back",
         size=(0.05, 0.05, 1.30),
         pos=(1.82, -0.97, 0.65),
         color=(0.30, 0.34, 0.38),
     )
     shelf_level_low = _kinematic_cuboid(
-        prim_path="{ENV_REGEX_NS}/Shelf/level_low",
+        prim_path="{ENV_REGEX_NS}/Shelf_level_low",
         size=(0.56, 0.36, 0.04),
         pos=(1.58, -0.80, 0.40),
         color=(0.46, 0.49, 0.52),
     )
     shelf_level_mid = _kinematic_cuboid(
-        prim_path="{ENV_REGEX_NS}/Shelf/level_mid",
+        prim_path="{ENV_REGEX_NS}/Shelf_level_mid",
         size=(0.56, 0.36, 0.04),
         pos=(1.58, -0.80, 0.84),
         color=(0.46, 0.49, 0.52),
     )
     shelf_level_top = _kinematic_cuboid(
-        prim_path="{ENV_REGEX_NS}/Shelf/level_top",
+        prim_path="{ENV_REGEX_NS}/Shelf_level_top",
         size=(0.56, 0.36, 0.04),
         pos=(1.58, -0.80, 1.28),
         color=(0.46, 0.49, 0.52),
     )
 
     target_table_front_left = _kinematic_sphere(
-        prim_path="{ENV_REGEX_NS}/Targets/target_table_front_left",
+        prim_path="{ENV_REGEX_NS}/Target_table_front_left",
         radius=0.04,
         pos=(0.78, 0.18, 0.82),
         color=(0.93, 0.24, 0.21),
     )
     target_table_front_right = _kinematic_cuboid(
-        prim_path="{ENV_REGEX_NS}/Targets/target_table_front_right",
+        prim_path="{ENV_REGEX_NS}/Target_table_front_right",
         size=(0.06, 0.06, 0.06),
         pos=(0.78, -0.18, 0.81),
         color=(0.15, 0.55, 0.87),
     )
     target_table_back_left = _kinematic_cylinder(
-        prim_path="{ENV_REGEX_NS}/Targets/target_table_back_left",
+        prim_path="{ENV_REGEX_NS}/Target_table_back_left",
         radius=0.035,
         height=0.10,
         pos=(1.12, 0.18, 0.83),
         color=(0.97, 0.76, 0.12),
     )
     target_table_back_right = _kinematic_cuboid(
-        prim_path="{ENV_REGEX_NS}/Targets/target_table_back_right",
+        prim_path="{ENV_REGEX_NS}/Target_table_back_right",
         size=(0.07, 0.07, 0.05),
         pos=(1.12, -0.16, 0.805),
         color=(0.27, 0.77, 0.42),
     )
     target_shelf_low_inner = _kinematic_sphere(
-        prim_path="{ENV_REGEX_NS}/Targets/target_shelf_low_inner",
+        prim_path="{ENV_REGEX_NS}/Target_shelf_low_inner",
         radius=0.04,
         pos=(1.48, -0.80, 0.46),
         color=(0.88, 0.38, 0.75),
     )
     target_shelf_mid_inner = _kinematic_cylinder(
-        prim_path="{ENV_REGEX_NS}/Targets/target_shelf_mid_inner",
+        prim_path="{ENV_REGEX_NS}/Target_shelf_mid_inner",
         radius=0.03,
         height=0.10,
         pos=(1.58, -0.72, 0.91),
         color=(0.96, 0.58, 0.15),
     )
     target_shelf_mid_outer = _kinematic_cuboid(
-        prim_path="{ENV_REGEX_NS}/Targets/target_shelf_mid_outer",
+        prim_path="{ENV_REGEX_NS}/Target_shelf_mid_outer",
         size=(0.07, 0.05, 0.08),
         pos=(1.69, -0.88, 0.90),
         color=(0.20, 0.79, 0.79),
     )
     target_shelf_top_center = _kinematic_sphere(
-        prim_path="{ENV_REGEX_NS}/Targets/target_shelf_top_center",
+        prim_path="{ENV_REGEX_NS}/Target_shelf_top_center",
         radius=0.045,
         pos=(1.58, -0.80, 1.345),
         color=(0.91, 0.20, 0.32),

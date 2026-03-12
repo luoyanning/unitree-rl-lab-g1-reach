@@ -5,8 +5,15 @@ export UNITREE_RL_LAB_PATH="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/nul
 if ! [[ -z "${CONDA_PREFIX}" ]]; then
     python_exe=${CONDA_PREFIX}/bin/python
 else
-    echo "[Error] No conda environment activated. Please activate the conda environment first."
-    # exit 1
+    if command -v python3 >/dev/null 2>&1; then
+        python_exe=$(command -v python3)
+    elif command -v python >/dev/null 2>&1; then
+        python_exe=$(command -v python)
+    else
+        echo "[Error] No Python interpreter found. Please install python3 or activate a conda environment."
+        exit 1
+    fi
+    echo "[Info] No conda environment detected. Falling back to: ${python_exe}"
 fi
 
 

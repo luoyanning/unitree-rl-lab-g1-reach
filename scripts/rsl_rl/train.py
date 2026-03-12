@@ -102,6 +102,7 @@ from isaaclab.envs import (
     ManagerBasedRLEnvCfg,
     multi_agent_to_single_agent,
 )
+from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_yaml
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
@@ -115,6 +116,19 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
+
+
+def resolve_resume_path(
+    log_root_path: str,
+    load_run: str | None,
+    load_checkpoint: str | None,
+) -> str:
+    """Resolve resume checkpoint from either an explicit path or a task log directory."""
+    if load_checkpoint is not None:
+        has_path_hint = any(sep in load_checkpoint for sep in [os.path.sep, os.path.altsep] if sep is not None)
+        if has_path_hint or os.path.exists(os.path.expanduser(load_checkpoint)):
+            return retrieve_file_path(load_checkpoint)
+    return get_checkpoint_path(log_root_path, load_run, load_checkpoint)
 
 
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
@@ -163,7 +177,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # save resume path before creating a new log_dir
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
-        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+        resume_path = resolve_resume_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
     # wrap for video recording
     if args_cli.video:

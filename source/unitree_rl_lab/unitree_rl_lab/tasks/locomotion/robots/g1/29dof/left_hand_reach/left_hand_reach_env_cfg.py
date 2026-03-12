@@ -11,17 +11,25 @@ from unitree_rl_lab.tasks.locomotion import mdp
 from ..velocity_env_cfg import CurriculumCfg as BaseCurriculumCfg
 from ..velocity_env_cfg import RobotEnvCfg
 
-from .left_hand_reach_mdp import left_hand_target_pos_levels, position_command_error_obs, reach_success, root_planar_drift_l2
+from .left_hand_reach_mdp import (
+    left_hand_target_pos_levels,
+    position_command_error_obs,
+    reach_success,
+    target_relative_base_stance_l2,
+)
 
 
 LEFT_HAND_BODY_NAME = "left_wrist_yaw_link"
 LEFT_HAND_COMMAND_NAME = "left_hand_pose"
 LEFT_HAND_REACH_START_POS_X = (0.25, 0.42)
-LEFT_HAND_REACH_FINAL_POS_X = (0.25, 0.52)
+LEFT_HAND_REACH_MID_POS_X = (0.30, 0.56)
+LEFT_HAND_REACH_FINAL_POS_X = (0.25, 0.68)
 LEFT_HAND_REACH_START_POS_Y = (0.10, 0.30)
-LEFT_HAND_REACH_FINAL_POS_Y = (0.08, 0.34)
+LEFT_HAND_REACH_MID_POS_Y = (0.08, 0.32)
+LEFT_HAND_REACH_FINAL_POS_Y = (0.06, 0.40)
 LEFT_HAND_REACH_START_POS_Z = (0.18, 0.34)
-LEFT_HAND_REACH_FINAL_POS_Z = (0.15, 0.36)
+LEFT_HAND_REACH_MID_POS_Z = (0.08, 0.34)
+LEFT_HAND_REACH_FINAL_POS_Z = (0.05, 0.40)
 LEFT_HAND_REACH_JOINTS = [
     "waist_.*_joint",
     ".*_hip_.*_joint",
@@ -39,12 +47,15 @@ class LeftHandReachCurriculumCfg(BaseCurriculumCfg):
         func=left_hand_target_pos_levels,
         params={
             "command_name": LEFT_HAND_COMMAND_NAME,
-            "num_curriculum_episodes": 30,
+            "num_curriculum_episodes": 45,
             "start_pos_x": LEFT_HAND_REACH_START_POS_X,
+            "mid_pos_x": LEFT_HAND_REACH_MID_POS_X,
             "final_pos_x": LEFT_HAND_REACH_FINAL_POS_X,
             "start_pos_y": LEFT_HAND_REACH_START_POS_Y,
+            "mid_pos_y": LEFT_HAND_REACH_MID_POS_Y,
             "final_pos_y": LEFT_HAND_REACH_FINAL_POS_Y,
             "start_pos_z": LEFT_HAND_REACH_START_POS_Z,
+            "mid_pos_z": LEFT_HAND_REACH_MID_POS_Z,
             "final_pos_z": LEFT_HAND_REACH_FINAL_POS_Z,
         },
     )
@@ -52,7 +63,7 @@ class LeftHandReachCurriculumCfg(BaseCurriculumCfg):
 
 @configclass
 class RobotLeftHandReachEnvCfg(RobotEnvCfg):
-    """Stage-2.1 standing reach task with easier early targets and slightly freer leg support."""
+    """Stage-2.5 local loco-reach task with in-place, posture, and local-step targets."""
 
     curriculum: LeftHandReachCurriculumCfg = LeftHandReachCurriculumCfg()
 
@@ -115,14 +126,20 @@ class RobotLeftHandReachEnvCfg(RobotEnvCfg):
         self.rewards.gait = None
         self.rewards.feet_clearance = None
         self.rewards.joint_deviation_arms = None
-        self.rewards.joint_deviation_legs.weight = -0.12
-        self.rewards.joint_deviation_waists.weight = -0.3
-        self.rewards.feet_slide.weight = -0.05
+        self.rewards.joint_deviation_legs.weight = -0.08
+        self.rewards.joint_deviation_waists.weight = -0.4
+        self.rewards.feet_slide.weight = -0.03
         self.rewards.action_rate.weight = -0.02
-        self.rewards.base_planar_drift = RewTerm(
-            func=root_planar_drift_l2,
-            weight=-0.5,
-            params={"asset_cfg": SceneEntityCfg("robot")},
+        self.rewards.base_planar_drift = None
+        self.rewards.base_target_stance = RewTerm(
+            func=target_relative_base_stance_l2,
+            weight=-0.35,
+            params={
+                "command_name": LEFT_HAND_COMMAND_NAME,
+                "desired_distance": 0.40,
+                "distance_band": 0.12,
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
         )
 
         self.rewards.left_hand_position_tracking = RewTerm(

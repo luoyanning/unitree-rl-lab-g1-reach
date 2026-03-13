@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import torch
 from collections.abc import Sequence
 
@@ -14,6 +15,8 @@ except ImportError:
     from isaaclab.utils.math import quat_rotate_inverse as quat_apply_inverse
 
 ENABLE_LONG_HORIZON_DEBUG_METRICS = False
+ENABLE_TARGET_TIMEOUT_DEBUG = os.getenv("UTRL_LH_LOCO_REACH_TIMEOUT_DEBUG", "1") == "1"
+TARGET_TIMEOUT_DEBUG_MAX_GLOBAL_STEPS = int(os.getenv("UTRL_LH_LOCO_REACH_TIMEOUT_DEBUG_STEPS", "8"))
 TARGET_SAMPLING_REGIME_ORDER = ("near", "posture", "far")
 DEFAULT_SAMPLE_REGIMES = {
     "near": {"pos_x": (0.25, 0.48), "pos_y": (0.08, 0.28), "pos_z": (0.18, 0.34)},
@@ -89,6 +92,64 @@ def _update_target_debug_visualization(env):
     if not hasattr(env, "_left_hand_target_visualizer"):
         env._left_hand_target_visualizer = VisualizationMarkers(TARGET_MARKER_CFG)
     env._left_hand_target_visualizer.visualize(env._left_hand_active_target_w, _target_marker_quat(env))
+
+
+def _episode_length_buf(env):
+    if hasattr(env, "episode_length_buf"):
+        return env.episode_length_buf.clone()
+    return torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+
+
+def _compute_just_reset_mask(env):
+    current_episode_length = _episode_length_buf(env)
+    if not hasattr(env, "_left_hand_prev_episode_length_buf"):
+        env._left_hand_prev_episode_length_buf = torch.full(
+            (env.num_envs,), -1, dtype=torch.long, device=env.device
+        )
+    prev_episode_length = env._left_hand_prev_episode_length_buf
+    just_reset = prev_episode_length < 0
+    just_reset |= current_episode_length == 0
+    just_reset |= current_episode_length < prev_episode_length
+    return just_reset, current_episode_length, prev_episode_length
+
+
+def _current_reset_mask(env):
+    if hasattr(env, "_left_hand_just_reset_this_step"):
+        return env._left_hand_just_reset_this_step
+    return _episode_length_buf(env) == 0
+
+
+def _debug_timeout_state(
+    env,
+    current_episode_length,
+    prev_episode_length,
+    just_reset,
+    just_spawned,
+    pre_timeout,
+    post_timeout,
+    max_target_steps: int,
+):
+    if not ENABLE_TARGET_TIMEOUT_DEBUG:
+        return
+    if env.common_step_counter > TARGET_TIMEOUT_DEBUG_MAX_GLOBAL_STEPS:
+        return
+    env_id = 0
+    terminated = getattr(env.termination_manager, "terminated", torch.zeros(env.num_envs, device=env.device))
+    print(
+        "[LH_LOCO_REACH_TIMEOUT_DEBUG] "
+        f"global_step={int(env.common_step_counter)} "
+        f"env={env_id} "
+        f"episode_len={int(current_episode_length[env_id])} "
+        f"prev_episode_len={int(prev_episode_length[env_id])} "
+        f"just_reset={bool(just_reset[env_id])} "
+        f"just_spawned={bool(just_spawned[env_id])} "
+        f"target_age_steps={int(env._left_hand_target_age_steps[env_id])} "
+        f"max_target_steps={int(max_target_steps)} "
+        f"pre_timeout={bool(pre_timeout[env_id])} "
+        f"post_timeout={bool(post_timeout[env_id])} "
+        f"terminated={bool(terminated[env_id])}",
+        flush=True,
+    )
 
 
 def _active_target_pos_base_yaw(env):
@@ -208,14 +269,17 @@ def _ensure_long_horizon_state(env, command_name: str, max_targets_per_episode: 
         env._left_hand_post_switch_steps = torch.full(
             (num_envs,), switch_phase_steps, dtype=torch.long, device=env.device
         )
-        env._left_hand_steps_since_switch = torch.zeros(num_envs, dtype=torch.long, device=env.device)
+        env._left_hand_target_age_steps = torch.zeros(num_envs, dtype=torch.long, device=env.device)
+        env._left_hand_steps_since_switch = env._left_hand_target_age_steps
         env._left_hand_foot_motion_before_contact = torch.zeros(num_envs, device=env.device)
         env._left_hand_workspace_error_at_contact = torch.zeros(num_envs, device=env.device)
         env._left_hand_torso_lean_at_contact = torch.zeros(num_envs, device=env.device)
         env._left_hand_arm_extension_at_contact = torch.zeros(num_envs, device=env.device)
         env._left_hand_recent_success = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
         env._left_hand_target_switched_this_step = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
+        env._left_hand_just_reset_this_step = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
         env._left_hand_state_synced_step = -1
+        env._left_hand_timeout_cfg_logged = False
         env._left_hand_arm_joint_ids = torch.tensor(
             robot.find_joints(
                 [
@@ -324,16 +388,32 @@ def _sync_long_horizon_state(
 
     command_term = env.command_manager.get_term(command_name)
     robot = env.scene["robot"]
-    reset_ids = env.episode_length_buf == 0
+    reset_ids, current_episode_length, prev_episode_length = _compute_just_reset_mask(env)
+    env._left_hand_just_reset_this_step[:] = reset_ids
     env._left_hand_recent_success.zero_()
     env._left_hand_target_switched_this_step.zero_()
     _get_sampling_distribution_state(env, sample_regimes=sample_regimes, sample_weights=sample_weights)
+    per_target_timeout_steps = max(1, int(round(per_target_timeout_s / env.step_dt)))
+
+    if ENABLE_TARGET_TIMEOUT_DEBUG and not env._left_hand_timeout_cfg_logged:
+        print(
+            "[LH_LOCO_REACH_TIMEOUT_CONFIG] "
+            f"step_dt={float(env.step_dt):.6f} "
+            f"sim_dt={float(env.cfg.sim.dt):.6f} "
+            f"decimation={int(env.cfg.decimation)} "
+            f"per_target_timeout_s={float(per_target_timeout_s):.3f} "
+            f"per_target_timeout_steps={int(per_target_timeout_steps)} "
+            f"episode_length_s={float(env.cfg.episode_length_s):.3f} "
+            f"max_episode_length={int(env.max_episode_length)}",
+            flush=True,
+        )
+        env._left_hand_timeout_cfg_logged = True
 
     if torch.any(reset_ids):
         env._left_hand_completed_targets[reset_ids] = 0
         env._left_hand_target_index[reset_ids] = 0
         env._left_hand_post_switch_steps[reset_ids] = switch_phase_steps
-        env._left_hand_steps_since_switch[reset_ids] = 0
+        env._left_hand_target_age_steps[reset_ids] = 0
         env._left_hand_prev_success[reset_ids] = False
         env._left_hand_recent_success[reset_ids] = False
         env._left_hand_foot_motion_before_contact[reset_ids] = 0.0
@@ -342,11 +422,13 @@ def _sync_long_horizon_state(
         env._left_hand_arm_extension_at_contact[reset_ids] = 0.0
         env._left_hand_has_active_target[reset_ids] = False
 
+    just_spawned = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
     inactive_ids = torch.where(~env._left_hand_has_active_target)[0]
     if len(inactive_ids) > 0:
         _spawn_new_fixed_targets(
             env, inactive_ids, sample_regimes=sample_regimes, sample_weights=sample_weights
         )
+        just_spawned[inactive_ids] = True
 
     success = _ee_position_error(env, command_name=command_name) < success_threshold
     success_edge = success & ~env._left_hand_prev_success & ~reset_ids
@@ -376,22 +458,24 @@ def _sync_long_horizon_state(
             _spawn_new_fixed_targets(
                 env, active_ids, sample_regimes=sample_regimes, sample_weights=sample_weights
             )
+            just_spawned[active_ids] = True
 
     switch_detected = torch.norm(env._left_hand_active_target_w - env._left_hand_prev_target_w, dim=-1) > 1.0e-5
     switch_detected |= reset_ids
-    per_target_timeout_steps = max(1, int(round(per_target_timeout_s / env.step_dt)))
+    pre_timeout = env._left_hand_target_age_steps >= per_target_timeout_steps
 
     env._left_hand_post_switch_steps = torch.clamp(env._left_hand_post_switch_steps - 1, min=0)
-    env._left_hand_steps_since_switch += 1
+    env._left_hand_target_age_steps += 1
 
     switched_non_reset = switch_detected & ~reset_ids
     env._left_hand_target_index[switched_non_reset] = torch.clamp(
         env._left_hand_target_index[switched_non_reset] + 1, max=max_targets_per_episode - 1
     )
     env._left_hand_post_switch_steps[switch_detected] = switch_phase_steps
-    env._left_hand_steps_since_switch[switch_detected] = 0
+    env._left_hand_target_age_steps[switch_detected] = 0
     env._left_hand_foot_motion_before_contact[switch_detected] = 0.0
     env._left_hand_target_switched_this_step[:] = switch_detected
+    post_timeout = env._left_hand_target_age_steps >= per_target_timeout_steps
 
     foot_vel_xy = (
         robot.data.body_lin_vel_w[:, env._left_hand_foot_body_ids, :2] - robot.data.root_lin_vel_w[:, None, :2]
@@ -414,15 +498,28 @@ def _sync_long_horizon_state(
         command_term.metrics["post_switch_posture_quality"][:] = posture_quality
         command_term.metrics.setdefault("per_target_timeout_steps", torch.zeros(env.num_envs, device=env.device))
         command_term.metrics["per_target_timeout_steps"][:] = float(per_target_timeout_steps)
+        command_term.metrics.setdefault("target_age_steps", torch.zeros(env.num_envs, device=env.device))
+        command_term.metrics["target_age_steps"][:] = env._left_hand_target_age_steps.float()
         if hasattr(env, "termination_manager"):
             command_term.metrics["switch_failure_risk"][:] = (
                 getattr(env.termination_manager, "terminated", torch.zeros(env.num_envs, device=env.device)).float()
                 * (env._left_hand_post_switch_steps > 0).float()
             )
 
+    _debug_timeout_state(
+        env,
+        current_episode_length=current_episode_length,
+        prev_episode_length=prev_episode_length,
+        just_reset=reset_ids,
+        just_spawned=just_spawned,
+        pre_timeout=pre_timeout,
+        post_timeout=post_timeout,
+        max_target_steps=per_target_timeout_steps,
+    )
     _update_target_debug_visualization(env)
     env._left_hand_prev_target_w = env._left_hand_active_target_w.clone()
     env._left_hand_prev_success = success & ~switch_detected
+    env._left_hand_prev_episode_length_buf = current_episode_length
     env._left_hand_state_synced_step = env.common_step_counter
 
 
@@ -524,7 +621,7 @@ def target_timeout_reached(
         sample_weights=sample_weights,
     )
     per_target_timeout_steps = max(1, int(round(per_target_timeout_s / env.step_dt)))
-    return env._left_hand_steps_since_switch >= per_target_timeout_steps
+    return env._left_hand_target_age_steps >= per_target_timeout_steps
 
 
 def left_hand_target_pos_levels(
@@ -698,9 +795,8 @@ def target_relative_base_stance_progress(
     workspace_error = _workspace_error_l2(env, command_name=command_name, x_range=x_range, y_range=y_range)
     if not hasattr(env, "_left_hand_prev_workspace_error"):
         env._left_hand_prev_workspace_error = workspace_error.clone()
-    if hasattr(env, "episode_length_buf"):
-        reset_ids = env.episode_length_buf == 0
-        env._left_hand_prev_workspace_error[reset_ids] = workspace_error[reset_ids]
+    reset_ids = _current_reset_mask(env)
+    env._left_hand_prev_workspace_error[reset_ids] = workspace_error[reset_ids]
     env._left_hand_prev_workspace_error[env._left_hand_target_switched_this_step] = workspace_error[
         env._left_hand_target_switched_this_step
     ]
@@ -951,9 +1047,8 @@ def position_command_progress_reward(
     position_error = _static_target_position_error(env, asset_cfg=asset_cfg)
     if not hasattr(env, "_left_hand_prev_error"):
         env._left_hand_prev_error = position_error.clone()
-    if hasattr(env, "episode_length_buf"):
-        reset_ids = env.episode_length_buf == 0
-        env._left_hand_prev_error[reset_ids] = position_error[reset_ids]
+    reset_ids = _current_reset_mask(env)
+    env._left_hand_prev_error[reset_ids] = position_error[reset_ids]
     if hasattr(env, "_left_hand_target_switched_this_step"):
         env._left_hand_prev_error[env._left_hand_target_switched_this_step] = position_error[
             env._left_hand_target_switched_this_step

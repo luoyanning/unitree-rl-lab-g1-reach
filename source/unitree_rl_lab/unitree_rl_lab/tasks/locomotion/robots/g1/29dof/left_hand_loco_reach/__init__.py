@@ -8,6 +8,6 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": f"{__name__}.left_hand_loco_reach_env_cfg:RobotLeftHandLocoReachEnvCfg",
         "play_env_cfg_entry_point": f"{__name__}.left_hand_loco_reach_env_cfg:RobotLeftHandLocoReachPlayEnvCfg",
-        "rsl_rl_cfg_entry_point": "unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg:BasePPORunnerCfg",
+        "rsl_rl_cfg_entry_point": f"{__name__}.rsl_rl_ppo_cfg:LeftHandLocoReachPPORunnerCfg",
     },
 )

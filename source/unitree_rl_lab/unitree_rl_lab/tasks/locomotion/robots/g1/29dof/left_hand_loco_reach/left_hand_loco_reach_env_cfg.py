@@ -18,7 +18,7 @@ from .left_hand_loco_reach_mdp import (
     pre_stance_joint_deviation_penalty,
     pre_stance_joint_limit_penalty,
     pre_stance_torso_lean_penalty,
-    reach_success,
+    static_target_position_error,
     success_posture_bonus,
     target_completion_bonus,
     target_pos_command_obs,
@@ -46,6 +46,28 @@ LOCO_REACH_FAR_POS_Y = (-0.05, 0.60)
 LOCO_REACH_NEAR_POS_Z = (0.18, 0.34)
 LOCO_REACH_POSTURE_POS_Z = (0.00, 0.20)
 LOCO_REACH_FAR_POS_Z = (0.08, 0.24)
+LOCO_REACH_SAMPLE_REGIMES = {
+    "near": {
+        "pos_x": LOCO_REACH_NEAR_POS_X,
+        "pos_y": LOCO_REACH_NEAR_POS_Y,
+        "pos_z": LOCO_REACH_NEAR_POS_Z,
+    },
+    "posture": {
+        "pos_x": LOCO_REACH_POSTURE_POS_X,
+        "pos_y": LOCO_REACH_POSTURE_POS_Y,
+        "pos_z": LOCO_REACH_POSTURE_POS_Z,
+    },
+    "far": {
+        "pos_x": LOCO_REACH_FAR_POS_X,
+        "pos_y": LOCO_REACH_FAR_POS_Y,
+        "pos_z": LOCO_REACH_FAR_POS_Z,
+    },
+}
+LOCO_REACH_SAMPLE_WEIGHTS = {
+    "near": 0.45,
+    "posture": 0.30,
+    "far": 0.25,
+}
 
 
 @configclass
@@ -101,6 +123,8 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
             "per_target_timeout_s": PER_TARGET_TIMEOUT_S,
             "x_range": stance_x_range,
             "y_range": stance_y_range,
+            "sample_regimes": LOCO_REACH_SAMPLE_REGIMES,
+            "sample_weights": LOCO_REACH_SAMPLE_WEIGHTS,
         }
 
         self.episode_length_s = 24.0
@@ -119,7 +143,7 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
             asset_name="robot",
             body_name=LEFT_HAND_BODY_NAME,
             resampling_time_range=(STATIC_TARGET_HOLD_S, STATIC_TARGET_HOLD_S),
-            debug_vis=True,
+            debug_vis=False,
             ranges=reach_mdp.UniformPoseCommandCfg.Ranges(
                 pos_x=LOCO_REACH_NEAR_POS_X,
                 pos_y=LOCO_REACH_NEAR_POS_Y,
@@ -136,11 +160,11 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
         # Keep policy/critic tensor sizes aligned with the locomotion task for checkpoint warm-starting.
         self.observations.policy.velocity_commands = ObsTerm(
             func=target_pos_command_obs,
-            params={"command_name": LEFT_HAND_COMMAND_NAME},
+            params=long_horizon_params,
         )
         self.observations.critic.velocity_commands = ObsTerm(
             func=target_pos_command_obs,
-            params={"command_name": LEFT_HAND_COMMAND_NAME},
+            params=long_horizon_params,
         )
 
         self.events.base_external_force_torque = None
@@ -223,11 +247,11 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
             params=long_horizon_params,
         )
         self.rewards.left_hand_position_tracking = RewTerm(
-            func=reach_mdp.position_command_error,
+            func=static_target_position_error,
             weight=-0.12,
             params={
                 "asset_cfg": ee_cfg,
-                "command_name": LEFT_HAND_COMMAND_NAME,
+                **long_horizon_params,
             },
         )
         self.rewards.left_hand_position_tracking_fine = RewTerm(

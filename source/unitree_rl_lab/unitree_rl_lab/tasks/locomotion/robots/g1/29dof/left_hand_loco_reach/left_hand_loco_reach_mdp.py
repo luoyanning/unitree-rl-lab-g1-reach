@@ -3,30 +3,205 @@ from __future__ import annotations
 import torch
 from collections.abc import Sequence
 
-import isaaclab_tasks.manager_based.manipulation.reach.mdp as reach_mdp
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.markers import VisualizationMarkers
+from isaaclab.markers.config import FRAME_MARKER_CFG
+from isaaclab.utils.math import quat_apply, sample_uniform, yaw_quat
+
+try:
+    from isaaclab.utils.math import quat_apply_inverse
+except ImportError:
+    from isaaclab.utils.math import quat_rotate_inverse as quat_apply_inverse
 
 ENABLE_LONG_HORIZON_DEBUG_METRICS = False
+TARGET_SAMPLING_REGIME_ORDER = ("near", "posture", "far")
+DEFAULT_SAMPLE_REGIMES = {
+    "near": {"pos_x": (0.25, 0.48), "pos_y": (0.08, 0.28), "pos_z": (0.18, 0.34)},
+    "posture": {"pos_x": (0.35, 0.72), "pos_y": (0.02, 0.38), "pos_z": (0.00, 0.20)},
+    "far": {"pos_x": (0.50, 1.00), "pos_y": (-0.05, 0.60), "pos_z": (0.08, 0.24)},
+}
+DEFAULT_SAMPLE_WEIGHTS = {"near": 0.45, "posture": 0.30, "far": 0.25}
+TARGET_MARKER_CFG = FRAME_MARKER_CFG.replace(prim_path="/Visuals/Command/left_hand_loco_reach_target")
+TARGET_MARKER_CFG.markers["frame"].scale = (0.12, 0.12, 0.12)
 
 
-def _best_effort_command_resample(command_term, env_ids, static_target_hold_s: float):
+def _clone_sample_regimes(sample_regimes: dict[str, dict[str, tuple[float, float]]] | None):
+    base_regimes = DEFAULT_SAMPLE_REGIMES if sample_regimes is None else sample_regimes
+    return {
+        regime_name: {
+            axis_name: tuple(float(v) for v in axis_range)
+            for axis_name, axis_range in base_regimes[regime_name].items()
+        }
+        for regime_name in TARGET_SAMPLING_REGIME_ORDER
+    }
+
+
+def _clone_sample_weights(sample_weights: dict[str, float] | None):
+    base_weights = DEFAULT_SAMPLE_WEIGHTS if sample_weights is None else sample_weights
+    return {regime_name: float(base_weights[regime_name]) for regime_name in TARGET_SAMPLING_REGIME_ORDER}
+
+
+def _range_union(sample_regimes: dict[str, dict[str, tuple[float, float]]], axis_name: str):
+    axis_ranges = [sample_regimes[regime_name][axis_name] for regime_name in TARGET_SAMPLING_REGIME_ORDER]
+    return (
+        min(axis_range[0] for axis_range in axis_ranges),
+        max(axis_range[1] for axis_range in axis_ranges),
+    )
+
+
+def _lerp_range(
+    start_range: tuple[float, float],
+    end_range: tuple[float, float],
+    alpha: torch.Tensor,
+):
+    start_tensor = torch.tensor(start_range, device=alpha.device)
+    end_tensor = torch.tensor(end_range, device=alpha.device)
+    return tuple(float(v) for v in torch.lerp(start_tensor, end_tensor, alpha).tolist())
+
+
+def _set_sampling_distribution_state(
+    env,
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None,
+    sample_weights: dict[str, float] | None,
+):
+    env._left_hand_sample_regimes = _clone_sample_regimes(sample_regimes)
+    env._left_hand_sample_weights = _clone_sample_weights(sample_weights)
+
+
+def _get_sampling_distribution_state(
+    env,
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None,
+    sample_weights: dict[str, float] | None,
+):
+    if not hasattr(env, "_left_hand_sample_regimes") or not hasattr(env, "_left_hand_sample_weights"):
+        _set_sampling_distribution_state(env, sample_regimes=sample_regimes, sample_weights=sample_weights)
+    return env._left_hand_sample_regimes, env._left_hand_sample_weights
+
+
+def _target_marker_quat(env):
+    if not hasattr(env, "_left_hand_target_marker_quat"):
+        env._left_hand_target_marker_quat = torch.zeros(env.num_envs, 4, device=env.device)
+        env._left_hand_target_marker_quat[:, 0] = 1.0
+    return env._left_hand_target_marker_quat
+
+
+def _update_target_debug_visualization(env):
+    if not hasattr(env, "_left_hand_target_visualizer"):
+        env._left_hand_target_visualizer = VisualizationMarkers(TARGET_MARKER_CFG)
+    env._left_hand_target_visualizer.visualize(env._left_hand_active_target_w, _target_marker_quat(env))
+
+
+def _active_target_pos_base_yaw(env):
+    _ensure_long_horizon_state(env, command_name="left_hand_pose", max_targets_per_episode=1, switch_phase_steps=0)
+    robot = env.scene["robot"]
+    target_delta_w = env._left_hand_active_target_w - robot.data.root_pos_w
+    return quat_apply_inverse(yaw_quat(robot.data.root_quat_w), target_delta_w)
+
+
+def _static_target_position_error(
+    env,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["left_wrist_yaw_link"]),
+):
+    _ensure_long_horizon_state(env, command_name="left_hand_pose", max_targets_per_episode=1, switch_phase_steps=0)
+    asset = env.scene[asset_cfg.name]
+    ee_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    if ee_pos_w.ndim == 3:
+        ee_pos_w = ee_pos_w[:, 0]
+    return torch.linalg.norm(env._left_hand_active_target_w - ee_pos_w, dim=-1)
+
+
+def static_target_position_error(
+    env,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["left_wrist_yaw_link"]),
+    command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
+    x_range: tuple[float, float] = (0.38, 0.62),
+    y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
+):
+    _sync_long_horizon_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
+    return _static_target_position_error(env, asset_cfg=asset_cfg)
+
+
+def _static_target_position_error_tanh(
+    env,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["left_wrist_yaw_link"]),
+    std: float = 0.14,
+):
+    position_error = _static_target_position_error(env, asset_cfg=asset_cfg)
+    return 1.0 - torch.tanh(position_error / std)
+
+
+def _spawn_new_fixed_targets(
+    env,
+    env_ids,
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None,
+    sample_weights: dict[str, float] | None,
+):
     if len(env_ids) == 0:
         return
-    if hasattr(command_term, "_resample_command"):
-        command_term._resample_command(env_ids)
-    for attr_name in ("time_left", "_time_left", "command_time_left"):
-        if hasattr(command_term, attr_name):
-            timer = getattr(command_term, attr_name)
-            if isinstance(timer, torch.Tensor) and timer.ndim > 0:
-                timer[env_ids] = static_target_hold_s
+
+    sample_regimes, sample_weights = _get_sampling_distribution_state(
+        env, sample_regimes=sample_regimes, sample_weights=sample_weights
+    )
+    robot = env.scene["robot"]
+    regime_ranges = torch.tensor(
+        [
+            [
+                sample_regimes[regime_name]["pos_x"],
+                sample_regimes[regime_name]["pos_y"],
+                sample_regimes[regime_name]["pos_z"],
+            ]
+            for regime_name in TARGET_SAMPLING_REGIME_ORDER
+        ],
+        dtype=torch.float32,
+        device=env.device,
+    )
+    weight_tensor = torch.tensor(
+        [sample_weights[regime_name] for regime_name in TARGET_SAMPLING_REGIME_ORDER],
+        dtype=torch.float32,
+        device=env.device,
+    )
+    weight_tensor = torch.clamp(weight_tensor, min=0.0)
+    if torch.sum(weight_tensor) <= 0.0:
+        weight_tensor = torch.ones_like(weight_tensor)
+    weight_tensor = weight_tensor / torch.sum(weight_tensor)
+
+    regime_ids = torch.multinomial(weight_tensor, len(env_ids), replacement=True)
+    selected_ranges = regime_ranges[regime_ids]
+    local_target_pos = sample_uniform(
+        selected_ranges[:, :, 0], selected_ranges[:, :, 1], (len(env_ids), 3), device=env.device
+    )
+    root_pos_w = robot.data.root_pos_w[env_ids]
+    root_yaw_w = yaw_quat(robot.data.root_quat_w[env_ids])
+    env._left_hand_active_target_w[env_ids] = root_pos_w + quat_apply(root_yaw_w, local_target_pos)
+    env._left_hand_has_active_target[env_ids] = True
 
 
 def _ensure_long_horizon_state(env, command_name: str, max_targets_per_episode: int, switch_phase_steps: int):
     num_envs = env.num_envs
-    if not hasattr(env, "_left_hand_prev_command"):
-        command = env.command_manager.get_command(command_name)[:, :3]
+    if not hasattr(env, "_left_hand_prev_target_w"):
         robot = env.scene["robot"]
-        env._left_hand_prev_command = command.clone()
+        env._left_hand_prev_target_w = torch.zeros(num_envs, 3, device=env.device)
+        env._left_hand_active_target_w = torch.zeros(num_envs, 3, device=env.device)
+        env._left_hand_has_active_target = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
         env._left_hand_prev_success = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
         env._left_hand_completed_targets = torch.zeros(num_envs, dtype=torch.long, device=env.device)
         env._left_hand_target_index = torch.zeros(num_envs, dtype=torch.long, device=env.device)
@@ -39,6 +214,7 @@ def _ensure_long_horizon_state(env, command_name: str, max_targets_per_episode: 
         env._left_hand_torso_lean_at_contact = torch.zeros(num_envs, device=env.device)
         env._left_hand_arm_extension_at_contact = torch.zeros(num_envs, device=env.device)
         env._left_hand_recent_success = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
+        env._left_hand_target_switched_this_step = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
         env._left_hand_state_synced_step = -1
         env._left_hand_arm_joint_ids = torch.tensor(
             robot.find_joints(
@@ -82,11 +258,11 @@ def _switch_phase_scale(env, switch_phase_steps: int):
 
 
 def _ee_position_error(env, command_name: str):
-    _ensure_long_horizon_state(env, command_name=command_name, max_targets_per_episode=1, switch_phase_steps=0)
+    del command_name
+    _ensure_long_horizon_state(env, command_name="left_hand_pose", max_targets_per_episode=1, switch_phase_steps=0)
     robot = env.scene["robot"]
     ee_pos_w = robot.data.body_pos_w[:, env._left_hand_ee_body_id]
-    command = env.command_manager.get_command(command_name)[:, :3]
-    return torch.linalg.norm(command - ee_pos_w, dim=-1)
+    return torch.linalg.norm(env._left_hand_active_target_w - ee_pos_w, dim=-1)
 
 
 def _workspace_error_components(
@@ -95,7 +271,8 @@ def _workspace_error_components(
     x_range: tuple[float, float],
     y_range: tuple[float, float],
 ):
-    target_pos = env.command_manager.get_command(command_name)[:, :2]
+    del command_name
+    target_pos = _active_target_pos_base_yaw(env)[:, :2]
     x_error_low = torch.clamp(x_range[0] - target_pos[:, 0], min=0.0)
     x_error_high = torch.clamp(target_pos[:, 0] - x_range[1], min=0.0)
     y_error_low = torch.clamp(y_range[0] - target_pos[:, 1], min=0.0)
@@ -136,6 +313,8 @@ def _sync_long_horizon_state(
     per_target_timeout_s: float,
     x_range: tuple[float, float],
     y_range: tuple[float, float],
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None,
+    sample_weights: dict[str, float] | None,
 ):
     _ensure_long_horizon_state(
         env, command_name=command_name, max_targets_per_episode=max_targets_per_episode, switch_phase_steps=switch_phase_steps
@@ -145,9 +324,30 @@ def _sync_long_horizon_state(
 
     command_term = env.command_manager.get_term(command_name)
     robot = env.scene["robot"]
-    current_command = env.command_manager.get_command(command_name)[:, :3].clone()
     reset_ids = env.episode_length_buf == 0
     env._left_hand_recent_success.zero_()
+    env._left_hand_target_switched_this_step.zero_()
+    _get_sampling_distribution_state(env, sample_regimes=sample_regimes, sample_weights=sample_weights)
+
+    if torch.any(reset_ids):
+        env._left_hand_completed_targets[reset_ids] = 0
+        env._left_hand_target_index[reset_ids] = 0
+        env._left_hand_post_switch_steps[reset_ids] = switch_phase_steps
+        env._left_hand_steps_since_switch[reset_ids] = 0
+        env._left_hand_prev_success[reset_ids] = False
+        env._left_hand_recent_success[reset_ids] = False
+        env._left_hand_foot_motion_before_contact[reset_ids] = 0.0
+        env._left_hand_workspace_error_at_contact[reset_ids] = 0.0
+        env._left_hand_torso_lean_at_contact[reset_ids] = 0.0
+        env._left_hand_arm_extension_at_contact[reset_ids] = 0.0
+        env._left_hand_has_active_target[reset_ids] = False
+
+    inactive_ids = torch.where(~env._left_hand_has_active_target)[0]
+    if len(inactive_ids) > 0:
+        _spawn_new_fixed_targets(
+            env, inactive_ids, sample_regimes=sample_regimes, sample_weights=sample_weights
+        )
+
     success = _ee_position_error(env, command_name=command_name) < success_threshold
     success_edge = success & ~env._left_hand_prev_success & ~reset_ids
 
@@ -173,10 +373,11 @@ def _sync_long_horizon_state(
                 command_term.metrics[f"success_target_{index}"][mask] = 1.0
         active_ids = torch.where(success_edge & (env._left_hand_completed_targets < max_targets_per_episode))[0]
         if len(active_ids) > 0:
-            _best_effort_command_resample(command_term, active_ids, static_target_hold_s=static_target_hold_s)
-            current_command = env.command_manager.get_command(command_name)[:, :3].clone()
+            _spawn_new_fixed_targets(
+                env, active_ids, sample_regimes=sample_regimes, sample_weights=sample_weights
+            )
 
-    switch_detected = torch.norm(current_command - env._left_hand_prev_command, dim=-1) > 1.0e-5
+    switch_detected = torch.norm(env._left_hand_active_target_w - env._left_hand_prev_target_w, dim=-1) > 1.0e-5
     switch_detected |= reset_ids
     per_target_timeout_steps = max(1, int(round(per_target_timeout_s / env.step_dt)))
 
@@ -190,18 +391,7 @@ def _sync_long_horizon_state(
     env._left_hand_post_switch_steps[switch_detected] = switch_phase_steps
     env._left_hand_steps_since_switch[switch_detected] = 0
     env._left_hand_foot_motion_before_contact[switch_detected] = 0.0
-
-    if torch.any(reset_ids):
-        env._left_hand_completed_targets[reset_ids] = 0
-        env._left_hand_target_index[reset_ids] = 0
-        env._left_hand_post_switch_steps[reset_ids] = switch_phase_steps
-        env._left_hand_steps_since_switch[reset_ids] = 0
-        env._left_hand_prev_success[reset_ids] = False
-        env._left_hand_recent_success[reset_ids] = False
-        env._left_hand_foot_motion_before_contact[reset_ids] = 0.0
-        env._left_hand_workspace_error_at_contact[reset_ids] = 0.0
-        env._left_hand_torso_lean_at_contact[reset_ids] = 0.0
-        env._left_hand_arm_extension_at_contact[reset_ids] = 0.0
+    env._left_hand_target_switched_this_step[:] = switch_detected
 
     foot_vel_xy = (
         robot.data.body_lin_vel_w[:, env._left_hand_foot_body_ids, :2] - robot.data.root_lin_vel_w[:, None, :2]
@@ -230,14 +420,40 @@ def _sync_long_horizon_state(
                 * (env._left_hand_post_switch_steps > 0).float()
             )
 
-    env._left_hand_prev_command = current_command
+    _update_target_debug_visualization(env)
+    env._left_hand_prev_target_w = env._left_hand_active_target_w.clone()
     env._left_hand_prev_success = success & ~switch_detected
     env._left_hand_state_synced_step = env.common_step_counter
 
 
-def target_pos_command_obs(env, command_name: str = "left_hand_pose"):
-    """Return the target position command as a 3D vector for policy/critic compatibility."""
-    return env.command_manager.get_command(command_name)[:, :3]
+def target_pos_command_obs(
+    env,
+    command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
+    x_range: tuple[float, float] = (0.38, 0.62),
+    y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
+):
+    """Return the fixed world target expressed in the robot base-yaw frame."""
+    _sync_long_horizon_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
+    return _active_target_pos_base_yaw(env)
 
 
 def reach_success(
@@ -246,8 +462,9 @@ def reach_success(
     command_name: str = "left_hand_pose",
     threshold: float = 0.05,
 ):
-    """Terminate an episode when the left hand reaches the target threshold."""
-    position_error = reach_mdp.position_command_error(env, asset_cfg=asset_cfg, command_name=command_name)
+    """Check whether the end-effector reaches the fixed world target threshold."""
+    del command_name
+    position_error = _static_target_position_error(env, asset_cfg=asset_cfg)
     return position_error < threshold
 
 
@@ -261,6 +478,8 @@ def target_quota_reached(
     per_target_timeout_s: float = 4.0,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
 ):
     _sync_long_horizon_state(
         env,
@@ -272,6 +491,8 @@ def target_quota_reached(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
     )
     return env._left_hand_completed_targets >= max_targets_per_episode
 
@@ -286,6 +507,8 @@ def target_timeout_reached(
     per_target_timeout_s: float = 4.0,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
 ):
     _sync_long_horizon_state(
         env,
@@ -297,6 +520,8 @@ def target_timeout_reached(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
     )
     per_target_timeout_steps = max(1, int(round(per_target_timeout_s / env.step_dt)))
     return env._left_hand_steps_since_switch >= per_target_timeout_steps
@@ -317,10 +542,9 @@ def left_hand_target_pos_levels(
     posture_pos_z: tuple[float, float] = (0.00, 0.20),
     far_pos_z: tuple[float, float] = (0.08, 0.24),
 ):
-    """Expand explicit near, posture-heavy, and far-local loco-reach target regimes."""
+    """Expand the sampling distribution from near targets to full local loco-reach targets."""
     del env_ids
     command_term = env.command_manager.get_term(command_name)
-    ranges = command_term.cfg.ranges
 
     progress = min(env.common_step_counter / (env.max_episode_length * num_curriculum_episodes), 1.0)
     progress_tensor = torch.tensor(progress, device=env.device)
@@ -330,55 +554,52 @@ def left_hand_target_pos_levels(
     if env.common_step_counter % env.max_episode_length == 0:
         if progress <= 1.0 / 3.0:
             phase_progress = progress_tensor / third_tensor
-            ranges.pos_x = torch.lerp(
-                torch.tensor(near_pos_x, device=env.device),
-                torch.tensor(posture_pos_x, device=env.device),
-                phase_progress,
-            ).tolist()
-            ranges.pos_y = torch.lerp(
-                torch.tensor(near_pos_y, device=env.device),
-                torch.tensor(posture_pos_y, device=env.device),
-                phase_progress,
-            ).tolist()
-            ranges.pos_z = torch.lerp(
-                torch.tensor(near_pos_z, device=env.device),
-                torch.tensor(posture_pos_z, device=env.device),
-                phase_progress,
-            ).tolist()
+            sample_regimes = {
+                "near": {"pos_x": near_pos_x, "pos_y": near_pos_y, "pos_z": near_pos_z},
+                "posture": {
+                    "pos_x": _lerp_range(near_pos_x, posture_pos_x, phase_progress),
+                    "pos_y": _lerp_range(near_pos_y, posture_pos_y, phase_progress),
+                    "pos_z": _lerp_range(near_pos_z, posture_pos_z, phase_progress),
+                },
+                "far": {
+                    "pos_x": _lerp_range(near_pos_x, posture_pos_x, phase_progress),
+                    "pos_y": _lerp_range(near_pos_y, posture_pos_y, phase_progress),
+                    "pos_z": _lerp_range(near_pos_z, posture_pos_z, phase_progress),
+                },
+            }
+            sample_weights = {
+                "near": float(torch.lerp(torch.tensor(0.85, device=env.device), torch.tensor(0.60, device=env.device), phase_progress)),
+                "posture": float(torch.lerp(torch.tensor(0.15, device=env.device), torch.tensor(0.30, device=env.device), phase_progress)),
+                "far": float(torch.lerp(torch.tensor(0.00, device=env.device), torch.tensor(0.10, device=env.device), phase_progress)),
+            }
         elif progress <= 2.0 / 3.0:
             phase_progress = (progress_tensor - third_tensor) / third_tensor
-            ranges.pos_x = torch.lerp(
-                torch.tensor(posture_pos_x, device=env.device),
-                torch.tensor(far_pos_x, device=env.device),
-                phase_progress,
-            ).tolist()
-            ranges.pos_y = torch.lerp(
-                torch.tensor(posture_pos_y, device=env.device),
-                torch.tensor(far_pos_y, device=env.device),
-                phase_progress,
-            ).tolist()
-            ranges.pos_z = torch.lerp(
-                torch.tensor(posture_pos_z, device=env.device),
-                torch.tensor(far_pos_z, device=env.device),
-                phase_progress,
-            ).tolist()
+            sample_regimes = {
+                "near": {"pos_x": near_pos_x, "pos_y": near_pos_y, "pos_z": near_pos_z},
+                "posture": {"pos_x": posture_pos_x, "pos_y": posture_pos_y, "pos_z": posture_pos_z},
+                "far": {
+                    "pos_x": _lerp_range(posture_pos_x, far_pos_x, phase_progress),
+                    "pos_y": _lerp_range(posture_pos_y, far_pos_y, phase_progress),
+                    "pos_z": _lerp_range(posture_pos_z, far_pos_z, phase_progress),
+                },
+            }
+            sample_weights = {
+                "near": float(torch.lerp(torch.tensor(0.60, device=env.device), torch.tensor(0.45, device=env.device), phase_progress)),
+                "posture": float(torch.lerp(torch.tensor(0.30, device=env.device), torch.tensor(0.30, device=env.device), phase_progress)),
+                "far": float(torch.lerp(torch.tensor(0.10, device=env.device), torch.tensor(0.25, device=env.device), phase_progress)),
+            }
         else:
-            phase_progress = (progress_tensor - two_third_tensor) / third_tensor
-            ranges.pos_x = torch.lerp(
-                torch.tensor(far_pos_x, device=env.device),
-                torch.tensor((near_pos_x[0], far_pos_x[1]), device=env.device),
-                phase_progress,
-            ).tolist()
-            ranges.pos_y = torch.lerp(
-                torch.tensor(far_pos_y, device=env.device),
-                torch.tensor((far_pos_y[0], far_pos_y[1]), device=env.device),
-                phase_progress,
-            ).tolist()
-            ranges.pos_z = torch.lerp(
-                torch.tensor(far_pos_z, device=env.device),
-                torch.tensor((posture_pos_z[0], far_pos_z[1]), device=env.device),
-                phase_progress,
-            ).tolist()
+            sample_regimes = {
+                "near": {"pos_x": near_pos_x, "pos_y": near_pos_y, "pos_z": near_pos_z},
+                "posture": {"pos_x": posture_pos_x, "pos_y": posture_pos_y, "pos_z": posture_pos_z},
+                "far": {"pos_x": far_pos_x, "pos_y": far_pos_y, "pos_z": far_pos_z},
+            }
+            sample_weights = {"near": 0.45, "posture": 0.30, "far": 0.25}
+
+        _set_sampling_distribution_state(env, sample_regimes=sample_regimes, sample_weights=sample_weights)
+        command_term.cfg.ranges.pos_x = _range_union(sample_regimes, "pos_x")
+        command_term.cfg.ranges.pos_y = _range_union(sample_regimes, "pos_y")
+        command_term.cfg.ranges.pos_z = _range_union(sample_regimes, "pos_z")
 
     return progress_tensor
 
@@ -393,6 +614,8 @@ def target_relative_base_stance_l2(
     switch_phase_steps: int = 30,
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
 ):
     """Penalize target positions that lie outside a favorable left-hand reach corridor in body/base-yaw frame."""
     _sync_long_horizon_state(
@@ -405,6 +628,8 @@ def target_relative_base_stance_l2(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
     )
     return _workspace_error_l2(env, command_name=command_name, x_range=x_range, y_range=y_range)
 
@@ -421,6 +646,8 @@ def target_relative_base_stance_ready(
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
     post_switch_bonus_scale: float = 1.75,
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
 ):
     """Positive reward for bringing the target into a comfortable body-frame pre-reach corridor."""
     _sync_long_horizon_state(
@@ -433,6 +660,8 @@ def target_relative_base_stance_ready(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
     )
     gate = _workspace_ready_gate(env, command_name=command_name, x_range=x_range, y_range=y_range, gate_std=gate_std)
     return gate * (1.0 + post_switch_bonus_scale * _switch_phase_scale(env, switch_phase_steps))
@@ -449,6 +678,8 @@ def target_relative_base_stance_progress(
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
     post_switch_bonus_scale: float = 1.5,
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
 ):
     """Reward step-to-step reduction of target workspace error."""
     _sync_long_horizon_state(
@@ -461,6 +692,8 @@ def target_relative_base_stance_progress(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
     )
     workspace_error = _workspace_error_l2(env, command_name=command_name, x_range=x_range, y_range=y_range)
     if not hasattr(env, "_left_hand_prev_workspace_error"):
@@ -468,6 +701,9 @@ def target_relative_base_stance_progress(
     if hasattr(env, "episode_length_buf"):
         reset_ids = env.episode_length_buf == 0
         env._left_hand_prev_workspace_error[reset_ids] = workspace_error[reset_ids]
+    env._left_hand_prev_workspace_error[env._left_hand_target_switched_this_step] = workspace_error[
+        env._left_hand_target_switched_this_step
+    ]
     progress = env._left_hand_prev_workspace_error - workspace_error
     env._left_hand_prev_workspace_error = workspace_error.clone()
     return progress * (1.0 + post_switch_bonus_scale * _switch_phase_scale(env, switch_phase_steps))
@@ -487,6 +723,8 @@ def gated_position_command_error_tanh(
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
     post_switch_scale: float = 0.25,
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
 ):
     """Allow strong fine reach reward only after the target is brought into a reasonable stance corridor."""
     _sync_long_horizon_state(
@@ -499,8 +737,10 @@ def gated_position_command_error_tanh(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
     )
-    reach_reward = reach_mdp.position_command_error_tanh(env, asset_cfg=asset_cfg, command_name=command_name, std=std)
+    reach_reward = _static_target_position_error_tanh(env, asset_cfg=asset_cfg, std=std)
     stance_gate = _workspace_ready_gate(env, command_name=command_name, x_range=x_range, y_range=y_range, gate_std=gate_std)
     switch_scale = torch.where(
         env._left_hand_post_switch_steps > 0,
@@ -522,6 +762,8 @@ def pre_stance_torso_lean_penalty(
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
     post_switch_penalty_scale: float = 1.5,
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
 ):
     """Penalize premature torso leaning while the target is still outside the staging corridor."""
     _sync_long_horizon_state(
@@ -534,6 +776,8 @@ def pre_stance_torso_lean_penalty(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
     )
     robot = env.scene["robot"]
     stance_not_ready = 1.0 - _workspace_ready_gate(
@@ -556,6 +800,8 @@ def pre_stance_joint_deviation_penalty(
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
     post_switch_penalty_scale: float = 1.5,
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
 ):
     """Penalize premature joint deviation before stance is ready."""
     _sync_long_horizon_state(
@@ -568,6 +814,8 @@ def pre_stance_joint_deviation_penalty(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
     )
     robot = env.scene[asset_cfg.name]
     stance_not_ready = 1.0 - _workspace_ready_gate(
@@ -594,6 +842,8 @@ def pre_stance_joint_limit_penalty(
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
     post_switch_penalty_scale: float = 1.5,
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
 ):
     """Penalize pushing selected joints close to their soft limits before stance is ready."""
     _sync_long_horizon_state(
@@ -606,6 +856,8 @@ def pre_stance_joint_limit_penalty(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
     )
     robot = env.scene[asset_cfg.name]
     stance_not_ready = 1.0 - _workspace_ready_gate(
@@ -634,6 +886,8 @@ def pre_stance_foot_motion_reward(
     switch_phase_steps: int = 30,
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
 ):
     """Lightly reward local foot motion while the target is still outside the staging corridor."""
     _sync_long_horizon_state(
@@ -646,6 +900,8 @@ def pre_stance_foot_motion_reward(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
     )
     robot = env.scene[asset_cfg.name]
     stance_not_ready = 1.0 - _workspace_ready_gate(
@@ -666,6 +922,8 @@ def target_completion_bonus(
     per_target_timeout_s: float = 4.0,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
 ):
     _sync_long_horizon_state(
         env,
@@ -677,6 +935,8 @@ def target_completion_bonus(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
     )
     return env._left_hand_recent_success.float()
 
@@ -687,12 +947,17 @@ def position_command_progress_reward(
     command_name: str = "left_hand_pose",
 ):
     """Reward step-to-step reduction in hand-to-target error."""
-    position_error = reach_mdp.position_command_error(env, asset_cfg=asset_cfg, command_name=command_name)
+    del command_name
+    position_error = _static_target_position_error(env, asset_cfg=asset_cfg)
     if not hasattr(env, "_left_hand_prev_error"):
         env._left_hand_prev_error = position_error.clone()
     if hasattr(env, "episode_length_buf"):
         reset_ids = env.episode_length_buf == 0
         env._left_hand_prev_error[reset_ids] = position_error[reset_ids]
+    if hasattr(env, "_left_hand_target_switched_this_step"):
+        env._left_hand_prev_error[env._left_hand_target_switched_this_step] = position_error[
+            env._left_hand_target_switched_this_step
+        ]
     progress = env._left_hand_prev_error - position_error
     env._left_hand_prev_error = position_error.clone()
     return progress
@@ -720,6 +985,8 @@ def success_posture_bonus(
     switch_phase_steps: int = 30,
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
 ):
     """Prefer reaching the target from a recoverable stance instead of a desperate stretched posture."""
     _sync_long_horizon_state(
@@ -732,9 +999,11 @@ def success_posture_bonus(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
     )
     robot = env.scene["robot"]
-    position_error = reach_mdp.position_command_error(env, asset_cfg=asset_cfg, command_name=command_name)
+    position_error = _static_target_position_error(env, asset_cfg=asset_cfg)
     stance_gate = _workspace_ready_gate(env, command_name=command_name, x_range=x_range, y_range=y_range, gate_std=gate_std)
     torso_lean = torch.linalg.norm(robot.data.projected_gravity_b[:, :2], dim=-1)
     arm_joint_deviation = torch.sum(

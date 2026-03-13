@@ -18,8 +18,8 @@ from .left_hand_loco_reach_mdp import (
     pre_stance_joint_deviation_penalty,
     pre_stance_joint_limit_penalty,
     pre_stance_torso_lean_penalty,
-    reach_success,
     success_posture_bonus,
+    static_target_position_error,
     target_completion_bonus,
     target_pos_command_obs,
     target_quota_reached,
@@ -119,7 +119,7 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
             asset_name="robot",
             body_name=LEFT_HAND_BODY_NAME,
             resampling_time_range=(STATIC_TARGET_HOLD_S, STATIC_TARGET_HOLD_S),
-            debug_vis=True,
+            debug_vis=False,
             ranges=reach_mdp.UniformPoseCommandCfg.Ranges(
                 pos_x=LOCO_REACH_NEAR_POS_X,
                 pos_y=LOCO_REACH_NEAR_POS_Y,
@@ -223,7 +223,7 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
             params=long_horizon_params,
         )
         self.rewards.left_hand_position_tracking = RewTerm(
-            func=reach_mdp.position_command_error,
+            func=static_target_position_error,
             weight=-0.12,
             params={
                 "asset_cfg": ee_cfg,

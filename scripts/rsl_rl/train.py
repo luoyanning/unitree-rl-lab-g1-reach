@@ -166,10 +166,23 @@ def load_policy_weights_only(runner: OnPolicyRunner, checkpoint_path: str):
     if model is None:
         raise AttributeError("Could not find a policy module on the runner for weights-only warm-start.")
     incompatible = model.load_state_dict(model_state_dict, strict=False)
-    if incompatible.missing_keys:
-        print(f"[INFO]: Missing keys during weights-only warm-start: {incompatible.missing_keys}")
-    if incompatible.unexpected_keys:
-        print(f"[INFO]: Unexpected keys during weights-only warm-start: {incompatible.unexpected_keys}")
+    missing_keys: list[str] = []
+    unexpected_keys: list[str] = []
+    if incompatible is None:
+        pass
+    elif hasattr(incompatible, "missing_keys") or hasattr(incompatible, "unexpected_keys"):
+        missing_keys = list(getattr(incompatible, "missing_keys", []))
+        unexpected_keys = list(getattr(incompatible, "unexpected_keys", []))
+    elif isinstance(incompatible, tuple) and len(incompatible) == 2:
+        missing_keys = list(incompatible[0])
+        unexpected_keys = list(incompatible[1])
+    elif isinstance(incompatible, dict):
+        missing_keys = list(incompatible.get("missing_keys", []))
+        unexpected_keys = list(incompatible.get("unexpected_keys", []))
+    if missing_keys:
+        print(f"[INFO]: Missing keys during weights-only warm-start: {missing_keys}")
+    if unexpected_keys:
+        print(f"[INFO]: Unexpected keys during weights-only warm-start: {unexpected_keys}")
     if hasattr(runner.alg, "optimizer"):
         runner.alg.optimizer.state.clear()
     if hasattr(runner, "current_learning_iteration"):

@@ -5,7 +5,10 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
+import re
+import signal
 import subprocess
 import sys
 import time
@@ -31,6 +34,24 @@ def parse_wrapper_args() -> tuple[argparse.Namespace, list[str]]:
         type=str,
         default="scripts/rsl_rl/train.py",
         help="Train script to launch.",
+    )
+    parser.add_argument(
+        "--reward_drop_restart_min_iteration",
+        type=int,
+        default=50,
+        help="Enable reward-collapse restart logic only after this learning iteration.",
+    )
+    parser.add_argument(
+        "--reward_drop_restart_threshold",
+        type=float,
+        default=10000.0,
+        help="Restart when mean reward stays below (best_reward - threshold).",
+    )
+    parser.add_argument(
+        "--reward_drop_restart_consecutive",
+        type=int,
+        default=2,
+        help="Number of consecutive bad mean-reward iterations required before restart.",
     )
     args, train_args = parser.parse_known_args()
     return args, train_args
@@ -96,6 +117,111 @@ def build_resume_args(original_args: list[str], checkpoint_path: Path) -> list[s
     return args
 
 
+ITERATION_PATTERN = re.compile(r"Learning iteration\s+(\d+)(?:/\d+)?")
+MEAN_REWARD_PATTERN = re.compile(r"Mean reward:\s+([^\s]+)")
+
+
+def parse_iteration(line: str) -> int | None:
+    match = ITERATION_PATTERN.search(line)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def parse_mean_reward(line: str) -> float | None:
+    match = MEAN_REWARD_PATTERN.search(line)
+    if match is None:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
+
+
+def stream_train_process(
+    command: list[str],
+    cwd: Path,
+    min_iteration: int,
+    reward_drop_threshold: float,
+    reward_drop_consecutive: int,
+    best_mean_reward: float | None,
+) -> tuple[int, float | None, bool]:
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+
+    current_iteration = -1
+    consecutive_bad_rewards = 0
+    restart_requested = False
+
+    try:
+        assert process.stdout is not None
+        for line in process.stdout:
+            print(line, end="", flush=True)
+
+            parsed_iteration = parse_iteration(line)
+            if parsed_iteration is not None:
+                current_iteration = parsed_iteration
+
+            parsed_mean_reward = parse_mean_reward(line)
+            if parsed_mean_reward is None:
+                continue
+
+            if math.isfinite(parsed_mean_reward):
+                if best_mean_reward is None or parsed_mean_reward > best_mean_reward:
+                    best_mean_reward = parsed_mean_reward
+
+                if current_iteration > min_iteration and best_mean_reward is not None:
+                    reward_gap = best_mean_reward - parsed_mean_reward
+                    if reward_gap > reward_drop_threshold:
+                        consecutive_bad_rewards += 1
+                        print(
+                            "[AUTO-RESUME] Detected reward collapse: "
+                            f"iteration={current_iteration} "
+                            f"mean_reward={parsed_mean_reward:.4f} "
+                            f"best_reward={best_mean_reward:.4f} "
+                            f"gap={reward_gap:.4f} "
+                            f"consecutive={consecutive_bad_rewards}/{reward_drop_consecutive}",
+                            flush=True,
+                        )
+                    else:
+                        consecutive_bad_rewards = 0
+                else:
+                    consecutive_bad_rewards = 0
+            else:
+                if current_iteration > min_iteration:
+                    consecutive_bad_rewards += 1
+                    print(
+                        "[AUTO-RESUME] Detected non-finite mean reward after warm-up: "
+                        f"iteration={current_iteration} value={parsed_mean_reward} "
+                        f"consecutive={consecutive_bad_rewards}/{reward_drop_consecutive}",
+                        flush=True,
+                    )
+                else:
+                    consecutive_bad_rewards = 0
+
+            if consecutive_bad_rewards >= reward_drop_consecutive:
+                restart_requested = True
+                print(
+                    "[AUTO-RESUME] Triggering restart from the latest checkpoint due to persistent reward collapse.",
+                    flush=True,
+                )
+                process.terminate()
+                break
+    except KeyboardInterrupt:
+        process.send_signal(signal.SIGINT)
+        raise
+    finally:
+        returncode = process.wait()
+
+    return returncode, best_mean_reward, restart_requested
+
+
 def main() -> int:
     wrapper_args, train_args = parse_wrapper_args()
     if not train_args:
@@ -112,6 +238,7 @@ def main() -> int:
     base_train_args = list(train_args)
 
     restart_count = 0
+    best_mean_reward: float | None = None
     while True:
         latest_checkpoint = find_latest_checkpoint(log_root)
         launch_args = base_train_args
@@ -126,20 +253,30 @@ def main() -> int:
         print(f"[AUTO-RESUME] Launching: {' '.join(command)}", flush=True)
 
         try:
-            completed = subprocess.run(command, cwd=repo_root)
+            returncode, best_mean_reward, restart_requested = stream_train_process(
+                command,
+                cwd=repo_root,
+                min_iteration=wrapper_args.reward_drop_restart_min_iteration,
+                reward_drop_threshold=wrapper_args.reward_drop_restart_threshold,
+                reward_drop_consecutive=wrapper_args.reward_drop_restart_consecutive,
+                best_mean_reward=best_mean_reward,
+            )
         except KeyboardInterrupt:
             print("[AUTO-RESUME] Interrupted by user.", flush=True)
             return 130
 
-        if completed.returncode == 0:
+        if returncode == 0 and not restart_requested:
             print("[AUTO-RESUME] Training completed successfully.", flush=True)
             return 0
 
         restart_count += 1
-        print(f"[AUTO-RESUME] Train process exited with code {completed.returncode}.", flush=True)
+        if restart_requested:
+            print("[AUTO-RESUME] Train process was restarted proactively.", flush=True)
+        else:
+            print(f"[AUTO-RESUME] Train process exited with code {returncode}.", flush=True)
         if restart_count > wrapper_args.max_auto_restarts:
             print("[AUTO-RESUME] Reached restart limit. Stopping.", flush=True)
-            return completed.returncode
+            return returncode
         time.sleep(wrapper_args.restart_delay)
 
 

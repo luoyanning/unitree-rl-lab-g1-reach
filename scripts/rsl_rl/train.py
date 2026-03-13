@@ -155,8 +155,8 @@ def load_policy_weights_only(runner: OnPolicyRunner, checkpoint_path: str):
         raise AttributeError("Runner does not expose 'actor_critic' or 'policy'; cannot initialize weights only.")
 
     incompatible = policy_nn.load_state_dict(model_state_dict, strict=False)
-    missing_keys = list(incompatible.missing_keys)
-    unexpected_keys = list(incompatible.unexpected_keys)
+    missing_keys = list(getattr(incompatible, "missing_keys", []))
+    unexpected_keys = list(getattr(incompatible, "unexpected_keys", []))
 
     if missing_keys or unexpected_keys:
         print("[INFO]: Weights-only warm start loaded with non-strict state-dict matching.")

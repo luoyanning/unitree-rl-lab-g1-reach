@@ -13,6 +13,7 @@ from ..velocity_env_cfg import RobotEnvCfg
 
 from .left_hand_loco_reach_mdp import (
     gated_position_command_error_tanh,
+    guided_base_velocity_command_obs,
     left_hand_target_pos_levels,
     pre_stance_foot_motion_reward,
     pre_stance_joint_deviation_penalty,
@@ -139,12 +140,6 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
         self.commands.base_velocity.rel_standing_envs = 0.0
         self.commands.base_velocity.rel_heading_envs = 0.0
         self.commands.base_velocity.debug_vis = False
-        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 0.0)
-        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
-        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
-        self.commands.base_velocity.limit_ranges.lin_vel_x = (0.0, 0.0)
-        self.commands.base_velocity.limit_ranges.lin_vel_y = (0.0, 0.0)
-        self.commands.base_velocity.limit_ranges.ang_vel_z = (0.0, 0.0)
 
         self.commands.left_hand_pose = reach_mdp.UniformPoseCommandCfg(
             asset_name="robot",
@@ -164,9 +159,11 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
         self.actions.JointPositionAction.joint_names = [".*"]
         self.actions.JointPositionAction.scale = 0.25
 
-        # Keep policy/critic tensor sizes aligned with the locomotion task for checkpoint warm-starting.
+        # Keep the actor command semantics locomotion-compatible for velocity-policy warm start:
+        # x/y are locomotion guidance derived from the fixed world target, while the third slot
+        # carries a bounded target-height feature for the reach subtask.
         self.observations.policy.velocity_commands = ObsTerm(
-            func=target_pos_command_obs,
+            func=guided_base_velocity_command_obs,
             params=long_horizon_params,
         )
         self.observations.critic.velocity_commands = ObsTerm(
@@ -177,7 +174,7 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
         self.events.base_external_force_torque = None
         self.events.reset_base.params["pose_range"] = {"x": (-0.2, 0.2), "y": (-0.2, 0.2), "yaw": (-0.8, 0.8)}
 
-        self.rewards.track_lin_vel_xy = None
+        self.rewards.track_lin_vel_xy.weight = 1.0
         self.rewards.track_ang_vel_z = None
         self.rewards.gait = None
         self.rewards.feet_clearance = None

@@ -6,4 +6,5 @@ from unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg import BasePPORunnerC
 @configclass
 class LeftHandLocoReachPPORunnerCfg(BasePPORunnerCfg):
     def __post_init__(self):
-        self.policy.init_noise_std = 0.5
+        self.policy.init_noise_std = 0.25
+        self.algorithm.learning_rate = 5.0e-4

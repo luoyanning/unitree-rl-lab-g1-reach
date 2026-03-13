@@ -132,17 +132,22 @@ def resolve_resume_path(
     return get_checkpoint_path(log_root_path, load_run, load_checkpoint)
 
 
-def _left_hand_loco_reach_policy_command_obs_indices() -> list[int]:
-    """Indices of the 3 command features in each stacked policy frame for the loco-reach task."""
+def _left_hand_loco_reach_policy_command_obs_indices() -> tuple[list[int], list[int]]:
+    """Indices of the stacked policy command features for the loco-reach task.
+
+    The first two command features keep locomotion semantics from the velocity task.
+    The third feature is repurposed as a target-height cue for the reach subtask.
+    """
     history_length = 5
     frame_dim = 96
     command_start = 6
-    command_dim = 3
-    indices: list[int] = []
+    xy_indices: list[int] = []
+    z_indices: list[int] = []
     for history_index in range(history_length):
         frame_offset = history_index * frame_dim
-        indices.extend(range(frame_offset + command_start, frame_offset + command_start + command_dim))
-    return indices
+        xy_indices.extend(range(frame_offset + command_start, frame_offset + command_start + 2))
+        z_indices.append(frame_offset + command_start + 2)
+    return xy_indices, z_indices
 
 
 def load_policy_weights_only(
@@ -176,12 +181,11 @@ def load_policy_weights_only(
     current_state_dict = policy_nn.state_dict()
     filtered_state_dict = {}
     skipped_keys = []
-    command_obs_indices = (
+    _, command_z_obs_indices = (
         _left_hand_loco_reach_policy_command_obs_indices()
         if task_name == "Unitree-G1-29dof-LeftHand-LocoReach-v0"
-        else []
+        else ([], [])
     )
-    skip_actor_output_layer = task_name == "Unitree-G1-29dof-LeftHand-LocoReach-v0"
 
     for key, value in model_state_dict.items():
         if key not in current_state_dict:
@@ -196,12 +200,9 @@ def load_policy_weights_only(
         if not key.startswith("actor."):
             skipped_keys.append(key)
             continue
-        if skip_actor_output_layer and key.startswith("actor.6."):
-            skipped_keys.append(key)
-            continue
-        if command_obs_indices and key == "actor.0.weight":
+        if command_z_obs_indices and key == "actor.0.weight":
             merged_weight = value.clone()
-            merged_weight[:, command_obs_indices] = current_state_dict[key][:, command_obs_indices]
+            merged_weight[:, command_z_obs_indices] = current_state_dict[key][:, command_z_obs_indices]
             filtered_state_dict[key] = merged_weight
             continue
         filtered_state_dict[key] = value
@@ -315,7 +316,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     else:
         resume_path = None
     init_checkpoint_path = retrieve_file_path(args_cli.init_checkpoint) if args_cli.init_checkpoint else None
-
     # wrap for video recording
     if args_cli.video:
         video_kwargs = {
@@ -345,14 +345,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         install_positive_std_guard(runner, freeze_std=False)
     elif init_checkpoint_path is not None:
         print(f"[INFO]: Initializing model weights from checkpoint: {init_checkpoint_path}")
-        warmstart_init_std = min(float(agent_cfg.policy.init_noise_std), 0.25)
+        warmstart_init_std = float(agent_cfg.policy.init_noise_std)
         load_policy_weights_only(
             runner,
             init_checkpoint_path,
             task_name=args_cli.task,
             init_noise_std=warmstart_init_std,
         )
-        install_positive_std_guard(runner, std_min=0.05, std_max=0.25, freeze_std=True)
+        install_positive_std_guard(runner, std_min=1.0e-3, std_max=5.0, freeze_std=False)
     else:
         install_positive_std_guard(runner, freeze_std=False)
 

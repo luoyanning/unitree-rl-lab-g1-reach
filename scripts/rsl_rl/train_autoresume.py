@@ -96,6 +96,7 @@ def find_latest_checkpoint(log_root: Path) -> Path | None:
 def build_resume_args(original_args: list[str], checkpoint_path: Path) -> list[str]:
     args = list(original_args)
     args = remove_arg(args, "--load_run")
+    args = remove_arg(args, "--init_checkpoint")
     args = upsert_flag(args, "--resume")
     args = upsert_flag(args, "--checkpoint", str(checkpoint_path))
     return args

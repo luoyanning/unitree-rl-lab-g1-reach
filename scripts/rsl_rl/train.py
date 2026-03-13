@@ -131,6 +131,43 @@ def resolve_resume_path(
     return get_checkpoint_path(log_root_path, load_run, load_checkpoint)
 
 
+def load_policy_weights_only(runner: OnPolicyRunner, checkpoint_path: str):
+    """Initialize policy weights from a checkpoint without restoring optimizer/iteration state."""
+    checkpoint = torch.load(checkpoint_path, map_location=runner.device)
+    if not isinstance(checkpoint, dict):
+        raise ValueError(f"Checkpoint at '{checkpoint_path}' is not a dict and cannot be used for warm start.")
+
+    model_state_dict = None
+    for key in ("model_state_dict", "policy_state_dict", "state_dict", "model"):
+        if key in checkpoint:
+            model_state_dict = checkpoint[key]
+            break
+    if model_state_dict is None:
+        available_keys = ", ".join(sorted(checkpoint.keys()))
+        raise KeyError(
+            f"Could not find model weights in checkpoint '{checkpoint_path}'. Available top-level keys: {available_keys}"
+        )
+
+    policy_nn = getattr(runner.alg, "actor_critic", None)
+    if policy_nn is None:
+        policy_nn = getattr(runner.alg, "policy", None)
+    if policy_nn is None:
+        raise AttributeError("Runner does not expose 'actor_critic' or 'policy'; cannot initialize weights only.")
+
+    incompatible = policy_nn.load_state_dict(model_state_dict, strict=False)
+    missing_keys = list(incompatible.missing_keys)
+    unexpected_keys = list(incompatible.unexpected_keys)
+
+    if missing_keys or unexpected_keys:
+        print("[INFO]: Weights-only warm start loaded with non-strict state-dict matching.")
+        if missing_keys:
+            print(f"[INFO]: Missing keys ({len(missing_keys)}): {missing_keys}")
+        if unexpected_keys:
+            print(f"[INFO]: Unexpected keys ({len(unexpected_keys)}): {unexpected_keys}")
+    else:
+        print("[INFO]: Weights-only warm start matched the policy state dict exactly.")
+
+
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlOnPolicyRunnerCfg):
     """Train with RSL-RL agent."""
@@ -178,6 +215,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # save resume path before creating a new log_dir
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         resume_path = resolve_resume_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+    else:
+        resume_path = None
+    init_checkpoint_path = retrieve_file_path(args_cli.init_checkpoint) if args_cli.init_checkpoint else None
 
     # wrap for video recording
     if args_cli.video:
@@ -200,9 +240,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     runner.add_git_repo_to_log(__file__)
     # load the checkpoint
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
+        if init_checkpoint_path is not None:
+            print("[INFO]: Ignoring --init_checkpoint because --resume is active.")
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path)
+    elif init_checkpoint_path is not None:
+        print(f"[INFO]: Initializing model weights from checkpoint: {init_checkpoint_path}")
+        load_policy_weights_only(runner, init_checkpoint_path)
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)

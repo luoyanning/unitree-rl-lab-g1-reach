@@ -41,6 +41,12 @@ parser.add_argument("--task", type=str, default=None, choices=tasks, help="Name 
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
 parser.add_argument(
+    "--load_weights_only",
+    action="store_true",
+    default=False,
+    help="Warm-start from a checkpoint by loading only model weights without optimizer or iteration state.",
+)
+parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 # append RSL-RL cli arguments
@@ -131,9 +137,33 @@ def resolve_resume_path(
     return get_checkpoint_path(log_root_path, load_run, load_checkpoint)
 
 
+def load_policy_weights_only(runner: OnPolicyRunner, checkpoint_path: str):
+    """Load only actor-critic weights for cross-task warm-starting."""
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    if "model_state_dict" in checkpoint:
+        model_state_dict = checkpoint["model_state_dict"]
+    elif "state_dict" in checkpoint:
+        model_state_dict = checkpoint["state_dict"]
+    else:
+        raise KeyError(
+            "Checkpoint does not contain 'model_state_dict' or 'state_dict'; cannot perform weights-only warm-start."
+        )
+    incompatible = runner.alg.actor_critic.load_state_dict(model_state_dict, strict=False)
+    if incompatible.missing_keys:
+        print(f"[INFO]: Missing keys during weights-only warm-start: {incompatible.missing_keys}")
+    if incompatible.unexpected_keys:
+        print(f"[INFO]: Unexpected keys during weights-only warm-start: {incompatible.unexpected_keys}")
+    if hasattr(runner.alg, "optimizer"):
+        runner.alg.optimizer.state.clear()
+    if hasattr(runner, "current_learning_iteration"):
+        runner.current_learning_iteration = 0
+
+
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlOnPolicyRunnerCfg):
     """Train with RSL-RL agent."""
+    if args_cli.load_weights_only and agent_cfg.resume:
+        raise ValueError("Use either --resume or --load_weights_only, not both.")
     # override configurations with non-hydra CLI arguments
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
@@ -176,7 +206,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env = multi_agent_to_single_agent(env)
 
     # save resume path before creating a new log_dir
-    if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
+    if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation" or args_cli.load_weights_only:
         resume_path = resolve_resume_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
     # wrap for video recording
@@ -203,6 +233,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path)
+    elif args_cli.load_weights_only:
+        print(f"[INFO]: Warm-starting model weights from: {resume_path}")
+        load_policy_weights_only(runner, resume_path)
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)

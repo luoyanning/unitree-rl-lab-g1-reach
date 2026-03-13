@@ -14,6 +14,8 @@ from ..velocity_env_cfg import RobotEnvCfg
 from .left_hand_loco_reach_mdp import (
     gated_position_command_error_tanh,
     left_hand_target_pos_levels,
+    near_target_action_rate_l2,
+    near_target_joint_deviation_l1,
     pre_stance_foot_motion_reward,
     pre_stance_joint_deviation_penalty,
     pre_stance_joint_limit_penalty,
@@ -21,6 +23,7 @@ from .left_hand_loco_reach_mdp import (
     static_target_position_error,
     success_posture_bonus,
     target_completion_bonus,
+    target_hold_reward,
     target_pos_command_obs,
     target_quota_reached,
     target_timeout_reached,
@@ -36,7 +39,11 @@ STATIC_TARGET_HOLD_S = 1.0e9
 PER_TARGET_TIMEOUT_S = 4.0
 MAX_TARGETS_PER_EPISODE = 6
 POST_SWITCH_STEPS = 30
-SUCCESS_THRESHOLD = 0.06
+SUCCESS_ENTER_RADIUS = 0.06
+SUCCESS_EXIT_RADIUS = 0.09
+SUCCESS_HOLD_STEPS = 8
+NEAR_SUCCESS_PENALTY_RADIUS = 0.10
+NEAR_SUCCESS_PENALTY_SCALE = 0.2
 LOCO_REACH_NEAR_POS_X = (0.25, 0.48)
 LOCO_REACH_POSTURE_POS_X = (0.35, 0.72)
 LOCO_REACH_FAR_POS_X = (0.50, 1.00)
@@ -116,7 +123,9 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
         stance_ready_std = 0.01
         long_horizon_params = {
             "command_name": LEFT_HAND_COMMAND_NAME,
-            "success_threshold": SUCCESS_THRESHOLD,
+            "success_threshold": SUCCESS_ENTER_RADIUS,
+            "success_exit_radius": SUCCESS_EXIT_RADIUS,
+            "success_hold_steps": SUCCESS_HOLD_STEPS,
             "max_targets_per_episode": MAX_TARGETS_PER_EPISODE,
             "switch_phase_steps": POST_SWITCH_STEPS,
             "static_target_hold_s": STATIC_TARGET_HOLD_S,
@@ -176,9 +185,26 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
         self.rewards.feet_clearance = None
         self.rewards.joint_deviation_arms = None
         self.rewards.joint_deviation_legs.weight = -0.005
-        self.rewards.joint_deviation_waists.weight = -0.2
+        self.rewards.joint_deviation_waists = RewTerm(
+            func=near_target_joint_deviation_l1,
+            weight=-0.2,
+            params={
+                **long_horizon_params,
+                "asset_cfg": waist_yaw_cfg,
+                "near_success_penalty_radius": NEAR_SUCCESS_PENALTY_RADIUS,
+                "near_success_penalty_scale": NEAR_SUCCESS_PENALTY_SCALE,
+            },
+        )
         self.rewards.feet_slide.weight = -0.01
-        self.rewards.action_rate.weight = -0.02
+        self.rewards.action_rate = RewTerm(
+            func=near_target_action_rate_l2,
+            weight=-0.02,
+            params={
+                **long_horizon_params,
+                "near_success_penalty_radius": NEAR_SUCCESS_PENALTY_RADIUS,
+                "near_success_penalty_scale": NEAR_SUCCESS_PENALTY_SCALE,
+            },
+        )
         self.rewards.base_target_stance = RewTerm(
             func=target_relative_base_stance_l2,
             weight=-2.5,
@@ -198,9 +224,10 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
             params=long_horizon_params,
         )
         self.rewards.right_arm_balance_posture = RewTerm(
-            func=mdp.joint_deviation_l1,
+            func=near_target_joint_deviation_l1,
             weight=-0.02,
             params={
+                **long_horizon_params,
                 "asset_cfg": SceneEntityCfg(
                     "robot",
                     joint_names=[
@@ -209,12 +236,19 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
                         "right_wrist_.*_joint",
                     ],
                 )
+                ,
+                "near_success_penalty_radius": NEAR_SUCCESS_PENALTY_RADIUS,
+                "near_success_penalty_scale": NEAR_SUCCESS_PENALTY_SCALE,
             },
         )
         self.rewards.pre_stance_torso_lean = RewTerm(
             func=pre_stance_torso_lean_penalty,
             weight=-1.5,
-            params=long_horizon_params,
+            params={
+                **long_horizon_params,
+                "near_success_penalty_radius": NEAR_SUCCESS_PENALTY_RADIUS,
+                "near_success_penalty_scale": NEAR_SUCCESS_PENALTY_SCALE,
+            },
         )
         self.rewards.pre_stance_waist_twist = RewTerm(
             func=pre_stance_joint_deviation_penalty,
@@ -222,6 +256,8 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
             params={
                 **long_horizon_params,
                 "asset_cfg": waist_yaw_cfg,
+                "near_success_penalty_radius": NEAR_SUCCESS_PENALTY_RADIUS,
+                "near_success_penalty_scale": NEAR_SUCCESS_PENALTY_SCALE,
             },
         )
         self.rewards.pre_stance_arm_extension = RewTerm(
@@ -231,6 +267,8 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
                 **long_horizon_params,
                 "asset_cfg": left_arm_cfg,
                 "margin_threshold": 0.18,
+                "near_success_penalty_radius": NEAR_SUCCESS_PENALTY_RADIUS,
+                "near_success_penalty_scale": NEAR_SUCCESS_PENALTY_SCALE,
             },
         )
         self.rewards.pre_stance_foot_motion = RewTerm(
@@ -245,6 +283,15 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
             func=target_completion_bonus,
             weight=3.0,
             params=long_horizon_params,
+        )
+        self.rewards.target_hold = RewTerm(
+            func=target_hold_reward,
+            weight=4.0,
+            params={
+                "asset_cfg": ee_cfg,
+                **long_horizon_params,
+                "hold_reward_std": 0.03,
+            },
         )
         self.rewards.left_hand_position_tracking = RewTerm(
             func=static_target_position_error,

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import subprocess
 import sys
 import time
@@ -80,16 +79,11 @@ def normalize_experiment_name(task_name: str) -> str:
     return experiment_name
 
 
-def extract_checkpoint_iteration(path: Path) -> int:
-    match = re.search(r"model_(\d+)\.pt$", path.name)
-    return int(match.group(1)) if match else -1
-
-
 def find_latest_checkpoint(log_root: Path) -> Path | None:
     checkpoints = [path for path in log_root.rglob("model_*.pt") if path.is_file()]
     if not checkpoints:
         return None
-    checkpoints.sort(key=lambda path: (extract_checkpoint_iteration(path), path.stat().st_mtime, str(path)))
+    checkpoints.sort(key=lambda path: (path.stat().st_mtime_ns, str(path)))
     return checkpoints[-1]
 
 

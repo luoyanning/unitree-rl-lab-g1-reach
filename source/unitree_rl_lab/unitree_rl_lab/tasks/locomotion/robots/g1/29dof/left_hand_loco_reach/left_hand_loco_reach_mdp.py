@@ -8,6 +8,7 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.utils.math import quat_apply, sample_uniform, yaw_quat
+from unitree_rl_lab.tasks.locomotion import mdp as loco_mdp
 
 try:
     from isaaclab.utils.math import quat_apply_inverse
@@ -184,6 +185,8 @@ def static_target_position_error(
     switch_phase_steps: int = 30,
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
     sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
@@ -199,6 +202,8 @@ def static_target_position_error(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
         sample_regimes=sample_regimes,
         sample_weights=sample_weights,
     )
@@ -279,7 +284,13 @@ def _ensure_long_horizon_state(env, command_name: str, max_targets_per_episode: 
         env._left_hand_workspace_error_at_contact = torch.zeros(num_envs, device=env.device)
         env._left_hand_torso_lean_at_contact = torch.zeros(num_envs, device=env.device)
         env._left_hand_arm_extension_at_contact = torch.zeros(num_envs, device=env.device)
+        env._left_hand_distance_at_completion = torch.zeros(num_envs, device=env.device)
         env._left_hand_recent_success = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
+        env._left_hand_in_success_zone = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
+        env._left_hand_success_hold_counter = torch.zeros(num_envs, dtype=torch.long, device=env.device)
+        env._left_hand_success_zone_time = torch.zeros(num_envs, dtype=torch.long, device=env.device)
+        env._left_hand_held_success_count = torch.zeros(num_envs, dtype=torch.long, device=env.device)
+        env._left_hand_completion_after_hold = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
         env._left_hand_target_switched_this_step = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
         env._left_hand_just_reset_this_step = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
         env._left_hand_state_synced_step = -1
@@ -304,19 +315,26 @@ def _ensure_long_horizon_state(env, command_name: str, max_targets_per_episode: 
         )
         env._left_hand_ee_body_id = robot.find_bodies(["left_wrist_yaw_link"], preserve_order=True)[0][0]
     command_term = env.command_manager.get_term(command_name)
-    if ENABLE_LONG_HORIZON_DEBUG_METRICS and hasattr(command_term, "metrics"):
-        command_term.metrics.setdefault("targets_completed", torch.zeros(num_envs, device=env.device))
-        command_term.metrics.setdefault("target_index", torch.zeros(num_envs, device=env.device))
-        command_term.metrics.setdefault("workspace_error", torch.zeros(num_envs, device=env.device))
-        command_term.metrics.setdefault("workspace_error_at_contact", torch.zeros(num_envs, device=env.device))
-        command_term.metrics.setdefault("torso_lean_at_contact", torch.zeros(num_envs, device=env.device))
-        command_term.metrics.setdefault("arm_extension_at_contact", torch.zeros(num_envs, device=env.device))
-        command_term.metrics.setdefault("foot_motion_before_contact", torch.zeros(num_envs, device=env.device))
-        command_term.metrics.setdefault("post_switch_steps", torch.zeros(num_envs, device=env.device))
-        command_term.metrics.setdefault("post_switch_posture_quality", torch.zeros(num_envs, device=env.device))
-        command_term.metrics.setdefault("switch_failure_risk", torch.zeros(num_envs, device=env.device))
-        for index in range(max_targets_per_episode):
-            command_term.metrics.setdefault(f"success_target_{index}", torch.zeros(num_envs, device=env.device))
+    if hasattr(command_term, "metrics"):
+        command_term.metrics.setdefault("success_zone_flag", torch.zeros(num_envs, device=env.device))
+        command_term.metrics.setdefault("success_hold_counter", torch.zeros(num_envs, device=env.device))
+        command_term.metrics.setdefault("success_zone_time", torch.zeros(num_envs, device=env.device))
+        command_term.metrics.setdefault("held_success_count", torch.zeros(num_envs, device=env.device))
+        command_term.metrics.setdefault("completion_distance", torch.zeros(num_envs, device=env.device))
+        command_term.metrics.setdefault("completion_after_hold", torch.zeros(num_envs, device=env.device))
+        if ENABLE_LONG_HORIZON_DEBUG_METRICS:
+            command_term.metrics.setdefault("targets_completed", torch.zeros(num_envs, device=env.device))
+            command_term.metrics.setdefault("target_index", torch.zeros(num_envs, device=env.device))
+            command_term.metrics.setdefault("workspace_error", torch.zeros(num_envs, device=env.device))
+            command_term.metrics.setdefault("workspace_error_at_contact", torch.zeros(num_envs, device=env.device))
+            command_term.metrics.setdefault("torso_lean_at_contact", torch.zeros(num_envs, device=env.device))
+            command_term.metrics.setdefault("arm_extension_at_contact", torch.zeros(num_envs, device=env.device))
+            command_term.metrics.setdefault("foot_motion_before_contact", torch.zeros(num_envs, device=env.device))
+            command_term.metrics.setdefault("post_switch_steps", torch.zeros(num_envs, device=env.device))
+            command_term.metrics.setdefault("post_switch_posture_quality", torch.zeros(num_envs, device=env.device))
+            command_term.metrics.setdefault("switch_failure_risk", torch.zeros(num_envs, device=env.device))
+            for index in range(max_targets_per_episode):
+                command_term.metrics.setdefault(f"success_target_{index}", torch.zeros(num_envs, device=env.device))
 
 
 def _switch_phase_scale(env, switch_phase_steps: int):
@@ -371,6 +389,26 @@ def _workspace_ready_gate(
     return torch.exp(-workspace_error / gate_std)
 
 
+def _near_success_penalty_scale(
+    env,
+    position_error: torch.Tensor,
+    near_success_penalty_radius: float,
+    near_success_penalty_scale: float,
+):
+    near_success = getattr(env, "_left_hand_in_success_zone", torch.zeros(env.num_envs, dtype=torch.bool, device=env.device))
+    near_success |= position_error <= near_success_penalty_radius
+    return torch.where(
+        near_success,
+        torch.full((env.num_envs,), near_success_penalty_scale, device=env.device),
+        torch.ones(env.num_envs, device=env.device),
+    )
+
+
+def _hold_progress(env, success_hold_steps: int):
+    hold_steps = max(1, int(success_hold_steps))
+    return torch.clamp(env._left_hand_success_hold_counter.float() / float(hold_steps), max=1.0)
+
+
 def _sync_long_horizon_state(
     env,
     command_name: str,
@@ -383,6 +421,8 @@ def _sync_long_horizon_state(
     y_range: tuple[float, float],
     sample_regimes: dict[str, dict[str, tuple[float, float]]] | None,
     sample_weights: dict[str, float] | None,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
 ):
     _ensure_long_horizon_state(
         env, command_name=command_name, max_targets_per_episode=max_targets_per_episode, switch_phase_steps=switch_phase_steps
@@ -395,6 +435,7 @@ def _sync_long_horizon_state(
     reset_ids, current_episode_length, prev_episode_length = _compute_just_reset_mask(env)
     env._left_hand_just_reset_this_step[:] = reset_ids
     env._left_hand_recent_success.zero_()
+    env._left_hand_completion_after_hold.zero_()
     env._left_hand_target_switched_this_step.zero_()
     _get_sampling_distribution_state(env, sample_regimes=sample_regimes, sample_weights=sample_weights)
     per_target_timeout_steps = max(1, int(round(per_target_timeout_s / env.step_dt)))
@@ -415,15 +456,21 @@ def _sync_long_horizon_state(
 
     if torch.any(reset_ids):
         env._left_hand_completed_targets[reset_ids] = 0
+        env._left_hand_held_success_count[reset_ids] = 0
         env._left_hand_target_index[reset_ids] = 0
         env._left_hand_post_switch_steps[reset_ids] = switch_phase_steps
         env._left_hand_target_age_steps[reset_ids] = 0
         env._left_hand_prev_success[reset_ids] = False
         env._left_hand_recent_success[reset_ids] = False
+        env._left_hand_in_success_zone[reset_ids] = False
+        env._left_hand_success_hold_counter[reset_ids] = 0
+        env._left_hand_success_zone_time[reset_ids] = 0
+        env._left_hand_completion_after_hold[reset_ids] = False
         env._left_hand_foot_motion_before_contact[reset_ids] = 0.0
         env._left_hand_workspace_error_at_contact[reset_ids] = 0.0
         env._left_hand_torso_lean_at_contact[reset_ids] = 0.0
         env._left_hand_arm_extension_at_contact[reset_ids] = 0.0
+        env._left_hand_distance_at_completion[reset_ids] = 0.0
         env._left_hand_has_active_target[reset_ids] = False
 
     just_spawned = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
@@ -434,7 +481,19 @@ def _sync_long_horizon_state(
         )
         just_spawned[inactive_ids] = True
 
-    success = _ee_position_error(env, command_name=command_name) < success_threshold
+    position_error = _ee_position_error(env, command_name=command_name)
+    enter_success_zone = position_error <= success_threshold
+    remain_in_success_zone = env._left_hand_in_success_zone & (position_error <= success_exit_radius)
+    in_success_zone = enter_success_zone | remain_in_success_zone
+    env._left_hand_success_zone_time += in_success_zone.long()
+    env._left_hand_success_hold_counter = torch.where(
+        in_success_zone,
+        env._left_hand_success_hold_counter + 1,
+        torch.zeros_like(env._left_hand_success_hold_counter),
+    )
+    env._left_hand_in_success_zone[:] = in_success_zone
+
+    success = env._left_hand_success_hold_counter >= max(1, int(success_hold_steps))
     success_edge = success & ~env._left_hand_prev_success & ~reset_ids
 
     workspace_error = _workspace_error_l2(env, command_name=command_name, x_range=x_range, y_range=y_range)
@@ -451,8 +510,11 @@ def _sync_long_horizon_state(
         env._left_hand_workspace_error_at_contact[success_edge] = workspace_error[success_edge]
         env._left_hand_torso_lean_at_contact[success_edge] = torso_lean[success_edge]
         env._left_hand_arm_extension_at_contact[success_edge] = arm_deviation[success_edge]
+        env._left_hand_distance_at_completion[success_edge] = position_error[success_edge]
         env._left_hand_completed_targets[success_edge] += 1
+        env._left_hand_held_success_count[success_edge] += 1
         env._left_hand_recent_success[success_edge] = True
+        env._left_hand_completion_after_hold[success_edge] = True
         if ENABLE_LONG_HORIZON_DEBUG_METRICS and hasattr(command_term, "metrics"):
             for index in range(max_targets_per_episode):
                 mask = success_edge & (env._left_hand_completed_targets == (index + 1))
@@ -477,6 +539,9 @@ def _sync_long_horizon_state(
     )
     env._left_hand_post_switch_steps[switch_detected] = switch_phase_steps
     env._left_hand_target_age_steps[switch_detected] = 0
+    env._left_hand_in_success_zone[switch_detected] = False
+    env._left_hand_success_hold_counter[switch_detected] = 0
+    env._left_hand_success_zone_time[switch_detected] = 0
     env._left_hand_foot_motion_before_contact[switch_detected] = 0.0
     env._left_hand_target_switched_this_step[:] = switch_detected
     post_timeout = env._left_hand_target_age_steps >= per_target_timeout_steps
@@ -489,6 +554,13 @@ def _sync_long_horizon_state(
         env._left_hand_foot_motion_before_contact, torch.tanh(foot_speed / 0.35)
     )
 
+    if hasattr(command_term, "metrics"):
+        command_term.metrics["success_zone_flag"][:] = env._left_hand_in_success_zone.float()
+        command_term.metrics["success_hold_counter"][:] = env._left_hand_success_hold_counter.float()
+        command_term.metrics["success_zone_time"][:] = env._left_hand_success_zone_time.float()
+        command_term.metrics["held_success_count"][:] = env._left_hand_held_success_count.float()
+        command_term.metrics["completion_distance"][:] = env._left_hand_distance_at_completion
+        command_term.metrics["completion_after_hold"][:] = env._left_hand_completion_after_hold.float()
     if ENABLE_LONG_HORIZON_DEBUG_METRICS and hasattr(command_term, "metrics"):
         posture_quality = torch.exp(-(1.25 * torso_lean + 0.12 * arm_deviation))
         command_term.metrics["targets_completed"][:] = env._left_hand_completed_targets.float()
@@ -535,6 +607,8 @@ def target_pos_command_obs(
     switch_phase_steps: int = 30,
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
     sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
@@ -551,6 +625,8 @@ def target_pos_command_obs(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
         sample_regimes=sample_regimes,
         sample_weights=sample_weights,
     )
@@ -563,10 +639,22 @@ def reach_success(
     command_name: str = "left_hand_pose",
     threshold: float = 0.05,
 ):
-    """Check whether the end-effector reaches the fixed world target threshold."""
-    del command_name
-    position_error = _static_target_position_error(env, asset_cfg=asset_cfg)
-    return position_error < threshold
+    """Check whether the held-success condition is active for the current fixed world target."""
+    del asset_cfg, threshold
+    _sync_long_horizon_state(
+        env,
+        command_name=command_name,
+        success_threshold=0.06,
+        max_targets_per_episode=1,
+        switch_phase_steps=0,
+        static_target_hold_s=1.0e9,
+        per_target_timeout_s=4.0,
+        x_range=(0.38, 0.62),
+        y_range=(0.08, 0.28),
+        sample_regimes=None,
+        sample_weights=None,
+    )
+    return env._left_hand_prev_success
 
 
 def target_quota_reached(
@@ -577,6 +665,8 @@ def target_quota_reached(
     switch_phase_steps: int = 30,
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
     sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
@@ -592,6 +682,8 @@ def target_quota_reached(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
         sample_regimes=sample_regimes,
         sample_weights=sample_weights,
     )
@@ -606,6 +698,8 @@ def target_timeout_reached(
     switch_phase_steps: int = 30,
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
     sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
@@ -621,6 +715,8 @@ def target_timeout_reached(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
         sample_regimes=sample_regimes,
         sample_weights=sample_weights,
     )
@@ -715,6 +811,8 @@ def target_relative_base_stance_l2(
     switch_phase_steps: int = 30,
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
     sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
     sample_weights: dict[str, float] | None = None,
 ):
@@ -729,6 +827,8 @@ def target_relative_base_stance_l2(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
         sample_regimes=sample_regimes,
         sample_weights=sample_weights,
     )
@@ -746,6 +846,8 @@ def target_relative_base_stance_ready(
     switch_phase_steps: int = 30,
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
     post_switch_bonus_scale: float = 1.75,
     sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
     sample_weights: dict[str, float] | None = None,
@@ -761,6 +863,8 @@ def target_relative_base_stance_ready(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
         sample_regimes=sample_regimes,
         sample_weights=sample_weights,
     )
@@ -778,6 +882,8 @@ def target_relative_base_stance_progress(
     switch_phase_steps: int = 30,
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
     post_switch_bonus_scale: float = 1.5,
     sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
     sample_weights: dict[str, float] | None = None,
@@ -793,6 +899,8 @@ def target_relative_base_stance_progress(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
         sample_regimes=sample_regimes,
         sample_weights=sample_weights,
     )
@@ -822,6 +930,8 @@ def gated_position_command_error_tanh(
     switch_phase_steps: int = 30,
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
     post_switch_scale: float = 0.25,
     sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
     sample_weights: dict[str, float] | None = None,
@@ -837,6 +947,8 @@ def gated_position_command_error_tanh(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
         sample_regimes=sample_regimes,
         sample_weights=sample_weights,
     )
@@ -861,7 +973,11 @@ def pre_stance_torso_lean_penalty(
     switch_phase_steps: int = 30,
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
     post_switch_penalty_scale: float = 1.5,
+    near_success_penalty_radius: float = 0.10,
+    near_success_penalty_scale: float = 0.2,
     sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
     sample_weights: dict[str, float] | None = None,
 ):
@@ -876,6 +992,8 @@ def pre_stance_torso_lean_penalty(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
         sample_regimes=sample_regimes,
         sample_weights=sample_weights,
     )
@@ -884,7 +1002,18 @@ def pre_stance_torso_lean_penalty(
         env, command_name=command_name, x_range=x_range, y_range=y_range, gate_std=gate_std
     )
     torso_lean = torch.linalg.norm(robot.data.projected_gravity_b[:, :2], dim=-1)
-    return stance_not_ready * torso_lean * (1.0 + post_switch_penalty_scale * _switch_phase_scale(env, switch_phase_steps))
+    relief_scale = _near_success_penalty_scale(
+        env,
+        position_error=_ee_position_error(env, command_name=command_name),
+        near_success_penalty_radius=near_success_penalty_radius,
+        near_success_penalty_scale=near_success_penalty_scale,
+    )
+    return (
+        stance_not_ready
+        * torso_lean
+        * (1.0 + post_switch_penalty_scale * _switch_phase_scale(env, switch_phase_steps))
+        * relief_scale
+    )
 
 
 def pre_stance_joint_deviation_penalty(
@@ -899,7 +1028,11 @@ def pre_stance_joint_deviation_penalty(
     switch_phase_steps: int = 30,
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
     post_switch_penalty_scale: float = 1.5,
+    near_success_penalty_radius: float = 0.10,
+    near_success_penalty_scale: float = 0.2,
     sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
     sample_weights: dict[str, float] | None = None,
 ):
@@ -914,6 +1047,8 @@ def pre_stance_joint_deviation_penalty(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
         sample_regimes=sample_regimes,
         sample_weights=sample_weights,
     )
@@ -925,7 +1060,18 @@ def pre_stance_joint_deviation_penalty(
         torch.abs(robot.data.joint_pos[:, asset_cfg.joint_ids] - robot.data.default_joint_pos[:, asset_cfg.joint_ids]),
         dim=1,
     )
-    return stance_not_ready * deviation * (1.0 + post_switch_penalty_scale * _switch_phase_scale(env, switch_phase_steps))
+    relief_scale = _near_success_penalty_scale(
+        env,
+        position_error=_ee_position_error(env, command_name=command_name),
+        near_success_penalty_radius=near_success_penalty_radius,
+        near_success_penalty_scale=near_success_penalty_scale,
+    )
+    return (
+        stance_not_ready
+        * deviation
+        * (1.0 + post_switch_penalty_scale * _switch_phase_scale(env, switch_phase_steps))
+        * relief_scale
+    )
 
 
 def pre_stance_joint_limit_penalty(
@@ -941,7 +1087,11 @@ def pre_stance_joint_limit_penalty(
     switch_phase_steps: int = 30,
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
     post_switch_penalty_scale: float = 1.5,
+    near_success_penalty_radius: float = 0.10,
+    near_success_penalty_scale: float = 0.2,
     sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
     sample_weights: dict[str, float] | None = None,
 ):
@@ -956,6 +1106,8 @@ def pre_stance_joint_limit_penalty(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
         sample_regimes=sample_regimes,
         sample_weights=sample_weights,
     )
@@ -968,8 +1120,17 @@ def pre_stance_joint_limit_penalty(
     joint_range = torch.clamp(joint_limits[..., 1] - joint_limits[..., 0], min=1e-6)
     normalized_margin = torch.minimum(joint_pos - joint_limits[..., 0], joint_limits[..., 1] - joint_pos) / joint_range
     limit_pressure = torch.clamp(margin_threshold - normalized_margin, min=0.0)
-    return stance_not_ready * torch.sum(limit_pressure, dim=1) * (
-        1.0 + post_switch_penalty_scale * _switch_phase_scale(env, switch_phase_steps)
+    relief_scale = _near_success_penalty_scale(
+        env,
+        position_error=_ee_position_error(env, command_name=command_name),
+        near_success_penalty_radius=near_success_penalty_radius,
+        near_success_penalty_scale=near_success_penalty_scale,
+    )
+    return (
+        stance_not_ready
+        * torch.sum(limit_pressure, dim=1)
+        * (1.0 + post_switch_penalty_scale * _switch_phase_scale(env, switch_phase_steps))
+        * relief_scale
     )
 
 
@@ -986,6 +1147,8 @@ def pre_stance_foot_motion_reward(
     switch_phase_steps: int = 30,
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
     sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
     sample_weights: dict[str, float] | None = None,
 ):
@@ -1000,6 +1163,8 @@ def pre_stance_foot_motion_reward(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
         sample_regimes=sample_regimes,
         sample_weights=sample_weights,
     )
@@ -1020,6 +1185,8 @@ def target_completion_bonus(
     switch_phase_steps: int = 30,
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
     sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
@@ -1035,10 +1202,132 @@ def target_completion_bonus(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
         sample_regimes=sample_regimes,
         sample_weights=sample_weights,
     )
     return env._left_hand_recent_success.float()
+
+
+def target_hold_reward(
+    env,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["left_wrist_yaw_link"]),
+    command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    x_range: tuple[float, float] = (0.38, 0.62),
+    y_range: tuple[float, float] = (0.08, 0.28),
+    hold_reward_std: float = 0.03,
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
+):
+    _sync_long_horizon_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
+    position_error = _static_target_position_error(env, asset_cfg=asset_cfg)
+    hold_gate = env._left_hand_in_success_zone.float()
+    return hold_gate * torch.exp(-position_error / hold_reward_std) * (0.5 + 0.5 * _hold_progress(env, success_hold_steps))
+
+
+def near_target_action_rate_l2(
+    env,
+    command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    x_range: tuple[float, float] = (0.38, 0.62),
+    y_range: tuple[float, float] = (0.08, 0.28),
+    near_success_penalty_radius: float = 0.10,
+    near_success_penalty_scale: float = 0.2,
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
+):
+    _sync_long_horizon_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
+    position_error = _ee_position_error(env, command_name=command_name)
+    return loco_mdp.action_rate_l2(env) * _near_success_penalty_scale(
+        env,
+        position_error=position_error,
+        near_success_penalty_radius=near_success_penalty_radius,
+        near_success_penalty_scale=near_success_penalty_scale,
+    )
+
+
+def near_target_joint_deviation_l1(
+    env,
+    asset_cfg: SceneEntityCfg,
+    command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    x_range: tuple[float, float] = (0.38, 0.62),
+    y_range: tuple[float, float] = (0.08, 0.28),
+    near_success_penalty_radius: float = 0.10,
+    near_success_penalty_scale: float = 0.2,
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
+):
+    _sync_long_horizon_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
+    position_error = _ee_position_error(env, command_name=command_name)
+    return loco_mdp.joint_deviation_l1(env, asset_cfg=asset_cfg) * _near_success_penalty_scale(
+        env,
+        position_error=position_error,
+        near_success_penalty_radius=near_success_penalty_radius,
+        near_success_penalty_scale=near_success_penalty_scale,
+    )
 
 
 def position_command_progress_reward(
@@ -1084,6 +1373,8 @@ def success_posture_bonus(
     switch_phase_steps: int = 30,
     static_target_hold_s: float = 1.0e9,
     per_target_timeout_s: float = 4.0,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
     sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
     sample_weights: dict[str, float] | None = None,
 ):
@@ -1098,6 +1389,8 @@ def success_posture_bonus(
         per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
         sample_regimes=sample_regimes,
         sample_weights=sample_weights,
     )

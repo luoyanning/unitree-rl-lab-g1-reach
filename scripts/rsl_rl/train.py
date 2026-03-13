@@ -131,7 +131,25 @@ def resolve_resume_path(
     return get_checkpoint_path(log_root_path, load_run, load_checkpoint)
 
 
-def load_policy_weights_only(runner: OnPolicyRunner, checkpoint_path: str):
+def _left_hand_loco_reach_policy_command_obs_indices() -> list[int]:
+    """Indices of the 3 command features in each stacked policy frame for the loco-reach task."""
+    history_length = 5
+    frame_dim = 96
+    command_start = 6
+    command_dim = 3
+    indices: list[int] = []
+    for history_index in range(history_length):
+        frame_offset = history_index * frame_dim
+        indices.extend(range(frame_offset + command_start, frame_offset + command_start + command_dim))
+    return indices
+
+
+def load_policy_weights_only(
+    runner: OnPolicyRunner,
+    checkpoint_path: str,
+    task_name: str | None = None,
+    init_noise_std: float | None = None,
+):
     """Initialize policy weights from a checkpoint without restoring optimizer/iteration state."""
     checkpoint = torch.load(checkpoint_path, map_location=runner.device)
     if not isinstance(checkpoint, dict):
@@ -154,9 +172,42 @@ def load_policy_weights_only(runner: OnPolicyRunner, checkpoint_path: str):
     if policy_nn is None:
         raise AttributeError("Runner does not expose 'actor_critic' or 'policy'; cannot initialize weights only.")
 
-    incompatible = policy_nn.load_state_dict(model_state_dict, strict=False)
+    current_state_dict = policy_nn.state_dict()
+    filtered_state_dict = {}
+    skipped_keys = []
+    command_obs_indices = (
+        _left_hand_loco_reach_policy_command_obs_indices()
+        if task_name == "Unitree-G1-29dof-LeftHand-LocoReach-v0"
+        else []
+    )
+
+    for key, value in model_state_dict.items():
+        if key not in current_state_dict:
+            skipped_keys.append(key)
+            continue
+        if current_state_dict[key].shape != value.shape:
+            skipped_keys.append(key)
+            continue
+        if "critic" in key or "normalizer" in key or key == "std" or key.endswith(".std"):
+            skipped_keys.append(key)
+            continue
+        if not key.startswith("actor."):
+            skipped_keys.append(key)
+            continue
+        if command_obs_indices and key == "actor.0.weight":
+            merged_weight = value.clone()
+            merged_weight[:, command_obs_indices] = current_state_dict[key][:, command_obs_indices]
+            filtered_state_dict[key] = merged_weight
+            continue
+        filtered_state_dict[key] = value
+
+    incompatible = policy_nn.load_state_dict(filtered_state_dict, strict=False)
     missing_keys = list(getattr(incompatible, "missing_keys", []))
     unexpected_keys = list(getattr(incompatible, "unexpected_keys", []))
+
+    if init_noise_std is not None and hasattr(policy_nn, "std"):
+        with torch.no_grad():
+            policy_nn.std.fill_(float(init_noise_std))
 
     if missing_keys or unexpected_keys:
         print("[INFO]: Weights-only warm start loaded with non-strict state-dict matching.")
@@ -166,6 +217,11 @@ def load_policy_weights_only(runner: OnPolicyRunner, checkpoint_path: str):
             print(f"[INFO]: Unexpected keys ({len(unexpected_keys)}): {unexpected_keys}")
     else:
         print("[INFO]: Weights-only warm start matched the policy state dict exactly.")
+    print(
+        "[INFO]: Warm-start policy transfer summary: "
+        f"loaded_actor_keys={len(filtered_state_dict)} skipped_keys={len(skipped_keys)} "
+        f"reset_std_to={init_noise_std if init_noise_std is not None else 'unchanged'}"
+    )
 
 
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
@@ -247,7 +303,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         runner.load(resume_path)
     elif init_checkpoint_path is not None:
         print(f"[INFO]: Initializing model weights from checkpoint: {init_checkpoint_path}")
-        load_policy_weights_only(runner, init_checkpoint_path)
+        load_policy_weights_only(
+            runner,
+            init_checkpoint_path,
+            task_name=args_cli.task,
+            init_noise_std=agent_cfg.policy.init_noise_std,
+        )
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)

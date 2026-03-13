@@ -9,43 +9,24 @@ from isaaclab.managers import SceneEntityCfg
 ENABLE_LONG_HORIZON_DEBUG_METRICS = False
 
 
-def _root_yaw_w(env, env_ids=None):
-    robot = env.scene["robot"]
-    quat_w = robot.data.root_quat_w if env_ids is None else robot.data.root_quat_w[env_ids]
-    qw, qx, qy, qz = quat_w.unbind(dim=-1)
-    siny_cosp = 2.0 * (qw * qz + qx * qy)
-    cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
-    return torch.atan2(siny_cosp, cosy_cosp)
-
-
-def _resample_static_targets(env, env_ids, command_name: str):
+def _best_effort_command_resample(command_term, env_ids, static_target_hold_s: float):
     if len(env_ids) == 0:
         return
-    command_term = env.command_manager.get_term(command_name)
-    ranges = command_term.cfg.ranges
-    robot = env.scene["robot"]
-    root_yaw = _root_yaw_w(env, env_ids)
-    cos_yaw = torch.cos(root_yaw)
-    sin_yaw = torch.sin(root_yaw)
-
-    target_local = torch.zeros((len(env_ids), 3), device=env.device)
-    target_local[:, 0].uniform_(*ranges.pos_x)
-    target_local[:, 1].uniform_(*ranges.pos_y)
-    target_local[:, 2].uniform_(*ranges.pos_z)
-
-    target_world = robot.data.root_pos_w[env_ids, :3].clone()
-    target_world[:, 0] += cos_yaw * target_local[:, 0] - sin_yaw * target_local[:, 1]
-    target_world[:, 1] += sin_yaw * target_local[:, 0] + cos_yaw * target_local[:, 1]
-    target_world[:, 2] = env.scene.env_origins[env_ids, 2] + target_local[:, 2]
-    env._left_hand_static_target_w[env_ids] = target_world
+    if hasattr(command_term, "_resample_command"):
+        command_term._resample_command(env_ids)
+    for attr_name in ("time_left", "_time_left", "command_time_left"):
+        if hasattr(command_term, attr_name):
+            timer = getattr(command_term, attr_name)
+            if isinstance(timer, torch.Tensor) and timer.ndim > 0:
+                timer[env_ids] = static_target_hold_s
 
 
 def _ensure_long_horizon_state(env, command_name: str, max_targets_per_episode: int, switch_phase_steps: int):
     num_envs = env.num_envs
-    if not hasattr(env, "_left_hand_static_target_w"):
+    if not hasattr(env, "_left_hand_prev_command"):
+        command = env.command_manager.get_command(command_name)[:, :3]
         robot = env.scene["robot"]
-        env._left_hand_static_target_w = torch.zeros((num_envs, 3), device=env.device)
-        env._left_hand_prev_target_w = torch.zeros((num_envs, 3), device=env.device)
+        env._left_hand_prev_command = command.clone()
         env._left_hand_prev_success = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
         env._left_hand_completed_targets = torch.zeros(num_envs, dtype=torch.long, device=env.device)
         env._left_hand_target_index = torch.zeros(num_envs, dtype=torch.long, device=env.device)
@@ -78,8 +59,6 @@ def _ensure_long_horizon_state(env, command_name: str, max_targets_per_episode: 
             device=env.device,
         )
         env._left_hand_ee_body_id = robot.find_bodies(["left_wrist_yaw_link"], preserve_order=True)[0][0]
-        _resample_static_targets(env, torch.arange(num_envs, device=env.device), command_name=command_name)
-        env._left_hand_prev_target_w.copy_(env._left_hand_static_target_w)
     command_term = env.command_manager.get_term(command_name)
     if ENABLE_LONG_HORIZON_DEBUG_METRICS and hasattr(command_term, "metrics"):
         command_term.metrics.setdefault("targets_completed", torch.zeros(num_envs, device=env.device))
@@ -106,21 +85,8 @@ def _ee_position_error(env, command_name: str):
     _ensure_long_horizon_state(env, command_name=command_name, max_targets_per_episode=1, switch_phase_steps=0)
     robot = env.scene["robot"]
     ee_pos_w = robot.data.body_pos_w[:, env._left_hand_ee_body_id]
-    return torch.linalg.norm(env._left_hand_static_target_w - ee_pos_w, dim=-1)
-
-
-def _target_pos_base_yaw(env, command_name: str):
-    _ensure_long_horizon_state(env, command_name=command_name, max_targets_per_episode=1, switch_phase_steps=0)
-    robot = env.scene["robot"]
-    target_delta_w = env._left_hand_static_target_w - robot.data.root_pos_w[:, :3]
-    root_yaw = _root_yaw_w(env)
-    cos_yaw = torch.cos(root_yaw)
-    sin_yaw = torch.sin(root_yaw)
-    target_pos_b = torch.zeros_like(target_delta_w)
-    target_pos_b[:, 0] = cos_yaw * target_delta_w[:, 0] + sin_yaw * target_delta_w[:, 1]
-    target_pos_b[:, 1] = -sin_yaw * target_delta_w[:, 0] + cos_yaw * target_delta_w[:, 1]
-    target_pos_b[:, 2] = target_delta_w[:, 2]
-    return target_pos_b
+    command = env.command_manager.get_command(command_name)[:, :3]
+    return torch.linalg.norm(command - ee_pos_w, dim=-1)
 
 
 def _workspace_error_components(
@@ -129,7 +95,7 @@ def _workspace_error_components(
     x_range: tuple[float, float],
     y_range: tuple[float, float],
 ):
-    target_pos = _target_pos_base_yaw(env, command_name=command_name)[:, :2]
+    target_pos = env.command_manager.get_command(command_name)[:, :2]
     x_error_low = torch.clamp(x_range[0] - target_pos[:, 0], min=0.0)
     x_error_high = torch.clamp(target_pos[:, 0] - x_range[1], min=0.0)
     y_error_low = torch.clamp(y_range[0] - target_pos[:, 1], min=0.0)
@@ -179,9 +145,8 @@ def _sync_long_horizon_state(
 
     command_term = env.command_manager.get_term(command_name)
     robot = env.scene["robot"]
+    current_command = env.command_manager.get_command(command_name)[:, :3].clone()
     reset_ids = env.episode_length_buf == 0
-    if torch.any(reset_ids):
-        _resample_static_targets(env, torch.where(reset_ids)[0], command_name=command_name)
     env._left_hand_recent_success.zero_()
     success = _ee_position_error(env, command_name=command_name) < success_threshold
     success_edge = success & ~env._left_hand_prev_success & ~reset_ids
@@ -208,10 +173,10 @@ def _sync_long_horizon_state(
                 command_term.metrics[f"success_target_{index}"][mask] = 1.0
         active_ids = torch.where(success_edge & (env._left_hand_completed_targets < max_targets_per_episode))[0]
         if len(active_ids) > 0:
-            _resample_static_targets(env, active_ids, command_name=command_name)
+            _best_effort_command_resample(command_term, active_ids, static_target_hold_s=static_target_hold_s)
+            current_command = env.command_manager.get_command(command_name)[:, :3].clone()
 
-    current_target = env._left_hand_static_target_w.clone()
-    switch_detected = torch.norm(current_target - env._left_hand_prev_target_w, dim=-1) > 1.0e-5
+    switch_detected = torch.norm(current_command - env._left_hand_prev_command, dim=-1) > 1.0e-5
     switch_detected |= reset_ids
     per_target_timeout_steps = max(1, int(round(per_target_timeout_s / env.step_dt)))
 
@@ -265,33 +230,14 @@ def _sync_long_horizon_state(
                 * (env._left_hand_post_switch_steps > 0).float()
             )
 
-    env._left_hand_prev_target_w = current_target
+    env._left_hand_prev_command = current_command
     env._left_hand_prev_success = success & ~switch_detected
     env._left_hand_state_synced_step = env.common_step_counter
 
 
 def target_pos_command_obs(env, command_name: str = "left_hand_pose"):
-    """Return the static target in base-yaw frame for policy/critic compatibility."""
-    return _target_pos_base_yaw(env, command_name=command_name)
-
-
-def static_target_position_error(
-    env,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["left_wrist_yaw_link"]),
-    command_name: str = "left_hand_pose",
-):
-    del asset_cfg
-    return _ee_position_error(env, command_name=command_name)
-
-
-def static_target_position_error_tanh(
-    env,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["left_wrist_yaw_link"]),
-    command_name: str = "left_hand_pose",
-    std: float = 0.14,
-):
-    del asset_cfg
-    return torch.exp(-_ee_position_error(env, command_name=command_name) / std)
+    """Return the target position command as a 3D vector for policy/critic compatibility."""
+    return env.command_manager.get_command(command_name)[:, :3]
 
 
 def reach_success(
@@ -301,8 +247,7 @@ def reach_success(
     threshold: float = 0.05,
 ):
     """Terminate an episode when the left hand reaches the target threshold."""
-    del asset_cfg
-    position_error = _ee_position_error(env, command_name=command_name)
+    position_error = reach_mdp.position_command_error(env, asset_cfg=asset_cfg, command_name=command_name)
     return position_error < threshold
 
 
@@ -555,7 +500,7 @@ def gated_position_command_error_tanh(
         x_range=x_range,
         y_range=y_range,
     )
-    reach_reward = static_target_position_error_tanh(env, asset_cfg=asset_cfg, command_name=command_name, std=std)
+    reach_reward = reach_mdp.position_command_error_tanh(env, asset_cfg=asset_cfg, command_name=command_name, std=std)
     stance_gate = _workspace_ready_gate(env, command_name=command_name, x_range=x_range, y_range=y_range, gate_std=gate_std)
     switch_scale = torch.where(
         env._left_hand_post_switch_steps > 0,
@@ -742,7 +687,7 @@ def position_command_progress_reward(
     command_name: str = "left_hand_pose",
 ):
     """Reward step-to-step reduction in hand-to-target error."""
-    position_error = static_target_position_error(env, asset_cfg=asset_cfg, command_name=command_name)
+    position_error = reach_mdp.position_command_error(env, asset_cfg=asset_cfg, command_name=command_name)
     if not hasattr(env, "_left_hand_prev_error"):
         env._left_hand_prev_error = position_error.clone()
     if hasattr(env, "episode_length_buf"):
@@ -789,7 +734,7 @@ def success_posture_bonus(
         y_range=y_range,
     )
     robot = env.scene["robot"]
-    position_error = static_target_position_error(env, asset_cfg=asset_cfg, command_name=command_name)
+    position_error = reach_mdp.position_command_error(env, asset_cfg=asset_cfg, command_name=command_name)
     stance_gate = _workspace_ready_gate(env, command_name=command_name, x_range=x_range, y_range=y_range, gate_std=gate_std)
     torso_lean = torch.linalg.norm(robot.data.projected_gravity_b[:, :2], dim=-1)
     arm_joint_deviation = torch.sum(

@@ -90,6 +90,7 @@ import inspect
 import os
 import shutil
 import torch
+import types
 from datetime import datetime
 
 from rsl_rl.runners import OnPolicyRunner  # TODO: Consider printing the experiment name in the terminal.
@@ -224,6 +225,42 @@ def load_policy_weights_only(
     )
 
 
+def install_positive_std_guard(
+    runner: OnPolicyRunner,
+    std_min: float = 1.0e-3,
+    std_max: float = 5.0,
+    freeze_std: bool = False,
+):
+    """Prevent invalid negative action std values from crashing training."""
+    policy_nn = getattr(runner.alg, "actor_critic", None)
+    if policy_nn is None:
+        policy_nn = getattr(runner.alg, "policy", None)
+    if policy_nn is None or not hasattr(policy_nn, "std"):
+        return
+
+    with torch.no_grad():
+        policy_nn.std.data.clamp_(min=std_min, max=std_max)
+    if freeze_std:
+        policy_nn.std.requires_grad_(False)
+
+    if getattr(policy_nn, "_codex_positive_std_guard_installed", False):
+        return
+
+    original_update_distribution = policy_nn.update_distribution
+
+    def guarded_update_distribution(self, observations):
+        with torch.no_grad():
+            self.std.data.clamp_(min=std_min, max=std_max)
+        return original_update_distribution(observations)
+
+    policy_nn.update_distribution = types.MethodType(guarded_update_distribution, policy_nn)
+    policy_nn._codex_positive_std_guard_installed = True
+    print(
+        "[INFO]: Installed positive action-std guard "
+        f"(std_min={std_min}, std_max={std_max}, freeze_std={freeze_std})."
+    )
+
+
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlOnPolicyRunnerCfg):
     """Train with RSL-RL agent."""
@@ -301,6 +338,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path)
+        install_positive_std_guard(runner, freeze_std=False)
     elif init_checkpoint_path is not None:
         print(f"[INFO]: Initializing model weights from checkpoint: {init_checkpoint_path}")
         load_policy_weights_only(
@@ -309,6 +347,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             task_name=args_cli.task,
             init_noise_std=agent_cfg.policy.init_noise_std,
         )
+        install_positive_std_guard(runner, freeze_std=True)
+    else:
+        install_positive_std_guard(runner, freeze_std=False)
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)

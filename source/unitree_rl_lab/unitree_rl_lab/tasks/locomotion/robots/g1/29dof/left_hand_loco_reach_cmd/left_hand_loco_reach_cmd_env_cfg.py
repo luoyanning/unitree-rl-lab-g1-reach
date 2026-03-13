@@ -11,17 +11,16 @@ from unitree_rl_lab.tasks.locomotion import mdp
 from ..velocity_env_cfg import CurriculumCfg as BaseCurriculumCfg
 from ..velocity_env_cfg import RobotEnvCfg
 
-from .left_hand_loco_reach_mdp import (
+from .left_hand_loco_reach_cmd_mdp import (
     gated_position_command_error_tanh,
     left_hand_target_pos_levels,
     pre_stance_foot_motion_reward,
     pre_stance_joint_deviation_penalty,
     pre_stance_joint_limit_penalty,
     pre_stance_torso_lean_penalty,
-    static_target_position_error,
+    reach_success,
     success_posture_bonus,
     target_completion_bonus,
-    target_hold_reward,
     target_pos_command_obs,
     target_quota_reached,
     target_timeout_reached,
@@ -37,11 +36,7 @@ STATIC_TARGET_HOLD_S = 1.0e9
 PER_TARGET_TIMEOUT_S = 4.0
 MAX_TARGETS_PER_EPISODE = 6
 POST_SWITCH_STEPS = 30
-SUCCESS_ENTER_RADIUS = 0.06
-SUCCESS_EXIT_RADIUS = 0.09
-SUCCESS_HOLD_STEPS = 8
-NEAR_SUCCESS_PENALTY_RADIUS = 0.10
-NEAR_SUCCESS_PENALTY_SCALE = 0.2
+SUCCESS_THRESHOLD = 0.06
 LOCO_REACH_NEAR_POS_X = (0.25, 0.48)
 LOCO_REACH_POSTURE_POS_X = (0.35, 0.72)
 LOCO_REACH_FAR_POS_X = (0.50, 1.00)
@@ -51,32 +46,10 @@ LOCO_REACH_FAR_POS_Y = (-0.05, 0.60)
 LOCO_REACH_NEAR_POS_Z = (0.18, 0.34)
 LOCO_REACH_POSTURE_POS_Z = (0.00, 0.20)
 LOCO_REACH_FAR_POS_Z = (0.08, 0.24)
-LOCO_REACH_SAMPLE_REGIMES = {
-    "near": {
-        "pos_x": LOCO_REACH_NEAR_POS_X,
-        "pos_y": LOCO_REACH_NEAR_POS_Y,
-        "pos_z": LOCO_REACH_NEAR_POS_Z,
-    },
-    "posture": {
-        "pos_x": LOCO_REACH_POSTURE_POS_X,
-        "pos_y": LOCO_REACH_POSTURE_POS_Y,
-        "pos_z": LOCO_REACH_POSTURE_POS_Z,
-    },
-    "far": {
-        "pos_x": LOCO_REACH_FAR_POS_X,
-        "pos_y": LOCO_REACH_FAR_POS_Y,
-        "pos_z": LOCO_REACH_FAR_POS_Z,
-    },
-}
-LOCO_REACH_SAMPLE_WEIGHTS = {
-    "near": 0.45,
-    "posture": 0.30,
-    "far": 0.25,
-}
 
 
 @configclass
-class LeftHandLocoReachCurriculumCfg(BaseCurriculumCfg):
+class LeftHandLocoReachCmdCurriculumCfg(BaseCurriculumCfg):
     left_hand_target_levels = CurrTerm(
         func=left_hand_target_pos_levels,
         params={
@@ -96,10 +69,8 @@ class LeftHandLocoReachCurriculumCfg(BaseCurriculumCfg):
 
 
 @configclass
-class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
-    """Aggressive local loco-reach task with full-body participation."""
-
-    curriculum: LeftHandLocoReachCurriculumCfg = LeftHandLocoReachCurriculumCfg()
+class RobotLeftHandLocoReachCmdEnvCfg(RobotEnvCfg):
+    curriculum: LeftHandLocoReachCmdCurriculumCfg = LeftHandLocoReachCmdCurriculumCfg()
 
     def __post_init__(self):
         super().__post_init__()
@@ -121,17 +92,13 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
         stance_ready_std = 0.01
         long_horizon_params = {
             "command_name": LEFT_HAND_COMMAND_NAME,
-            "success_threshold": SUCCESS_ENTER_RADIUS,
-            "success_exit_radius": SUCCESS_EXIT_RADIUS,
-            "success_hold_steps": SUCCESS_HOLD_STEPS,
+            "success_threshold": SUCCESS_THRESHOLD,
             "max_targets_per_episode": MAX_TARGETS_PER_EPISODE,
             "switch_phase_steps": POST_SWITCH_STEPS,
             "static_target_hold_s": STATIC_TARGET_HOLD_S,
             "per_target_timeout_s": PER_TARGET_TIMEOUT_S,
             "x_range": stance_x_range,
             "y_range": stance_y_range,
-            "sample_regimes": LOCO_REACH_SAMPLE_REGIMES,
-            "sample_weights": LOCO_REACH_SAMPLE_WEIGHTS,
         }
 
         self.episode_length_s = 24.0
@@ -150,7 +117,7 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
             asset_name="robot",
             body_name=LEFT_HAND_BODY_NAME,
             resampling_time_range=(STATIC_TARGET_HOLD_S, STATIC_TARGET_HOLD_S),
-            debug_vis=False,
+            debug_vis=True,
             ranges=reach_mdp.UniformPoseCommandCfg.Ranges(
                 pos_x=LOCO_REACH_NEAR_POS_X,
                 pos_y=LOCO_REACH_NEAR_POS_Y,
@@ -164,14 +131,13 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
         self.actions.JointPositionAction.joint_names = [".*"]
         self.actions.JointPositionAction.scale = 0.25
 
-        # Keep policy/critic tensor sizes aligned with the locomotion task for checkpoint warm-starting.
         self.observations.policy.velocity_commands = ObsTerm(
             func=target_pos_command_obs,
-            params=long_horizon_params,
+            params={"command_name": LEFT_HAND_COMMAND_NAME},
         )
         self.observations.critic.velocity_commands = ObsTerm(
             func=target_pos_command_obs,
-            params=long_horizon_params,
+            params={"command_name": LEFT_HAND_COMMAND_NAME},
         )
 
         self.events.base_external_force_torque = None
@@ -221,11 +187,7 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
         self.rewards.pre_stance_torso_lean = RewTerm(
             func=pre_stance_torso_lean_penalty,
             weight=-1.5,
-            params={
-                **long_horizon_params,
-                "near_success_penalty_radius": NEAR_SUCCESS_PENALTY_RADIUS,
-                "near_success_penalty_scale": NEAR_SUCCESS_PENALTY_SCALE,
-            },
+            params=long_horizon_params,
         )
         self.rewards.pre_stance_waist_twist = RewTerm(
             func=pre_stance_joint_deviation_penalty,
@@ -233,8 +195,6 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
             params={
                 **long_horizon_params,
                 "asset_cfg": waist_yaw_cfg,
-                "near_success_penalty_radius": NEAR_SUCCESS_PENALTY_RADIUS,
-                "near_success_penalty_scale": NEAR_SUCCESS_PENALTY_SCALE,
             },
         )
         self.rewards.pre_stance_arm_extension = RewTerm(
@@ -244,8 +204,6 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
                 **long_horizon_params,
                 "asset_cfg": left_arm_cfg,
                 "margin_threshold": 0.18,
-                "near_success_penalty_radius": NEAR_SUCCESS_PENALTY_RADIUS,
-                "near_success_penalty_scale": NEAR_SUCCESS_PENALTY_SCALE,
             },
         )
         self.rewards.pre_stance_foot_motion = RewTerm(
@@ -261,21 +219,12 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
             weight=3.0,
             params=long_horizon_params,
         )
-        self.rewards.target_hold = RewTerm(
-            func=target_hold_reward,
-            weight=2.0,
-            params={
-                "asset_cfg": ee_cfg,
-                **long_horizon_params,
-                "hold_reward_std": 0.03,
-            },
-        )
         self.rewards.left_hand_position_tracking = RewTerm(
-            func=static_target_position_error,
+            func=reach_mdp.position_command_error,
             weight=-0.12,
             params={
                 "asset_cfg": ee_cfg,
-                **long_horizon_params,
+                "command_name": LEFT_HAND_COMMAND_NAME,
             },
         )
         self.rewards.left_hand_position_tracking_fine = RewTerm(
@@ -319,7 +268,7 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
 
 
 @configclass
-class RobotLeftHandLocoReachPlayEnvCfg(RobotLeftHandLocoReachEnvCfg):
+class RobotLeftHandLocoReachCmdPlayEnvCfg(RobotLeftHandLocoReachCmdEnvCfg):
     def __post_init__(self):
         super().__post_init__()
 

@@ -6,6 +6,8 @@ from collections.abc import Sequence
 import isaaclab_tasks.manager_based.manipulation.reach.mdp as reach_mdp
 from isaaclab.managers import SceneEntityCfg
 
+ENABLE_LONG_HORIZON_DEBUG_METRICS = False
+
 
 def _best_effort_command_resample(command_term, env_ids, static_target_hold_s: float):
     if len(env_ids) == 0:
@@ -58,7 +60,7 @@ def _ensure_long_horizon_state(env, command_name: str, max_targets_per_episode: 
         )
         env._left_hand_ee_body_id = robot.find_bodies(["left_wrist_yaw_link"], preserve_order=True)[0][0]
     command_term = env.command_manager.get_term(command_name)
-    if hasattr(command_term, "metrics"):
+    if ENABLE_LONG_HORIZON_DEBUG_METRICS and hasattr(command_term, "metrics"):
         command_term.metrics.setdefault("targets_completed", torch.zeros(num_envs, device=env.device))
         command_term.metrics.setdefault("target_index", torch.zeros(num_envs, device=env.device))
         command_term.metrics.setdefault("workspace_error", torch.zeros(num_envs, device=env.device))
@@ -165,7 +167,7 @@ def _sync_long_horizon_state(
         env._left_hand_arm_extension_at_contact[success_edge] = arm_deviation[success_edge]
         env._left_hand_completed_targets[success_edge] += 1
         env._left_hand_recent_success[success_edge] = True
-        if hasattr(command_term, "metrics"):
+        if ENABLE_LONG_HORIZON_DEBUG_METRICS and hasattr(command_term, "metrics"):
             for index in range(max_targets_per_episode):
                 mask = success_edge & (env._left_hand_completed_targets == (index + 1))
                 command_term.metrics[f"success_target_{index}"][mask] = 1.0
@@ -209,7 +211,7 @@ def _sync_long_horizon_state(
         env._left_hand_foot_motion_before_contact, torch.tanh(foot_speed / 0.35)
     )
 
-    if hasattr(command_term, "metrics"):
+    if ENABLE_LONG_HORIZON_DEBUG_METRICS and hasattr(command_term, "metrics"):
         posture_quality = torch.exp(-(1.25 * torso_lean + 0.12 * arm_deviation))
         command_term.metrics["targets_completed"][:] = env._left_hand_completed_targets.float()
         command_term.metrics["target_index"][:] = env._left_hand_target_index.float()

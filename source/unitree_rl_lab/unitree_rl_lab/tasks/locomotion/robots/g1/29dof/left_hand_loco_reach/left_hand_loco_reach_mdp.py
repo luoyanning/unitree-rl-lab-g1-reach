@@ -134,7 +134,11 @@ def _debug_timeout_state(
     if env.common_step_counter > TARGET_TIMEOUT_DEBUG_MAX_GLOBAL_STEPS:
         return
     env_id = 0
-    terminated = getattr(env.termination_manager, "terminated", torch.zeros(env.num_envs, device=env.device))
+    termination_manager = getattr(env, "termination_manager", None)
+    if termination_manager is None:
+        terminated = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    else:
+        terminated = getattr(termination_manager, "terminated", torch.zeros(env.num_envs, dtype=torch.bool, device=env.device))
     print(
         "[LH_LOCO_REACH_TIMEOUT_DEBUG] "
         f"global_step={int(env.common_step_counter)} "

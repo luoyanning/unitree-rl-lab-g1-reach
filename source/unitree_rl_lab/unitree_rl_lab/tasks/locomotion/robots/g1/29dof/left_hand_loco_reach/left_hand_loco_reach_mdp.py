@@ -5,14 +5,17 @@ from collections.abc import Sequence
 
 import isaaclab_tasks.manager_based.manipulation.reach.mdp as reach_mdp
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.utils.math import quat_apply, yaw_quat
-
-try:
-    from isaaclab.utils.math import quat_apply_inverse
-except ImportError:
-    from isaaclab.utils.math import quat_rotate_inverse as quat_apply_inverse
 
 ENABLE_LONG_HORIZON_DEBUG_METRICS = False
+
+
+def _root_yaw_w(env, env_ids=None):
+    robot = env.scene["robot"]
+    quat_w = robot.data.root_quat_w if env_ids is None else robot.data.root_quat_w[env_ids]
+    qw, qx, qy, qz = quat_w.unbind(dim=-1)
+    siny_cosp = 2.0 * (qw * qz + qx * qy)
+    cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
+    return torch.atan2(siny_cosp, cosy_cosp)
 
 
 def _resample_static_targets(env, env_ids, command_name: str):
@@ -21,18 +24,20 @@ def _resample_static_targets(env, env_ids, command_name: str):
     command_term = env.command_manager.get_term(command_name)
     ranges = command_term.cfg.ranges
     robot = env.scene["robot"]
-    yaw_rotation = yaw_quat(robot.data.root_quat_w[env_ids])
+    root_yaw = _root_yaw_w(env, env_ids)
+    cos_yaw = torch.cos(root_yaw)
+    sin_yaw = torch.sin(root_yaw)
 
     target_local = torch.zeros((len(env_ids), 3), device=env.device)
     target_local[:, 0].uniform_(*ranges.pos_x)
     target_local[:, 1].uniform_(*ranges.pos_y)
     target_local[:, 2].uniform_(*ranges.pos_z)
 
-    target_world_xy = robot.data.root_pos_w[env_ids, :3].clone()
-    target_world_xy[:, 2] = 0.0
-    target_world_xy += quat_apply(yaw_rotation, target_local)
-    target_world_xy[:, 2] = env.scene.env_origins[env_ids, 2] + target_local[:, 2]
-    env._left_hand_static_target_w[env_ids] = target_world_xy
+    target_world = robot.data.root_pos_w[env_ids, :3].clone()
+    target_world[:, 0] += cos_yaw * target_local[:, 0] - sin_yaw * target_local[:, 1]
+    target_world[:, 1] += sin_yaw * target_local[:, 0] + cos_yaw * target_local[:, 1]
+    target_world[:, 2] = env.scene.env_origins[env_ids, 2] + target_local[:, 2]
+    env._left_hand_static_target_w[env_ids] = target_world
 
 
 def _ensure_long_horizon_state(env, command_name: str, max_targets_per_episode: int, switch_phase_steps: int):
@@ -108,7 +113,14 @@ def _target_pos_base_yaw(env, command_name: str):
     _ensure_long_horizon_state(env, command_name=command_name, max_targets_per_episode=1, switch_phase_steps=0)
     robot = env.scene["robot"]
     target_delta_w = env._left_hand_static_target_w - robot.data.root_pos_w[:, :3]
-    return quat_apply_inverse(yaw_quat(robot.data.root_quat_w), target_delta_w)
+    root_yaw = _root_yaw_w(env)
+    cos_yaw = torch.cos(root_yaw)
+    sin_yaw = torch.sin(root_yaw)
+    target_pos_b = torch.zeros_like(target_delta_w)
+    target_pos_b[:, 0] = cos_yaw * target_delta_w[:, 0] + sin_yaw * target_delta_w[:, 1]
+    target_pos_b[:, 1] = -sin_yaw * target_delta_w[:, 0] + cos_yaw * target_delta_w[:, 1]
+    target_pos_b[:, 2] = target_delta_w[:, 2]
+    return target_pos_b
 
 
 def _workspace_error_components(

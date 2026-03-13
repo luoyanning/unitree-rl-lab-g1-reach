@@ -181,6 +181,7 @@ def load_policy_weights_only(
         if task_name == "Unitree-G1-29dof-LeftHand-LocoReach-v0"
         else []
     )
+    skip_actor_output_layer = task_name == "Unitree-G1-29dof-LeftHand-LocoReach-v0"
 
     for key, value in model_state_dict.items():
         if key not in current_state_dict:
@@ -193,6 +194,9 @@ def load_policy_weights_only(
             skipped_keys.append(key)
             continue
         if not key.startswith("actor."):
+            skipped_keys.append(key)
+            continue
+        if skip_actor_output_layer and key.startswith("actor.6."):
             skipped_keys.append(key)
             continue
         if command_obs_indices and key == "actor.0.weight":
@@ -341,13 +345,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         install_positive_std_guard(runner, freeze_std=False)
     elif init_checkpoint_path is not None:
         print(f"[INFO]: Initializing model weights from checkpoint: {init_checkpoint_path}")
+        warmstart_init_std = min(float(agent_cfg.policy.init_noise_std), 0.25)
         load_policy_weights_only(
             runner,
             init_checkpoint_path,
             task_name=args_cli.task,
-            init_noise_std=agent_cfg.policy.init_noise_std,
+            init_noise_std=warmstart_init_std,
         )
-        install_positive_std_guard(runner, freeze_std=True)
+        install_positive_std_guard(runner, std_min=0.05, std_max=0.25, freeze_std=True)
     else:
         install_positive_std_guard(runner, freeze_std=False)
 

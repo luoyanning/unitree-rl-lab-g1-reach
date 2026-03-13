@@ -23,6 +23,7 @@ from .left_hand_loco_reach_mdp import (
     target_completion_bonus,
     target_pos_command_obs,
     target_quota_reached,
+    target_timeout_reached,
     target_relative_base_stance_l2,
     target_relative_base_stance_progress,
     target_relative_base_stance_ready,
@@ -31,7 +32,8 @@ from .left_hand_loco_reach_mdp import (
 
 LEFT_HAND_BODY_NAME = "left_wrist_yaw_link"
 LEFT_HAND_COMMAND_NAME = "left_hand_pose"
-TARGET_DURATION_S = 4.0
+STATIC_TARGET_HOLD_S = 1.0e9
+PER_TARGET_TIMEOUT_S = 4.0
 MAX_TARGETS_PER_EPISODE = 6
 POST_SWITCH_STEPS = 30
 SUCCESS_THRESHOLD = 0.06
@@ -95,7 +97,8 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
             "success_threshold": SUCCESS_THRESHOLD,
             "max_targets_per_episode": MAX_TARGETS_PER_EPISODE,
             "switch_phase_steps": POST_SWITCH_STEPS,
-            "target_duration_s": TARGET_DURATION_S,
+            "static_target_hold_s": STATIC_TARGET_HOLD_S,
+            "per_target_timeout_s": PER_TARGET_TIMEOUT_S,
             "x_range": stance_x_range,
             "y_range": stance_y_range,
         }
@@ -115,7 +118,7 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
         self.commands.left_hand_pose = reach_mdp.UniformPoseCommandCfg(
             asset_name="robot",
             body_name=LEFT_HAND_BODY_NAME,
-            resampling_time_range=(TARGET_DURATION_S, TARGET_DURATION_S),
+            resampling_time_range=(STATIC_TARGET_HOLD_S, STATIC_TARGET_HOLD_S),
             debug_vis=True,
             ranges=reach_mdp.UniformPoseCommandCfg.Ranges(
                 pos_x=LOCO_REACH_NEAR_POS_X,
@@ -254,6 +257,10 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
         self.terminations.reach_success = None
         self.terminations.target_quota = DoneTerm(
             func=target_quota_reached,
+            params=long_horizon_params,
+        )
+        self.terminations.target_timeout = DoneTerm(
+            func=target_timeout_reached,
             params=long_horizon_params,
         )
 

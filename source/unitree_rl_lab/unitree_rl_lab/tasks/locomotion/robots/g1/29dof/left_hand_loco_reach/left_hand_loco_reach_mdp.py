@@ -7,7 +7,7 @@ import isaaclab_tasks.manager_based.manipulation.reach.mdp as reach_mdp
 from isaaclab.managers import SceneEntityCfg
 
 
-def _best_effort_command_resample(command_term, env_ids, target_duration_s: float):
+def _best_effort_command_resample(command_term, env_ids, static_target_hold_s: float):
     if len(env_ids) == 0:
         return
     if hasattr(command_term, "_resample_command"):
@@ -16,7 +16,7 @@ def _best_effort_command_resample(command_term, env_ids, target_duration_s: floa
         if hasattr(command_term, attr_name):
             timer = getattr(command_term, attr_name)
             if isinstance(timer, torch.Tensor) and timer.ndim > 0:
-                timer[env_ids] = target_duration_s
+                timer[env_ids] = static_target_hold_s
 
 
 def _ensure_long_horizon_state(env, command_name: str, max_targets_per_episode: int, switch_phase_steps: int):
@@ -130,7 +130,8 @@ def _sync_long_horizon_state(
     success_threshold: float,
     max_targets_per_episode: int,
     switch_phase_steps: int,
-    target_duration_s: float,
+    static_target_hold_s: float,
+    per_target_timeout_s: float,
     x_range: tuple[float, float],
     y_range: tuple[float, float],
 ):
@@ -170,12 +171,12 @@ def _sync_long_horizon_state(
                 command_term.metrics[f"success_target_{index}"][mask] = 1.0
         active_ids = torch.where(success_edge & (env._left_hand_completed_targets < max_targets_per_episode))[0]
         if len(active_ids) > 0:
-            _best_effort_command_resample(command_term, active_ids, target_duration_s=target_duration_s)
+            _best_effort_command_resample(command_term, active_ids, static_target_hold_s=static_target_hold_s)
             current_command = env.command_manager.get_command(command_name)[:, :3].clone()
 
     switch_detected = torch.norm(current_command - env._left_hand_prev_command, dim=-1) > 1.0e-5
     switch_detected |= reset_ids
-    switch_detected |= success_edge
+    per_target_timeout_steps = max(1, int(round(per_target_timeout_s / env.step_dt)))
 
     env._left_hand_post_switch_steps = torch.clamp(env._left_hand_post_switch_steps - 1, min=0)
     env._left_hand_steps_since_switch += 1
@@ -219,6 +220,8 @@ def _sync_long_horizon_state(
         command_term.metrics["foot_motion_before_contact"][:] = env._left_hand_foot_motion_before_contact
         command_term.metrics["post_switch_steps"][:] = env._left_hand_post_switch_steps.float()
         command_term.metrics["post_switch_posture_quality"][:] = posture_quality
+        command_term.metrics.setdefault("per_target_timeout_steps", torch.zeros(env.num_envs, device=env.device))
+        command_term.metrics["per_target_timeout_steps"][:] = float(per_target_timeout_steps)
         if hasattr(env, "termination_manager"):
             command_term.metrics["switch_failure_risk"][:] = (
                 getattr(env.termination_manager, "terminated", torch.zeros(env.num_envs, device=env.device)).float()
@@ -252,7 +255,8 @@ def target_quota_reached(
     command_name: str = "left_hand_pose",
     success_threshold: float = 0.06,
     switch_phase_steps: int = 30,
-    target_duration_s: float = 4.0,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
 ):
@@ -262,11 +266,38 @@ def target_quota_reached(
         success_threshold=success_threshold,
         max_targets_per_episode=max_targets_per_episode,
         switch_phase_steps=switch_phase_steps,
-        target_duration_s=target_duration_s,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
     )
     return env._left_hand_completed_targets >= max_targets_per_episode
+
+
+def target_timeout_reached(
+    env,
+    command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
+    x_range: tuple[float, float] = (0.38, 0.62),
+    y_range: tuple[float, float] = (0.08, 0.28),
+):
+    _sync_long_horizon_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+    )
+    per_target_timeout_steps = max(1, int(round(per_target_timeout_s / env.step_dt)))
+    return env._left_hand_steps_since_switch >= per_target_timeout_steps
 
 
 def left_hand_target_pos_levels(
@@ -358,7 +389,8 @@ def target_relative_base_stance_l2(
     success_threshold: float = 0.06,
     max_targets_per_episode: int = 6,
     switch_phase_steps: int = 30,
-    target_duration_s: float = 4.0,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
 ):
     """Penalize target positions that lie outside a favorable left-hand reach corridor in body/base-yaw frame."""
     _sync_long_horizon_state(
@@ -367,7 +399,8 @@ def target_relative_base_stance_l2(
         success_threshold=success_threshold,
         max_targets_per_episode=max_targets_per_episode,
         switch_phase_steps=switch_phase_steps,
-        target_duration_s=target_duration_s,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
     )
@@ -383,7 +416,8 @@ def target_relative_base_stance_ready(
     success_threshold: float = 0.06,
     max_targets_per_episode: int = 6,
     switch_phase_steps: int = 30,
-    target_duration_s: float = 4.0,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
     post_switch_bonus_scale: float = 1.75,
 ):
     """Positive reward for bringing the target into a comfortable body-frame pre-reach corridor."""
@@ -393,7 +427,8 @@ def target_relative_base_stance_ready(
         success_threshold=success_threshold,
         max_targets_per_episode=max_targets_per_episode,
         switch_phase_steps=switch_phase_steps,
-        target_duration_s=target_duration_s,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
     )
@@ -409,7 +444,8 @@ def target_relative_base_stance_progress(
     success_threshold: float = 0.06,
     max_targets_per_episode: int = 6,
     switch_phase_steps: int = 30,
-    target_duration_s: float = 4.0,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
     post_switch_bonus_scale: float = 1.5,
 ):
     """Reward step-to-step reduction of target workspace error."""
@@ -419,7 +455,8 @@ def target_relative_base_stance_progress(
         success_threshold=success_threshold,
         max_targets_per_episode=max_targets_per_episode,
         switch_phase_steps=switch_phase_steps,
-        target_duration_s=target_duration_s,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
     )
@@ -445,7 +482,8 @@ def gated_position_command_error_tanh(
     success_threshold: float = 0.06,
     max_targets_per_episode: int = 6,
     switch_phase_steps: int = 30,
-    target_duration_s: float = 4.0,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
     post_switch_scale: float = 0.25,
 ):
     """Allow strong fine reach reward only after the target is brought into a reasonable stance corridor."""
@@ -455,7 +493,8 @@ def gated_position_command_error_tanh(
         success_threshold=success_threshold,
         max_targets_per_episode=max_targets_per_episode,
         switch_phase_steps=switch_phase_steps,
-        target_duration_s=target_duration_s,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
     )
@@ -478,7 +517,8 @@ def pre_stance_torso_lean_penalty(
     success_threshold: float = 0.06,
     max_targets_per_episode: int = 6,
     switch_phase_steps: int = 30,
-    target_duration_s: float = 4.0,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
     post_switch_penalty_scale: float = 1.5,
 ):
     """Penalize premature torso leaning while the target is still outside the staging corridor."""
@@ -488,7 +528,8 @@ def pre_stance_torso_lean_penalty(
         success_threshold=success_threshold,
         max_targets_per_episode=max_targets_per_episode,
         switch_phase_steps=switch_phase_steps,
-        target_duration_s=target_duration_s,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
     )
@@ -510,7 +551,8 @@ def pre_stance_joint_deviation_penalty(
     success_threshold: float = 0.06,
     max_targets_per_episode: int = 6,
     switch_phase_steps: int = 30,
-    target_duration_s: float = 4.0,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
     post_switch_penalty_scale: float = 1.5,
 ):
     """Penalize premature joint deviation before stance is ready."""
@@ -520,7 +562,8 @@ def pre_stance_joint_deviation_penalty(
         success_threshold=success_threshold,
         max_targets_per_episode=max_targets_per_episode,
         switch_phase_steps=switch_phase_steps,
-        target_duration_s=target_duration_s,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
     )
@@ -546,7 +589,8 @@ def pre_stance_joint_limit_penalty(
     success_threshold: float = 0.06,
     max_targets_per_episode: int = 6,
     switch_phase_steps: int = 30,
-    target_duration_s: float = 4.0,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
     post_switch_penalty_scale: float = 1.5,
 ):
     """Penalize pushing selected joints close to their soft limits before stance is ready."""
@@ -556,7 +600,8 @@ def pre_stance_joint_limit_penalty(
         success_threshold=success_threshold,
         max_targets_per_episode=max_targets_per_episode,
         switch_phase_steps=switch_phase_steps,
-        target_duration_s=target_duration_s,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
     )
@@ -585,7 +630,8 @@ def pre_stance_foot_motion_reward(
     success_threshold: float = 0.06,
     max_targets_per_episode: int = 6,
     switch_phase_steps: int = 30,
-    target_duration_s: float = 4.0,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
 ):
     """Lightly reward local foot motion while the target is still outside the staging corridor."""
     _sync_long_horizon_state(
@@ -594,7 +640,8 @@ def pre_stance_foot_motion_reward(
         success_threshold=success_threshold,
         max_targets_per_episode=max_targets_per_episode,
         switch_phase_steps=switch_phase_steps,
-        target_duration_s=target_duration_s,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
     )
@@ -613,7 +660,8 @@ def target_completion_bonus(
     success_threshold: float = 0.06,
     max_targets_per_episode: int = 6,
     switch_phase_steps: int = 30,
-    target_duration_s: float = 4.0,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
 ):
@@ -623,7 +671,8 @@ def target_completion_bonus(
         success_threshold=success_threshold,
         max_targets_per_episode=max_targets_per_episode,
         switch_phase_steps=switch_phase_steps,
-        target_duration_s=target_duration_s,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
     )
@@ -667,7 +716,8 @@ def success_posture_bonus(
     success_threshold: float = 0.06,
     max_targets_per_episode: int = 6,
     switch_phase_steps: int = 30,
-    target_duration_s: float = 4.0,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
 ):
     """Prefer reaching the target from a recoverable stance instead of a desperate stretched posture."""
     _sync_long_horizon_state(
@@ -676,7 +726,8 @@ def success_posture_bonus(
         success_threshold=success_threshold,
         max_targets_per_episode=max_targets_per_episode,
         switch_phase_steps=switch_phase_steps,
-        target_duration_s=target_duration_s,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
         x_range=x_range,
         y_range=y_range,
     )

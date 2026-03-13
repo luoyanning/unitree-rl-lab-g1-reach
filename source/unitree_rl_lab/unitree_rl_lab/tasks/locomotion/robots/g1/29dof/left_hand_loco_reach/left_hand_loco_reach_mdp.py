@@ -56,6 +56,7 @@ def _ensure_long_horizon_state(env, command_name: str, max_targets_per_episode: 
             dtype=torch.long,
             device=env.device,
         )
+        env._left_hand_ee_body_id = robot.find_bodies(["left_wrist_yaw_link"], preserve_order=True)[0][0]
     command_term = env.command_manager.get_term(command_name)
     if hasattr(command_term, "metrics"):
         command_term.metrics.setdefault("targets_completed", torch.zeros(num_envs, device=env.device))
@@ -76,6 +77,14 @@ def _switch_phase_scale(env, switch_phase_steps: int):
     if switch_phase_steps <= 0:
         return torch.zeros(env.num_envs, device=env.device)
     return (env._left_hand_post_switch_steps > 0).float()
+
+
+def _ee_position_error(env, command_name: str):
+    _ensure_long_horizon_state(env, command_name=command_name, max_targets_per_episode=1, switch_phase_steps=0)
+    robot = env.scene["robot"]
+    ee_pos_w = robot.data.body_pos_w[:, env._left_hand_ee_body_id]
+    command = env.command_manager.get_command(command_name)[:, :3]
+    return torch.linalg.norm(command - ee_pos_w, dim=-1)
 
 
 def _workspace_error_components(
@@ -136,9 +145,7 @@ def _sync_long_horizon_state(
     current_command = env.command_manager.get_command(command_name)[:, :3].clone()
     reset_ids = env.episode_length_buf == 0
     env._left_hand_recent_success.zero_()
-    success = reach_mdp.position_command_error(
-        env, asset_cfg=SceneEntityCfg("robot", body_names=["left_wrist_yaw_link"]), command_name=command_name
-    ) < success_threshold
+    success = _ee_position_error(env, command_name=command_name) < success_threshold
     success_edge = success & ~env._left_hand_prev_success & ~reset_ids
 
     workspace_error = _workspace_error_l2(env, command_name=command_name, x_range=x_range, y_range=y_range)

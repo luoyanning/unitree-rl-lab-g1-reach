@@ -148,7 +148,24 @@ def load_policy_weights_only(runner: OnPolicyRunner, checkpoint_path: str):
         raise KeyError(
             "Checkpoint does not contain 'model_state_dict' or 'state_dict'; cannot perform weights-only warm-start."
         )
-    incompatible = runner.alg.actor_critic.load_state_dict(model_state_dict, strict=False)
+    model = None
+    for attr_chain in (
+        ("alg", "policy"),
+        ("alg", "actor_critic"),
+        ("policy",),
+    ):
+        obj = runner
+        for attr in attr_chain:
+            if not hasattr(obj, attr):
+                obj = None
+                break
+            obj = getattr(obj, attr)
+        if obj is not None:
+            model = obj
+            break
+    if model is None:
+        raise AttributeError("Could not find a policy module on the runner for weights-only warm-start.")
+    incompatible = model.load_state_dict(model_state_dict, strict=False)
     if incompatible.missing_keys:
         print(f"[INFO]: Missing keys during weights-only warm-start: {incompatible.missing_keys}")
     if incompatible.unexpected_keys:

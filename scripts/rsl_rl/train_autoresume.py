@@ -14,6 +14,8 @@ import sys
 import time
 from pathlib import Path
 
+CHECKPOINT_PATTERN = re.compile(r"model_(\d+)\.pt$")
+
 
 def parse_wrapper_args() -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(description="Watchdog wrapper around scripts/rsl_rl/train.py.")
@@ -118,6 +120,25 @@ def is_checkpoint_managed_by_run(log_root: Path, checkpoint_path: Path) -> bool:
         return checkpoint_path.resolve().is_relative_to(log_root.resolve())
     except FileNotFoundError:
         return False
+
+
+def checkpoint_iteration(checkpoint_path: Path) -> int | None:
+    match = CHECKPOINT_PATTERN.search(checkpoint_path.name)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def delete_managed_checkpoint_iteration(log_root: Path, iteration: int) -> list[Path]:
+    deleted_paths: list[Path] = []
+    for checkpoint_path in find_checkpoints(log_root):
+        if checkpoint_iteration(checkpoint_path) != iteration:
+            continue
+        if not is_checkpoint_managed_by_run(log_root, checkpoint_path):
+            continue
+        checkpoint_path.unlink(missing_ok=True)
+        deleted_paths.append(checkpoint_path)
+    return deleted_paths
 
 
 def build_resume_args(original_args: list[str], checkpoint_path: Path) -> list[str]:
@@ -263,9 +284,10 @@ def main() -> int:
 
     restart_count = 0
     best_mean_reward: float | None = None
-    stagnant_failures_by_checkpoint: dict[Path, int] = {}
+    stagnant_failures_by_checkpoint: dict[str, int] = {}
     while True:
         checkpoints_before_launch = find_checkpoints(log_root)
+        checkpoints_before_launch_set = {path.resolve() for path in checkpoints_before_launch}
         latest_checkpoint = checkpoints_before_launch[-1] if checkpoints_before_launch else None
         launch_args = base_train_args
         launch_checkpoint: Path | None = None
@@ -300,25 +322,46 @@ def main() -> int:
             return 0
 
         checkpoints_after_failure = find_checkpoints(log_root)
-        latest_checkpoint_after_failure = checkpoints_after_failure[-1] if checkpoints_after_failure else None
-        checkpoint_advanced = latest_checkpoint_after_failure != latest_checkpoint
+        new_checkpoints = [path for path in checkpoints_after_failure if path.resolve() not in checkpoints_before_launch_set]
         if launch_checkpoint is not None:
-            if checkpoint_advanced:
-                stagnant_failures_by_checkpoint.pop(launch_checkpoint, None)
+            launch_checkpoint_iteration = checkpoint_iteration(launch_checkpoint)
+            checkpoint_advanced = False
+            if launch_checkpoint_iteration is None:
+                checkpoint_advanced = len(new_checkpoints) > 0
             else:
-                stagnant_failures_by_checkpoint[launch_checkpoint] = (
-                    stagnant_failures_by_checkpoint.get(launch_checkpoint, 0) + 1
+                checkpoint_advanced = any(
+                    (checkpoint_iteration(path) or -1) > launch_checkpoint_iteration for path in new_checkpoints
+                )
+
+            logical_checkpoint_key = str(launch_checkpoint.resolve())
+            if is_checkpoint_managed_by_run(log_root, launch_checkpoint) and launch_checkpoint_iteration is not None:
+                logical_checkpoint_key = f"iter:{launch_checkpoint_iteration}"
+
+            if checkpoint_advanced:
+                stagnant_failures_by_checkpoint.pop(logical_checkpoint_key, None)
+            else:
+                stagnant_failures_by_checkpoint[logical_checkpoint_key] = (
+                    stagnant_failures_by_checkpoint.get(logical_checkpoint_key, 0) + 1
                 )
                 print(
-                    "[AUTO-RESUME] Launch failed before producing a newer checkpoint: "
+                    "[AUTO-RESUME] Launch failed before producing a higher-iteration checkpoint: "
                     f"start_checkpoint={launch_checkpoint} "
-                    f"attempts={stagnant_failures_by_checkpoint[launch_checkpoint]}/2",
+                    f"attempts={stagnant_failures_by_checkpoint[logical_checkpoint_key]}/2",
                     flush=True,
                 )
-                if stagnant_failures_by_checkpoint[launch_checkpoint] >= 2:
-                    if is_checkpoint_managed_by_run(log_root, launch_checkpoint) and launch_checkpoint.exists():
+                if stagnant_failures_by_checkpoint[logical_checkpoint_key] >= 2:
+                    if is_checkpoint_managed_by_run(log_root, launch_checkpoint) and launch_checkpoint_iteration is not None:
+                        deleted_paths = delete_managed_checkpoint_iteration(log_root, launch_checkpoint_iteration)
+                        stagnant_failures_by_checkpoint.pop(logical_checkpoint_key, None)
+                        best_mean_reward = None
+                        print(
+                            "[AUTO-RESUME] Deleted repeatedly failing checkpoint family and will roll back to the previous iteration: "
+                            f"iteration={launch_checkpoint_iteration} deleted={len(deleted_paths)}",
+                            flush=True,
+                        )
+                    elif is_checkpoint_managed_by_run(log_root, launch_checkpoint) and launch_checkpoint.exists():
                         launch_checkpoint.unlink()
-                        stagnant_failures_by_checkpoint.pop(launch_checkpoint, None)
+                        stagnant_failures_by_checkpoint.pop(logical_checkpoint_key, None)
                         best_mean_reward = None
                         print(
                             "[AUTO-RESUME] Deleted repeatedly failing checkpoint and will roll back to the previous one: "

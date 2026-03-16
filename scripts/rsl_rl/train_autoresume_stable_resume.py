@@ -129,12 +129,19 @@ def checkpoint_iteration(checkpoint_path: Path) -> int | None:
     return int(match.group(1))
 
 
-def delete_managed_checkpoint_iteration(log_root: Path, iteration: int) -> list[Path]:
+def delete_managed_checkpoint_iteration(
+    log_root: Path,
+    iteration: int,
+    protected_paths: set[Path] | None = None,
+) -> list[Path]:
+    protected_paths = protected_paths or set()
     deleted_paths: list[Path] = []
     for checkpoint_path in find_checkpoints(log_root):
         if checkpoint_iteration(checkpoint_path) != iteration:
             continue
         if not is_checkpoint_managed_by_run(log_root, checkpoint_path):
+            continue
+        if checkpoint_path.resolve() in protected_paths:
             continue
         checkpoint_path.unlink(missing_ok=True)
         deleted_paths.append(checkpoint_path)
@@ -281,6 +288,11 @@ def main() -> int:
     train_script = repo_root / wrapper_args.train_script
     base_train_args = list(train_args)
     initial_checkpoint_arg = get_arg_value(base_train_args, "--checkpoint")
+    protected_initial_checkpoint: Path | None = None
+    protected_initial_checkpoint_resolved: Path | None = None
+    if initial_checkpoint_arg:
+        protected_initial_checkpoint = Path(initial_checkpoint_arg).expanduser()
+        protected_initial_checkpoint_resolved = protected_initial_checkpoint.resolve()
 
     restart_count = 0
     best_mean_reward: float | None = None
@@ -351,7 +363,14 @@ def main() -> int:
                 )
                 if stagnant_failures_by_checkpoint[logical_checkpoint_key] >= 2:
                     if is_checkpoint_managed_by_run(log_root, launch_checkpoint) and launch_checkpoint_iteration is not None:
-                        deleted_paths = delete_managed_checkpoint_iteration(log_root, launch_checkpoint_iteration)
+                        protected_paths: set[Path] = set()
+                        if protected_initial_checkpoint_resolved is not None:
+                            protected_paths.add(protected_initial_checkpoint_resolved)
+                        deleted_paths = delete_managed_checkpoint_iteration(
+                            log_root,
+                            launch_checkpoint_iteration,
+                            protected_paths=protected_paths,
+                        )
                         stagnant_failures_by_checkpoint.pop(logical_checkpoint_key, None)
                         best_mean_reward = None
                         print(
@@ -359,7 +378,11 @@ def main() -> int:
                             f"iteration={launch_checkpoint_iteration} deleted={len(deleted_paths)}",
                             flush=True,
                         )
-                    elif is_checkpoint_managed_by_run(log_root, launch_checkpoint) and launch_checkpoint.exists():
+                    elif (
+                        is_checkpoint_managed_by_run(log_root, launch_checkpoint)
+                        and launch_checkpoint.exists()
+                        and launch_checkpoint.resolve() != protected_initial_checkpoint_resolved
+                    ):
                         launch_checkpoint.unlink()
                         stagnant_failures_by_checkpoint.pop(logical_checkpoint_key, None)
                         best_mean_reward = None
@@ -370,7 +393,7 @@ def main() -> int:
                         )
                     else:
                         print(
-                            "[AUTO-RESUME] Repeated failure came from a checkpoint outside the managed run directory; "
+                            "[AUTO-RESUME] Repeated failure came from a protected or unmanaged checkpoint; "
                             "not deleting it automatically.",
                             flush=True,
                         )

@@ -39,7 +39,7 @@ def parse_wrapper_args() -> tuple[argparse.Namespace, list[str]]:
         "--reward_drop_restart_min_iteration",
         type=int,
         default=50,
-        help="Enable reward-collapse restart logic only after this learning iteration.",
+        help="Enable reward-collapse restart logic only after this many iterations since the current launch/restart.",
     )
     parser.add_argument(
         "--reward_drop_restart_threshold",
@@ -50,7 +50,7 @@ def parse_wrapper_args() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--reward_drop_restart_consecutive",
         type=int,
-        default=2,
+        default=10,
         help="Number of consecutive bad mean-reward iterations required before restart.",
     )
     args, train_args = parser.parse_known_args()
@@ -156,6 +156,7 @@ def stream_train_process(
     )
 
     current_iteration = -1
+    launch_start_iteration: int | None = None
     consecutive_bad_rewards = 0
     restart_requested = False
 
@@ -167,22 +168,29 @@ def stream_train_process(
             parsed_iteration = parse_iteration(line)
             if parsed_iteration is not None:
                 current_iteration = parsed_iteration
+                if launch_start_iteration is None:
+                    launch_start_iteration = parsed_iteration
 
             parsed_mean_reward = parse_mean_reward(line)
             if parsed_mean_reward is None:
                 continue
 
+            iterations_since_launch = 0
+            if launch_start_iteration is not None and current_iteration >= launch_start_iteration:
+                iterations_since_launch = current_iteration - launch_start_iteration
+
             if math.isfinite(parsed_mean_reward):
                 if best_mean_reward is None or parsed_mean_reward > best_mean_reward:
                     best_mean_reward = parsed_mean_reward
 
-                if current_iteration > min_iteration and best_mean_reward is not None:
+                if iterations_since_launch >= min_iteration and best_mean_reward is not None:
                     reward_gap = best_mean_reward - parsed_mean_reward
                     if reward_gap > reward_drop_threshold:
                         consecutive_bad_rewards += 1
                         print(
                             "[AUTO-RESUME] Detected reward collapse: "
                             f"iteration={current_iteration} "
+                            f"since_launch={iterations_since_launch} "
                             f"mean_reward={parsed_mean_reward:.4f} "
                             f"best_reward={best_mean_reward:.4f} "
                             f"gap={reward_gap:.4f} "
@@ -194,11 +202,13 @@ def stream_train_process(
                 else:
                     consecutive_bad_rewards = 0
             else:
-                if current_iteration > min_iteration:
+                if iterations_since_launch >= min_iteration:
                     consecutive_bad_rewards += 1
                     print(
                         "[AUTO-RESUME] Detected non-finite mean reward after warm-up: "
-                        f"iteration={current_iteration} value={parsed_mean_reward} "
+                        f"iteration={current_iteration} "
+                        f"since_launch={iterations_since_launch} "
+                        f"value={parsed_mean_reward} "
                         f"consecutive={consecutive_bad_rewards}/{reward_drop_consecutive}",
                         flush=True,
                     )

@@ -8,4 +8,4 @@ class LeftHandLocoReachRestorePPORunnerCfg(BasePPORunnerCfg):
     def __post_init__(self):
         self.policy.init_noise_std = 1.0
         self.algorithm.learning_rate = 1.0e-3
-        self.save_interval = 100
+        self.save_interval = 50

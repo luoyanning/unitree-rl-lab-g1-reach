@@ -132,22 +132,32 @@ def resolve_resume_path(
     return get_checkpoint_path(log_root_path, load_run, load_checkpoint)
 
 
-def _left_hand_loco_reach_policy_command_obs_indices() -> tuple[list[int], list[int]]:
-    """Indices of the stacked policy command features for the loco-reach task.
+def _left_hand_loco_reach_actor_input_merge(
+    current_weight: torch.Tensor,
+    pretrained_weight: torch.Tensor,
+) -> torch.Tensor:
+    """Merge a velocity-task actor input layer into the expanded loco-reach actor input layer.
 
-    The first two command features keep locomotion semantics from the velocity task.
-    The third feature is repurposed as a target-height cue for the reach subtask.
+    Old velocity actor frame layout is 96 dims. New loco-reach layout appends 3 target-command dims
+    to each history frame, so it becomes 99 dims. We copy the old 96-dim frame slice into the first
+    96 dims of each new frame and leave the appended target-command columns at the current init.
     """
     history_length = 5
-    frame_dim = 96
-    command_start = 6
-    xy_indices: list[int] = []
-    z_indices: list[int] = []
+    old_frame_dim = 96
+    new_frame_dim = 99
+    if pretrained_weight.shape[1] != history_length * old_frame_dim:
+        return pretrained_weight
+    if current_weight.shape[1] != history_length * new_frame_dim:
+        return pretrained_weight
+
+    merged_weight = current_weight.clone()
     for history_index in range(history_length):
-        frame_offset = history_index * frame_dim
-        xy_indices.extend(range(frame_offset + command_start, frame_offset + command_start + 2))
-        z_indices.append(frame_offset + command_start + 2)
-    return xy_indices, z_indices
+        old_offset = history_index * old_frame_dim
+        new_offset = history_index * new_frame_dim
+        merged_weight[:, new_offset : new_offset + old_frame_dim] = pretrained_weight[
+            :, old_offset : old_offset + old_frame_dim
+        ]
+    return merged_weight
 
 
 def load_policy_weights_only(
@@ -181,12 +191,6 @@ def load_policy_weights_only(
     current_state_dict = policy_nn.state_dict()
     filtered_state_dict = {}
     skipped_keys = []
-    _, command_z_obs_indices = (
-        _left_hand_loco_reach_policy_command_obs_indices()
-        if task_name == "Unitree-G1-29dof-LeftHand-LocoReach-v0"
-        else ([], [])
-    )
-
     for key, value in model_state_dict.items():
         if key not in current_state_dict:
             skipped_keys.append(key)
@@ -200,10 +204,11 @@ def load_policy_weights_only(
         if not key.startswith("actor."):
             skipped_keys.append(key)
             continue
-        if command_z_obs_indices and key == "actor.0.weight":
-            merged_weight = value.clone()
-            merged_weight[:, command_z_obs_indices] = current_state_dict[key][:, command_z_obs_indices]
-            filtered_state_dict[key] = merged_weight
+        if task_name == "Unitree-G1-29dof-LeftHand-LocoReach-v0" and key == "actor.0.weight":
+            filtered_state_dict[key] = _left_hand_loco_reach_actor_input_merge(
+                current_weight=current_state_dict[key],
+                pretrained_weight=value,
+            )
             continue
         filtered_state_dict[key] = value
 

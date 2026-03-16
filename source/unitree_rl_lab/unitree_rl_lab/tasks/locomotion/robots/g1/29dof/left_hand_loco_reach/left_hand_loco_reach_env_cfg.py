@@ -13,7 +13,6 @@ from ..velocity_env_cfg import RobotEnvCfg
 
 from .left_hand_loco_reach_mdp import (
     gated_position_command_error_tanh,
-    guided_base_velocity_command_obs,
     left_hand_target_pos_levels,
     pre_stance_foot_motion_reward,
     pre_stance_joint_deviation_penalty,
@@ -159,14 +158,19 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
         self.actions.JointPositionAction.joint_names = [".*"]
         self.actions.JointPositionAction.scale = 0.25
 
-        # Keep the actor command semantics locomotion-compatible for velocity-policy warm start:
-        # x/y are locomotion guidance derived from the fixed world target, while the third slot
-        # carries a bounded target-height feature for the reach subtask.
         self.observations.policy.velocity_commands = ObsTerm(
-            func=guided_base_velocity_command_obs,
+            func=mdp.generated_commands,
+            params={"command_name": "base_velocity"},
+        )
+        self.observations.policy.left_hand_target_command = ObsTerm(
+            func=target_pos_command_obs,
             params=long_horizon_params,
         )
         self.observations.critic.velocity_commands = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "base_velocity"},
+        )
+        self.observations.critic.left_hand_target_command = ObsTerm(
             func=target_pos_command_obs,
             params=long_horizon_params,
         )
@@ -175,7 +179,7 @@ class RobotLeftHandLocoReachEnvCfg(RobotEnvCfg):
         self.events.reset_base.params["pose_range"] = {"x": (-0.2, 0.2), "y": (-0.2, 0.2), "yaw": (-0.8, 0.8)}
 
         self.rewards.track_lin_vel_xy.weight = 1.0
-        self.rewards.track_ang_vel_z = None
+        self.rewards.track_ang_vel_z.weight = 0.5
         self.rewards.gait = None
         self.rewards.feet_clearance = None
         self.rewards.joint_deviation_arms = None

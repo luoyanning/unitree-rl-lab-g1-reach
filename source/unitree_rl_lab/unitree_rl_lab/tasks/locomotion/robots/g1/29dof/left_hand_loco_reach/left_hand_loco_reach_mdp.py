@@ -177,7 +177,6 @@ def _set_base_velocity_guidance_command(
     env,
     x_range: tuple[float, float],
     y_range: tuple[float, float],
-    target_height_range: tuple[float, float] = (0.0, 0.34),
 ):
     command = _base_velocity_command_tensor(env)
     target_pos_base = _active_target_pos_base_yaw(env)
@@ -189,45 +188,9 @@ def _set_base_velocity_guidance_command(
         device=env.device,
     )
     target_error_xy = target_pos_base[:, :2] - target_center_xy
-    command[:, 0] = torch.clamp(1.8 * target_error_xy[:, 0], min=-0.35, max=0.8)
-    command[:, 1] = torch.clamp(1.8 * target_error_xy[:, 1], min=-0.3, max=0.3)
-
-    z_min, z_max = target_height_range
-    z_norm = (target_pos_base[:, 2] - z_min) / max(z_max - z_min, 1.0e-6)
-    command[:, 2] = torch.clamp((z_norm - 0.5) * 0.4, min=-0.2, max=0.2)
-
-
-def guided_base_velocity_command_obs(
-    env,
-    command_name: str = "left_hand_pose",
-    success_threshold: float = 0.06,
-    max_targets_per_episode: int = 6,
-    switch_phase_steps: int = 30,
-    static_target_hold_s: float = 1.0e9,
-    per_target_timeout_s: float = 4.0,
-    success_exit_radius: float = 0.09,
-    success_hold_steps: int = 8,
-    x_range: tuple[float, float] = (0.38, 0.62),
-    y_range: tuple[float, float] = (0.08, 0.28),
-    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
-    sample_weights: dict[str, float] | None = None,
-):
-    _sync_long_horizon_state(
-        env,
-        command_name=command_name,
-        success_threshold=success_threshold,
-        max_targets_per_episode=max_targets_per_episode,
-        switch_phase_steps=switch_phase_steps,
-        static_target_hold_s=static_target_hold_s,
-        per_target_timeout_s=per_target_timeout_s,
-        x_range=x_range,
-        y_range=y_range,
-        success_exit_radius=success_exit_radius,
-        success_hold_steps=success_hold_steps,
-        sample_regimes=sample_regimes,
-        sample_weights=sample_weights,
-    )
-    return _base_velocity_command_tensor(env)
+    command[:, 0] = torch.clamp(2.2 * target_error_xy[:, 0], min=-0.4, max=0.9)
+    command[:, 1] = torch.clamp(2.0 * target_error_xy[:, 1], min=-0.35, max=0.35)
+    command[:, 2] = 0.0
 
 
 def _static_target_position_error(
@@ -648,14 +611,10 @@ def _sync_long_horizon_state(
                 * (env._left_hand_post_switch_steps > 0).float()
             )
 
-    active_sample_regimes, _ = _get_sampling_distribution_state(
-        env, sample_regimes=sample_regimes, sample_weights=sample_weights
-    )
     _set_base_velocity_guidance_command(
         env,
         x_range=x_range,
         y_range=y_range,
-        target_height_range=_range_union(active_sample_regimes, "pos_z"),
     )
 
     _debug_timeout_state(

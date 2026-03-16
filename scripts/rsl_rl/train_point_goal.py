@@ -242,6 +242,16 @@ def install_positive_std_guard(
     )
 
 
+def maybe_export_deploy_cfg(env, log_dir: str):
+    try:
+        export_deploy_cfg(env, log_dir)
+    except AttributeError as exc:
+        print(
+            "[INFO]: Skipping deploy.yaml export for point-goal task because the current deploy exporter "
+            f"expects velocity command ranges. Original error: {exc}"
+        )
+
+
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlOnPolicyRunnerCfg):
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
@@ -313,7 +323,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
-    export_deploy_cfg(env.unwrapped, log_dir)
+    maybe_export_deploy_cfg(env.unwrapped, log_dir)
     shutil.copy(
         inspect.getfile(env_cfg.__class__),
         os.path.join(log_dir, "params", os.path.basename(inspect.getfile(env_cfg.__class__))),

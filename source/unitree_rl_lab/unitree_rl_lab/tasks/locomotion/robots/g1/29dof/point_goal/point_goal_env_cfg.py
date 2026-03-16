@@ -37,18 +37,18 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
             asset_name="robot",
             resampling_time_range=(self.episode_length_s, self.episode_length_s),
             debug_vis=True,
-            radius_range=(0.5, 2.5),
-            angle_range=(-3.141592653589793, 3.141592653589793),
-            forward_gain=1.3,
-            lateral_gain=1.8,
-            heading_gain=1.2,
-            min_lin_vel_x=-0.35,
-            max_lin_vel_x=0.9,
-            max_lin_vel_y=0.35,
-            max_ang_vel_z=0.8,
-            slow_down_distance=0.8,
+            radius_range=(0.4, 1.5),
+            angle_range=(-1.5707963267948966, 1.5707963267948966),
+            forward_gain=0.8,
+            lateral_gain=0.5,
+            heading_gain=0.2,
+            min_lin_vel_x=0.0,
+            max_lin_vel_x=0.6,
+            max_lin_vel_y=0.1,
+            max_ang_vel_z=0.2,
+            slow_down_distance=0.6,
             stop_distance=0.2,
-            heading_slow_down_distance=0.35,
+            heading_slow_down_distance=0.5,
         )
 
         self.observations.policy.point_goal_target_world = ObsTerm(
@@ -91,11 +91,11 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
             params={"command_name": "base_velocity"},
         )
 
-        self.rewards.track_lin_vel_xy.weight = 0.35
-        self.rewards.track_ang_vel_z.weight = 0.15
+        self.rewards.track_lin_vel_xy.weight = 1.0
+        self.rewards.track_ang_vel_z.weight = 0.5
         self.rewards.goal_progress = RewTerm(
             func=point_goal_progress_reward,
-            weight=18.0,
+            weight=8.0,
             params={
                 "command_name": "base_velocity",
                 "success_distance": SUCCESS_DISTANCE,
@@ -107,7 +107,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
         )
         self.rewards.goal_distance = RewTerm(
             func=point_goal_distance_reward,
-            weight=4.0,
+            weight=2.0,
             params={
                 "command_name": "base_velocity",
                 "success_distance": SUCCESS_DISTANCE,
@@ -119,7 +119,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
         )
         self.rewards.goal_stop = RewTerm(
             func=point_goal_stop_reward,
-            weight=3.0,
+            weight=2.0,
             params={
                 "command_name": "base_velocity",
                 "success_distance": SUCCESS_DISTANCE,
@@ -131,7 +131,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
         )
         self.rewards.goal_success = RewTerm(
             func=point_goal_success_bonus,
-            weight=20.0,
+            weight=12.0,
             params={
                 "command_name": "base_velocity",
                 "success_distance": SUCCESS_DISTANCE,
@@ -141,7 +141,11 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
             },
         )
 
+        self.events.push_robot = None
         self.curriculum.lin_vel_cmd_levels = None
+        self.curriculum.terrain_levels = None
+        if self.scene.terrain.terrain_generator is not None:
+            self.scene.terrain.terrain_generator.curriculum = False
         self.terminations.point_goal_success = DoneTerm(
             func=point_goal_success,
             params={

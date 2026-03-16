@@ -63,6 +63,7 @@ class PointGoalCommand(CommandTerm):
         goal_delta_w_xy = self.goal_pos_w[:, :2] - self.robot.data.root_pos_w[:, :2]
         goal_distance = torch.linalg.norm(goal_delta_w_xy, dim=-1)
         goal_heading_error = _wrap_to_pi(torch.atan2(goal_delta_body_xy[:, 1], goal_delta_body_xy[:, 0]))
+        heading_alignment = torch.clamp(torch.cos(goal_heading_error), min=0.0, max=1.0)
 
         distance_scale = torch.clamp(goal_distance / self.cfg.slow_down_distance, min=0.0, max=1.0)
         stop_scale = torch.clamp(goal_distance / self.cfg.stop_distance, min=0.0, max=1.0)
@@ -83,8 +84,8 @@ class PointGoalCommand(CommandTerm):
             max=self.cfg.max_ang_vel_z,
         )
 
-        self._command[:, 0] = lin_vel_x * distance_scale * stop_scale
-        self._command[:, 1] = lin_vel_y * distance_scale * stop_scale
+        self._command[:, 0] = lin_vel_x * distance_scale * stop_scale * heading_alignment
+        self._command[:, 1] = lin_vel_y * distance_scale * stop_scale * heading_alignment
         self._command[:, 2] = ang_vel_z * torch.clamp(goal_distance / self.cfg.heading_slow_down_distance, 0.0, 1.0)
 
         self.metrics["goal_distance"][:] = goal_distance

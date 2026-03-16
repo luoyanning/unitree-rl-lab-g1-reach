@@ -220,6 +220,8 @@ def install_positive_std_guard(
         return
 
     with torch.no_grad():
+        policy_nn.std.data.nan_to_num_(nan=std_min, posinf=std_max, neginf=std_min)
+        policy_nn.std.data.abs_()
         policy_nn.std.data.clamp_(min=std_min, max=std_max)
     if freeze_std:
         policy_nn.std.requires_grad_(False)
@@ -231,6 +233,8 @@ def install_positive_std_guard(
 
     def guarded_update_distribution(self, observations):
         with torch.no_grad():
+            self.std.data.nan_to_num_(nan=std_min, posinf=std_max, neginf=std_min)
+            self.std.data.abs_()
             self.std.data.clamp_(min=std_min, max=std_max)
         return original_update_distribution(observations)
 
@@ -317,9 +321,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             task_name=args_cli.task,
             init_noise_std=float(agent_cfg.policy.init_noise_std),
         )
-        install_positive_std_guard(runner, std_min=1.0e-3, std_max=5.0, freeze_std=False)
+        install_positive_std_guard(runner, std_min=1.0e-3, std_max=1.0, freeze_std=True)
     else:
-        install_positive_std_guard(runner, freeze_std=False)
+        install_positive_std_guard(runner, std_min=1.0e-3, std_max=1.0, freeze_std=True)
 
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)

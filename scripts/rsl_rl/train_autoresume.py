@@ -100,12 +100,24 @@ def normalize_experiment_name(task_name: str) -> str:
     return experiment_name
 
 
-def find_latest_checkpoint(log_root: Path) -> Path | None:
+def find_checkpoints(log_root: Path) -> list[Path]:
     checkpoints = [path for path in log_root.rglob("model_*.pt") if path.is_file()]
+    checkpoints.sort(key=lambda path: (path.stat().st_mtime_ns, str(path)))
+    return checkpoints
+
+
+def find_latest_checkpoint(log_root: Path) -> Path | None:
+    checkpoints = find_checkpoints(log_root)
     if not checkpoints:
         return None
-    checkpoints.sort(key=lambda path: (path.stat().st_mtime_ns, str(path)))
     return checkpoints[-1]
+
+
+def is_checkpoint_managed_by_run(log_root: Path, checkpoint_path: Path) -> bool:
+    try:
+        return checkpoint_path.resolve().is_relative_to(log_root.resolve())
+    except FileNotFoundError:
+        return False
 
 
 def build_resume_args(original_args: list[str], checkpoint_path: Path) -> list[str]:
@@ -247,18 +259,25 @@ def main() -> int:
     log_root = repo_root / "logs" / "rsl_rl" / experiment_name
     train_script = repo_root / wrapper_args.train_script
     base_train_args = list(train_args)
+    initial_checkpoint_arg = get_arg_value(base_train_args, "--checkpoint")
 
     restart_count = 0
     best_mean_reward: float | None = None
+    stagnant_failures_by_checkpoint: dict[Path, int] = {}
     while True:
-        latest_checkpoint = find_latest_checkpoint(log_root)
+        checkpoints_before_launch = find_checkpoints(log_root)
+        latest_checkpoint = checkpoints_before_launch[-1] if checkpoints_before_launch else None
         launch_args = base_train_args
+        launch_checkpoint: Path | None = None
         if restart_count > 0 and latest_checkpoint is not None:
             launch_args = build_resume_args(base_train_args, latest_checkpoint)
+            launch_checkpoint = latest_checkpoint
             print(f"[AUTO-RESUME] Restart {restart_count}: resuming from {latest_checkpoint}", flush=True)
         elif restart_count > 0:
             print("[AUTO-RESUME] No checkpoint found to resume from after failure. Stopping.", flush=True)
             return 1
+        elif "--resume" in base_train_args and initial_checkpoint_arg:
+            launch_checkpoint = Path(initial_checkpoint_arg).expanduser()
 
         command = [sys.executable, str(train_script), *launch_args]
         print(f"[AUTO-RESUME] Launching: {' '.join(command)}", flush=True)
@@ -279,6 +298,39 @@ def main() -> int:
         if returncode == 0 and not restart_requested:
             print("[AUTO-RESUME] Training completed successfully.", flush=True)
             return 0
+
+        checkpoints_after_failure = find_checkpoints(log_root)
+        latest_checkpoint_after_failure = checkpoints_after_failure[-1] if checkpoints_after_failure else None
+        checkpoint_advanced = latest_checkpoint_after_failure != latest_checkpoint
+        if launch_checkpoint is not None:
+            if checkpoint_advanced:
+                stagnant_failures_by_checkpoint.pop(launch_checkpoint, None)
+            else:
+                stagnant_failures_by_checkpoint[launch_checkpoint] = (
+                    stagnant_failures_by_checkpoint.get(launch_checkpoint, 0) + 1
+                )
+                print(
+                    "[AUTO-RESUME] Launch failed before producing a newer checkpoint: "
+                    f"start_checkpoint={launch_checkpoint} "
+                    f"attempts={stagnant_failures_by_checkpoint[launch_checkpoint]}/2",
+                    flush=True,
+                )
+                if stagnant_failures_by_checkpoint[launch_checkpoint] >= 2:
+                    if is_checkpoint_managed_by_run(log_root, launch_checkpoint) and launch_checkpoint.exists():
+                        launch_checkpoint.unlink()
+                        stagnant_failures_by_checkpoint.pop(launch_checkpoint, None)
+                        best_mean_reward = None
+                        print(
+                            "[AUTO-RESUME] Deleted repeatedly failing checkpoint and will roll back to the previous one: "
+                            f"{launch_checkpoint}",
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            "[AUTO-RESUME] Repeated failure came from a checkpoint outside the managed run directory; "
+                            "not deleting it automatically.",
+                            flush=True,
+                        )
 
         restart_count += 1
         if restart_requested:

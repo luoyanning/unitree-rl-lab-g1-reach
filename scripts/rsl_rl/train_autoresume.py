@@ -112,6 +112,7 @@ def build_resume_args(original_args: list[str], checkpoint_path: Path) -> list[s
     args = list(original_args)
     args = remove_arg(args, "--load_run")
     args = remove_arg(args, "--init_checkpoint")
+    args = remove_arg(args, "--load_weights_only")
     args = upsert_flag(args, "--resume")
     args = upsert_flag(args, "--checkpoint", str(checkpoint_path))
     return args

@@ -83,6 +83,12 @@ parser.add_argument(
     help="Freeze action std after resume.",
 )
 parser.add_argument(
+    "--resume_trainable_std",
+    action="store_true",
+    default=False,
+    help="Keep action std trainable in conservative resume mode.",
+)
+parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 # append RSL-RL cli arguments
@@ -109,6 +115,7 @@ import importlib.metadata as metadata
 import platform
 
 from packaging import version
+from torch.distributions import Normal
 
 # for distributed training, check minimum supported rsl-rl version
 RSL_RL_VERSION = "2.3.1"
@@ -277,11 +284,36 @@ def load_policy_weights_only(
     )
 
 
+def _sanitize_policy_std(
+    policy_nn,
+    std_min: float,
+    std_max: float,
+):
+    with torch.no_grad():
+        policy_nn.std.data.nan_to_num_(nan=std_max, posinf=std_max, neginf=std_min)
+        policy_nn.std.data.clamp_(min=std_min, max=std_max)
+
+
+def _sanitize_action_mean(
+    action_mean: torch.Tensor,
+    mean_abs_max: float,
+) -> torch.Tensor:
+    action_mean = torch.nan_to_num(
+        action_mean,
+        nan=0.0,
+        posinf=mean_abs_max,
+        neginf=-mean_abs_max,
+    )
+    return torch.clamp(action_mean, min=-mean_abs_max, max=mean_abs_max)
+
+
 def install_positive_std_guard(
     runner: OnPolicyRunner,
     std_min: float = 1.0e-3,
     std_max: float = 5.0,
     freeze_std: bool = False,
+    optimizer=None,
+    mean_abs_max: float = 10.0,
 ):
     """Prevent invalid negative action std values from crashing training."""
     policy_nn = getattr(runner.alg, "actor_critic", None)
@@ -290,26 +322,42 @@ def install_positive_std_guard(
     if policy_nn is None or not hasattr(policy_nn, "std"):
         return
 
-    with torch.no_grad():
-        policy_nn.std.data.clamp_(min=std_min, max=std_max)
+    _sanitize_policy_std(policy_nn, std_min=std_min, std_max=std_max)
     if freeze_std:
         policy_nn.std.requires_grad_(False)
 
     if getattr(policy_nn, "_codex_positive_std_guard_installed", False):
         return
 
-    original_update_distribution = policy_nn.update_distribution
-
     def guarded_update_distribution(self, observations):
-        with torch.no_grad():
-            self.std.data.clamp_(min=std_min, max=std_max)
-        return original_update_distribution(observations)
+        _sanitize_policy_std(self, std_min=std_min, std_max=std_max)
+        mean = self.actor(observations)
+        mean = _sanitize_action_mean(mean, mean_abs_max=mean_abs_max)
+        scale = torch.nan_to_num(
+            self.std,
+            nan=std_max,
+            posinf=std_max,
+            neginf=std_min,
+        )
+        scale = torch.clamp(scale, min=std_min, max=std_max)
+        self.distribution = Normal(mean, scale.expand_as(mean))
 
     policy_nn.update_distribution = types.MethodType(guarded_update_distribution, policy_nn)
     policy_nn._codex_positive_std_guard_installed = True
+
+    if optimizer is not None and not getattr(optimizer, "_codex_positive_std_step_guard_installed", False):
+        original_step = optimizer.step
+
+        def guarded_step(self, *args, **kwargs):
+            result = original_step(*args, **kwargs)
+            _sanitize_policy_std(policy_nn, std_min=std_min, std_max=std_max)
+            return result
+
+        optimizer.step = types.MethodType(guarded_step, optimizer)
+        optimizer._codex_positive_std_step_guard_installed = True
     print(
         "[INFO]: Installed positive action-std guard "
-        f"(std_min={std_min}, std_max={std_max}, freeze_std={freeze_std})."
+        f"(std_min={std_min}, std_max={std_max}, mean_abs_max={mean_abs_max}, freeze_std={freeze_std})."
     )
 
 
@@ -344,7 +392,14 @@ def apply_conservative_resume_overrides(
             f"(reset_std_to={reset_std_to}, std_min={std_min}, std_max={std_max}, freeze_std={freeze_std}).",
             flush=True,
         )
-    install_positive_std_guard(runner, std_min=std_min, std_max=std_max, freeze_std=freeze_std)
+    install_positive_std_guard(
+        runner,
+        std_min=std_min,
+        std_max=std_max,
+        freeze_std=freeze_std,
+        optimizer=optimizer,
+        mean_abs_max=10.0,
+    )
 
 
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
@@ -438,7 +493,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             reset_std_to=args_cli.resume_reset_std_to,
             std_min=float(args_cli.resume_std_min),
             std_max=float(args_cli.resume_std_max),
-            freeze_std=bool(args_cli.resume_freeze_std),
+            freeze_std=bool(args_cli.resume_freeze_std or not args_cli.resume_trainable_std),
         )
     elif init_checkpoint_path is not None:
         print(f"[INFO]: Initializing model weights from checkpoint: {init_checkpoint_path}")
@@ -449,9 +504,21 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             task_name=args_cli.task,
             init_noise_std=warmstart_init_std,
         )
-        install_positive_std_guard(runner, std_min=1.0e-3, std_max=5.0, freeze_std=False)
+        install_positive_std_guard(
+            runner,
+            std_min=1.0e-3,
+            std_max=5.0,
+            freeze_std=False,
+            optimizer=getattr(runner.alg, "optimizer", None),
+            mean_abs_max=10.0,
+        )
     else:
-        install_positive_std_guard(runner, freeze_std=False)
+        install_positive_std_guard(
+            runner,
+            freeze_std=False,
+            optimizer=getattr(runner.alg, "optimizer", None),
+            mean_abs_max=10.0,
+        )
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)

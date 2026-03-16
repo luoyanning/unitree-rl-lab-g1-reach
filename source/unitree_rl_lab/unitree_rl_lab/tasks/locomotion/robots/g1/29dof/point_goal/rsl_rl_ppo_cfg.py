@@ -8,3 +8,4 @@ class PointGoalPPORunnerCfg(BasePPORunnerCfg):
     def __post_init__(self):
         self.policy.init_noise_std = 0.1
         self.algorithm.learning_rate = 1.0e-4
+        self.clip_actions = 1.0

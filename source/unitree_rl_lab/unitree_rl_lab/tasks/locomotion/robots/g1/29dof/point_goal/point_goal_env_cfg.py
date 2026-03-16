@@ -93,6 +93,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
 
         self.rewards.track_lin_vel_xy.weight = 1.0
         self.rewards.track_ang_vel_z.weight = 0.5
+        self.rewards.action_rate = None
         self.rewards.goal_progress = RewTerm(
             func=point_goal_progress_reward,
             weight=8.0,

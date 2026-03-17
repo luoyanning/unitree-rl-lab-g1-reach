@@ -592,6 +592,32 @@ def point_goal_stop_reward(
     return env._point_goal_stop_quality * near_gate
 
 
+def point_goal_heading_alignment_reward(
+    env,
+    command_name: str = "base_velocity",
+    success_distance: float = 0.10,
+    success_hold_steps: int = 20,
+    stop_velocity_threshold: float = 0.10,
+    stop_yaw_rate_threshold: float = 0.15,
+    per_target_timeout_s: float = 4.0,
+    near_distance: float = 0.45,
+    std: float = 0.60,
+):
+    _sync_point_goal_state(
+        env,
+        command_name=command_name,
+        success_distance=success_distance,
+        success_hold_steps=success_hold_steps,
+        stop_velocity_threshold=stop_velocity_threshold,
+        stop_yaw_rate_threshold=stop_yaw_rate_threshold,
+        per_target_timeout_s=per_target_timeout_s,
+    )
+    goal_delta_body_xy = _goal_delta_body_xy(env, command_name=command_name)
+    heading_error = _wrap_to_pi(torch.atan2(goal_delta_body_xy[:, 1], goal_delta_body_xy[:, 0]))
+    near_gate = torch.clamp(1.0 - env._point_goal_current_distance / max(near_distance, 1.0e-6), min=0.0, max=1.0)
+    return near_gate * torch.exp(-torch.square(heading_error) / (std**2))
+
+
 def point_goal_success_bonus(
     env,
     command_name: str = "base_velocity",

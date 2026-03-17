@@ -93,11 +93,11 @@ class HierarchicalPointGoalVecEnv:
 
         self.device = low_level_env.device
         self.num_envs = low_level_env.num_envs
-        self.max_episode_length = low_level_env.max_episode_length
-        self.episode_length_buf = low_level_env.episode_length_buf
-        self.rew_buf = low_level_env.rew_buf
-        self.reset_buf = low_level_env.reset_buf
-        self.extras = {}
+        self.max_episode_length = getattr(low_level_env, "max_episode_length", self.base_env.max_episode_length)
+        self.episode_length_buf = getattr(low_level_env, "episode_length_buf", self.base_env.episode_length_buf)
+        self.rew_buf = torch.zeros(self.num_envs, device=self.device)
+        self.reset_buf = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        self.extras = getattr(low_level_env, "extras", {})
 
         self.low_level_actor = FrozenVelocityActor.from_checkpoint(low_level_checkpoint_path, device=self.device)
         self.low_level_obs_dim = int(self.low_level_actor.input_dim)

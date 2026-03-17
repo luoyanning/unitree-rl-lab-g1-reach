@@ -361,27 +361,160 @@ def _sync_adapter_hold_stay_state(
             pose_command[:, 3:6] = 0.0
 
 
-def target_pos_command_obs(env, **kwargs):
-    _sync_adapter_hold_stay_state(env, **kwargs)
+def target_pos_command_obs(
+    env,
+    command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
+    x_range: tuple[float, float] = (0.38, 0.62),
+    y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
+    adapter_gate_std: float = 0.04,
+    adapter_post_switch_bias: float = 0.35,
+    adapter_min_z_blend: float = 0.35,
+    adapter_snap_to_target_radius: float = 0.12,
+):
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+        adapter_gate_std=adapter_gate_std,
+        adapter_post_switch_bias=adapter_post_switch_bias,
+        adapter_min_z_blend=adapter_min_z_blend,
+        adapter_snap_to_target_radius=adapter_snap_to_target_radius,
+    )
     return env._left_hand_adapter_command
 
 
 def static_target_position_error(
     env,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["left_wrist_yaw_link"]),
-    **kwargs,
+    command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
+    x_range: tuple[float, float] = (0.38, 0.62),
+    y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
 ):
-    _sync_adapter_hold_stay_state(env, **kwargs)
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
     return fixed_mdp._static_target_position_error(env, asset_cfg=asset_cfg)
 
 
-def target_quota_reached(env, max_targets_per_episode: int = 6, **kwargs):
-    _sync_adapter_hold_stay_state(env, max_targets_per_episode=max_targets_per_episode, **kwargs)
+def target_quota_reached(
+    env,
+    command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
+    x_range: tuple[float, float] = (0.38, 0.62),
+    y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
+):
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
     return env._left_hand_completed_targets >= max_targets_per_episode
 
 
-def target_timeout_reached(env, per_target_timeout_s: float = 4.0, **kwargs):
-    _sync_adapter_hold_stay_state(env, per_target_timeout_s=per_target_timeout_s, **kwargs)
+def target_timeout_reached(
+    env,
+    command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
+    x_range: tuple[float, float] = (0.38, 0.62),
+    y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
+):
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
     per_target_timeout_steps = max(1, int(round(per_target_timeout_s / env.step_dt)))
     return env._left_hand_target_age_steps >= per_target_timeout_steps
 
@@ -389,61 +522,166 @@ def target_timeout_reached(env, per_target_timeout_s: float = 4.0, **kwargs):
 def target_relative_base_stance_l2(
     env,
     command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
-    **kwargs,
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
 ):
-    _sync_adapter_hold_stay_state(env, command_name=command_name, x_range=x_range, y_range=y_range, **kwargs)
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
     return fixed_mdp._workspace_error_l2(env, command_name=command_name, x_range=x_range, y_range=y_range)
 
 
 def target_relative_base_stance_ready(
     env,
     command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
     gate_std: float = 0.01,
     post_switch_bonus_scale: float = 1.75,
-    **kwargs,
 ):
-    _sync_adapter_hold_stay_state(env, command_name=command_name, x_range=x_range, y_range=y_range, **kwargs)
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
     gate = fixed_mdp._workspace_ready_gate(env, command_name=command_name, x_range=x_range, y_range=y_range, gate_std=gate_std)
-    return gate * (1.0 + post_switch_bonus_scale * fixed_mdp._switch_phase_scale(env, kwargs.get("switch_phase_steps", 30)))
+    return gate * (1.0 + post_switch_bonus_scale * fixed_mdp._switch_phase_scale(env, switch_phase_steps))
 
 
 def target_relative_base_stance_progress(
     env,
     command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
     post_switch_bonus_scale: float = 1.5,
-    **kwargs,
 ):
-    _sync_adapter_hold_stay_state(env, command_name=command_name, x_range=x_range, y_range=y_range, **kwargs)
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
     workspace_error = fixed_mdp._workspace_error_l2(env, command_name=command_name, x_range=x_range, y_range=y_range)
     if not hasattr(env, "_left_hand_prev_workspace_error"):
         env._left_hand_prev_workspace_error = workspace_error.clone()
     reset_ids = fixed_mdp._current_reset_mask(env)
     env._left_hand_prev_workspace_error[reset_ids] = workspace_error[reset_ids]
-    env._left_hand_prev_workspace_error[env._left_hand_target_switched_this_step] = workspace_error[env._left_hand_target_switched_this_step]
+    env._left_hand_prev_workspace_error[env._left_hand_target_switched_this_step] = workspace_error[
+        env._left_hand_target_switched_this_step
+    ]
     progress = env._left_hand_prev_workspace_error - workspace_error
     env._left_hand_prev_workspace_error = workspace_error.clone()
-    return progress * (1.0 + post_switch_bonus_scale * fixed_mdp._switch_phase_scale(env, kwargs.get("switch_phase_steps", 30)))
+    return progress * (1.0 + post_switch_bonus_scale * fixed_mdp._switch_phase_scale(env, switch_phase_steps))
 
 
 def gated_position_command_error_tanh(
     env,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["left_wrist_yaw_link"]),
     command_name: str = "left_hand_pose",
-    std: float = 0.14,
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
+    std: float = 0.14,
     gate_std: float = 0.01,
     post_switch_scale: float = 0.25,
-    **kwargs,
 ):
-    switch_phase_steps = kwargs.get("switch_phase_steps", 30)
-    _sync_adapter_hold_stay_state(env, command_name=command_name, x_range=x_range, y_range=y_range, **kwargs)
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
     reach_reward = fixed_mdp._static_target_position_error_tanh(env, asset_cfg=asset_cfg, std=std)
     stance_gate = fixed_mdp._workspace_ready_gate(env, command_name=command_name, x_range=x_range, y_range=y_range, gate_std=gate_std)
     switch_scale = torch.where(
@@ -457,16 +695,41 @@ def gated_position_command_error_tanh(
 def pre_stance_torso_lean_penalty(
     env,
     command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
     gate_std: float = 0.02,
     post_switch_penalty_scale: float = 1.5,
     near_success_penalty_radius: float = 0.10,
     near_success_penalty_scale: float = 0.2,
-    **kwargs,
 ):
-    switch_phase_steps = kwargs.get("switch_phase_steps", 30)
-    _sync_adapter_hold_stay_state(env, command_name=command_name, x_range=x_range, y_range=y_range, **kwargs)
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
     robot = env.scene["robot"]
     stance_not_ready = 1.0 - fixed_mdp._workspace_ready_gate(env, command_name=command_name, x_range=x_range, y_range=y_range, gate_std=gate_std)
     torso_lean = torch.linalg.norm(robot.data.projected_gravity_b[:, :2], dim=-1)
@@ -483,16 +746,41 @@ def pre_stance_joint_deviation_penalty(
     env,
     asset_cfg: SceneEntityCfg,
     command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
     gate_std: float = 0.02,
     post_switch_penalty_scale: float = 1.5,
     near_success_penalty_radius: float = 0.10,
     near_success_penalty_scale: float = 0.2,
-    **kwargs,
 ):
-    switch_phase_steps = kwargs.get("switch_phase_steps", 30)
-    _sync_adapter_hold_stay_state(env, command_name=command_name, x_range=x_range, y_range=y_range, **kwargs)
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
     robot = env.scene[asset_cfg.name]
     stance_not_ready = 1.0 - fixed_mdp._workspace_ready_gate(env, command_name=command_name, x_range=x_range, y_range=y_range, gate_std=gate_std)
     deviation = torch.sum(torch.abs(robot.data.joint_pos[:, asset_cfg.joint_ids] - robot.data.default_joint_pos[:, asset_cfg.joint_ids]), dim=1)
@@ -509,17 +797,42 @@ def pre_stance_joint_limit_penalty(
     env,
     asset_cfg: SceneEntityCfg,
     command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
     gate_std: float = 0.02,
     margin_threshold: float = 0.16,
     post_switch_penalty_scale: float = 1.5,
     near_success_penalty_radius: float = 0.10,
     near_success_penalty_scale: float = 0.2,
-    **kwargs,
 ):
-    switch_phase_steps = kwargs.get("switch_phase_steps", 30)
-    _sync_adapter_hold_stay_state(env, command_name=command_name, x_range=x_range, y_range=y_range, **kwargs)
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
     robot = env.scene[asset_cfg.name]
     stance_not_ready = 1.0 - fixed_mdp._workspace_ready_gate(env, command_name=command_name, x_range=x_range, y_range=y_range, gate_std=gate_std)
     joint_pos = robot.data.joint_pos[:, asset_cfg.joint_ids]
@@ -540,13 +853,39 @@ def pre_stance_foot_motion_reward(
     env,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["left_ankle_roll_link", "right_ankle_roll_link"]),
     command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
     gate_std: float = 0.02,
     speed_scale: float = 0.35,
-    **kwargs,
 ):
-    _sync_adapter_hold_stay_state(env, command_name=command_name, x_range=x_range, y_range=y_range, **kwargs)
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
     robot = env.scene[asset_cfg.name]
     stance_not_ready = 1.0 - fixed_mdp._workspace_ready_gate(env, command_name=command_name, x_range=x_range, y_range=y_range, gate_std=gate_std)
     foot_vel_xy = robot.data.body_lin_vel_w[:, asset_cfg.body_ids, :2] - robot.data.root_lin_vel_w[:, None, :2]
@@ -554,19 +893,79 @@ def pre_stance_foot_motion_reward(
     return stance_not_ready * torch.tanh(foot_speed / speed_scale)
 
 
-def target_completion_bonus(env, **kwargs):
-    _sync_adapter_hold_stay_state(env, **kwargs)
+def target_completion_bonus(
+    env,
+    command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
+    x_range: tuple[float, float] = (0.38, 0.62),
+    y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
+):
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
     return env._left_hand_recent_success.float()
 
 
 def target_hold_reward(
     env,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["left_wrist_yaw_link"]),
-    hold_reward_std: float = 0.03,
+    command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
     success_hold_steps: int = 8,
-    **kwargs,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
+    x_range: tuple[float, float] = (0.38, 0.62),
+    y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
+    hold_reward_std: float = 0.03,
 ):
-    _sync_adapter_hold_stay_state(env, success_hold_steps=success_hold_steps, **kwargs)
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
     position_error = fixed_mdp._static_target_position_error(env, asset_cfg=asset_cfg)
     hold_gate = (env._left_hand_in_success_zone | env._left_hand_in_post_success_dwell).float()
     return hold_gate * torch.exp(-position_error / hold_reward_std) * (0.5 + 0.5 * fixed_mdp._hold_progress(env, success_hold_steps))
@@ -575,12 +974,41 @@ def target_hold_reward(
 def post_success_stay_reward(
     env,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["left_wrist_yaw_link"]),
+    command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
+    x_range: tuple[float, float] = (0.38, 0.62),
+    y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
     stay_reward_std: float = 0.02,
     hand_speed_scale: float = 0.15,
     base_speed_scale: float = 0.20,
-    **kwargs,
 ):
-    _sync_adapter_hold_stay_state(env, **kwargs)
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
     robot = env.scene[asset_cfg.name]
     ee_lin_vel = robot.data.body_lin_vel_w[:, asset_cfg.body_ids]
     if ee_lin_vel.ndim == 3:
@@ -596,11 +1024,39 @@ def post_success_stay_reward(
 def near_target_action_rate_l2(
     env,
     command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
+    x_range: tuple[float, float] = (0.38, 0.62),
+    y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
     near_success_penalty_radius: float = 0.10,
     near_success_penalty_scale: float = 0.2,
-    **kwargs,
 ):
-    _sync_adapter_hold_stay_state(env, command_name=command_name, **kwargs)
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
     position_error = fixed_mdp._ee_position_error(env, command_name=command_name)
     return fixed_mdp.loco_mdp.action_rate_l2(env) * fixed_mdp._near_success_penalty_scale(
         env,
@@ -614,11 +1070,39 @@ def near_target_joint_deviation_l1(
     env,
     asset_cfg: SceneEntityCfg,
     command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
+    x_range: tuple[float, float] = (0.38, 0.62),
+    y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
     near_success_penalty_radius: float = 0.10,
     near_success_penalty_scale: float = 0.2,
-    **kwargs,
 ):
-    _sync_adapter_hold_stay_state(env, command_name=command_name, **kwargs)
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
     position_error = fixed_mdp._ee_position_error(env, command_name=command_name)
     return fixed_mdp.loco_mdp.joint_deviation_l1(env, asset_cfg=asset_cfg) * fixed_mdp._near_success_penalty_scale(
         env,
@@ -641,13 +1125,39 @@ def success_posture_bonus(
         ],
     ),
     command_name: str = "left_hand_pose",
+    success_threshold: float = 0.06,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+    post_success_dwell_steps: int = 10,
+    post_success_exit_radius: float = 0.12,
+    max_targets_per_episode: int = 6,
+    switch_phase_steps: int = 30,
+    static_target_hold_s: float = 1.0e9,
+    per_target_timeout_s: float = 4.0,
     x_range: tuple[float, float] = (0.38, 0.62),
     y_range: tuple[float, float] = (0.08, 0.28),
+    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
+    sample_weights: dict[str, float] | None = None,
     gate_std: float = 0.01,
     reach_std: float = 0.08,
-    **kwargs,
 ):
-    _sync_adapter_hold_stay_state(env, command_name=command_name, x_range=x_range, y_range=y_range, **kwargs)
+    _sync_adapter_hold_stay_state(
+        env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        success_exit_radius=success_exit_radius,
+        success_hold_steps=success_hold_steps,
+        post_success_dwell_steps=post_success_dwell_steps,
+        post_success_exit_radius=post_success_exit_radius,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
     robot = env.scene["robot"]
     position_error = fixed_mdp._static_target_position_error(env, asset_cfg=asset_cfg)
     stance_gate = fixed_mdp._workspace_ready_gate(env, command_name=command_name, x_range=x_range, y_range=y_range, gate_std=gate_std)

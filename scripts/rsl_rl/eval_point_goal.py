@@ -181,7 +181,8 @@ def main():
     for offset_xy in benchmark_offsets:
         case_records: list[dict[str, float | bool]] = []
         for _ in range(args_cli.episodes_per_case):
-            obs, _ = vec_env.reset()
+            reset_result = vec_env.reset()
+            obs = reset_result[0] if isinstance(reset_result, tuple) else reset_result
 
             goal_pos_w = torch.zeros(base_env.num_envs, 3, device=base_env.device)
             goal_pos_w[:, :2] = base_env.scene.env_origins[:, :2]

@@ -233,7 +233,7 @@ class HierarchicalPointGoalVecEnv:
 
     def get_observations(self):
         self._refresh_observation_buffers()
-        return self._obs_tensordict(), self.extras
+        return self._obs_tensordict()
 
     def get_privileged_observations(self):
         self._refresh_observation_buffers()

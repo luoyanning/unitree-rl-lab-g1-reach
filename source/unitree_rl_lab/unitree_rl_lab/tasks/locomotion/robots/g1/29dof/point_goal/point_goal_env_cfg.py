@@ -9,18 +9,18 @@ from unitree_rl_lab.tasks.locomotion import mdp
 
 from ..velocity_env_cfg import RobotEnvCfg
 from .point_goal_mdp import (
-    point_goal_completion_reward,
     PointGoalCommandCfg,
     point_goal_distance_obs,
-    point_goal_distance_reward,
     point_goal_heading_error_obs,
     point_goal_progress_reward,
     point_goal_rel_body_xy,
     point_goal_root_pos_env,
     point_goal_success,
     point_goal_success_bonus,
-    point_goal_stop_reward,
+    point_goal_target_timeout,
     point_goal_target_pos_env,
+    point_goal_time_penalty,
+    point_goal_timeout_penalty,
 )
 
 
@@ -28,6 +28,7 @@ SUCCESS_DISTANCE = 0.25
 SUCCESS_HOLD_STEPS = 5
 STOP_VELOCITY_THRESHOLD = 0.15
 STOP_YAW_RATE_THRESHOLD = 0.35
+PER_TARGET_TIMEOUT_S = 4.0
 
 
 @configclass
@@ -97,56 +98,6 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
         self.rewards.undesired_contacts.weight = -3.0
         self.rewards.goal_progress = RewTerm(
             func=point_goal_progress_reward,
-            weight=6.0,
-            params={
-                "command_name": "base_velocity",
-                "success_distance": SUCCESS_DISTANCE,
-                "success_hold_steps": SUCCESS_HOLD_STEPS,
-                "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
-                "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
-                "clip_value": 0.06,
-                "positive_scale": 2.0,
-                "regress_scale": 1.5,
-            },
-        )
-        self.rewards.goal_completion = RewTerm(
-            func=point_goal_completion_reward,
-            weight=4.0,
-            params={
-                "command_name": "base_velocity",
-                "success_distance": SUCCESS_DISTANCE,
-                "success_hold_steps": SUCCESS_HOLD_STEPS,
-                "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
-                "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
-                "exponent": 0.5,
-            },
-        )
-        self.rewards.goal_distance = RewTerm(
-            func=point_goal_distance_reward,
-            weight=2.0,
-            params={
-                "command_name": "base_velocity",
-                "success_distance": SUCCESS_DISTANCE,
-                "success_hold_steps": SUCCESS_HOLD_STEPS,
-                "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
-                "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
-                "std": 0.50,
-            },
-        )
-        self.rewards.goal_stop = RewTerm(
-            func=point_goal_stop_reward,
-            weight=2.0,
-            params={
-                "command_name": "base_velocity",
-                "success_distance": SUCCESS_DISTANCE,
-                "success_hold_steps": SUCCESS_HOLD_STEPS,
-                "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
-                "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
-                "near_distance": 0.45,
-            },
-        )
-        self.rewards.goal_success = RewTerm(
-            func=point_goal_success_bonus,
             weight=20.0,
             params={
                 "command_name": "base_velocity",
@@ -154,6 +105,49 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
                 "success_hold_steps": SUCCESS_HOLD_STEPS,
                 "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
                 "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
+                "per_target_timeout_s": PER_TARGET_TIMEOUT_S,
+                "clip_value": 0.06,
+                "positive_scale": 1.0,
+                "regress_scale": 1.5,
+            },
+        )
+        self.rewards.goal_completion = None
+        self.rewards.goal_distance = None
+        self.rewards.goal_stop = None
+        self.rewards.goal_time_penalty = RewTerm(
+            func=point_goal_time_penalty,
+            weight=-0.05,
+            params={
+                "command_name": "base_velocity",
+                "success_distance": SUCCESS_DISTANCE,
+                "success_hold_steps": SUCCESS_HOLD_STEPS,
+                "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
+                "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
+                "per_target_timeout_s": PER_TARGET_TIMEOUT_S,
+            },
+        )
+        self.rewards.goal_timeout_penalty = RewTerm(
+            func=point_goal_timeout_penalty,
+            weight=-15.0,
+            params={
+                "command_name": "base_velocity",
+                "success_distance": SUCCESS_DISTANCE,
+                "success_hold_steps": SUCCESS_HOLD_STEPS,
+                "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
+                "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
+                "per_target_timeout_s": PER_TARGET_TIMEOUT_S,
+            },
+        )
+        self.rewards.goal_success = RewTerm(
+            func=point_goal_success_bonus,
+            weight=40.0,
+            params={
+                "command_name": "base_velocity",
+                "success_distance": SUCCESS_DISTANCE,
+                "success_hold_steps": SUCCESS_HOLD_STEPS,
+                "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
+                "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
+                "per_target_timeout_s": PER_TARGET_TIMEOUT_S,
             },
         )
 
@@ -170,6 +164,18 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
                 "success_hold_steps": SUCCESS_HOLD_STEPS,
                 "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
                 "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
+                "per_target_timeout_s": PER_TARGET_TIMEOUT_S,
+            },
+        )
+        self.terminations.point_goal_timeout = DoneTerm(
+            func=point_goal_target_timeout,
+            params={
+                "command_name": "base_velocity",
+                "success_distance": SUCCESS_DISTANCE,
+                "success_hold_steps": SUCCESS_HOLD_STEPS,
+                "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
+                "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
+                "per_target_timeout_s": PER_TARGET_TIMEOUT_S,
             },
         )
 
@@ -180,8 +186,9 @@ class RobotPointGoalPlayEnvCfg(RobotPointGoalEnvCfg):
         super().__post_init__()
 
         self.scene.num_envs = 16
-        self.scene.terrain.terrain_generator.num_rows = 2
-        self.scene.terrain.terrain_generator.num_cols = 10
+        if self.scene.terrain.terrain_generator is not None:
+            self.scene.terrain.terrain_generator.num_rows = 2
+            self.scene.terrain.terrain_generator.num_cols = 10
         self.observations.policy.enable_corruption = False
         self.events.push_robot = None
         self.events.base_external_force_torque = None

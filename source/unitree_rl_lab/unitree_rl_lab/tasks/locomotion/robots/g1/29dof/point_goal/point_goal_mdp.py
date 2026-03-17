@@ -48,8 +48,11 @@ class PointGoalCommand(CommandTerm):
         self.goal_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
 
         self.metrics["goal_distance"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["min_goal_distance"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["goal_heading_error"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["guidance_speed"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["target_age_s"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["remaining_time_fraction"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["reset_goal_heading_error_raw"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["reset_goal_heading_error_command"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["reset_goal_distance"] = torch.zeros(self.num_envs, device=self.device)
@@ -289,6 +292,7 @@ def _sync_point_goal_state(
     success_hold_steps: int,
     stop_velocity_threshold: float,
     stop_yaw_rate_threshold: float,
+    per_target_timeout_s: float,
 ):
     if getattr(env, "_point_goal_state_synced_step", None) == env.common_step_counter:
         return
@@ -306,6 +310,9 @@ def _sync_point_goal_state(
         env._point_goal_just_reached = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         env._point_goal_in_zone = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         env._point_goal_stop_quality = torch.zeros(env.num_envs, device=env.device)
+        env._point_goal_target_age_steps = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+        env._point_goal_timed_out = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        env._point_goal_remaining_time_fraction = torch.ones(env.num_envs, device=env.device)
 
     reset_ids, current_episode_length = _compute_just_reset_mask(env)
 
@@ -328,6 +335,17 @@ def _sync_point_goal_state(
         env._point_goal_just_reached[reset_ids] = False
         env._point_goal_in_zone[reset_ids] = False
         env._point_goal_stop_quality[reset_ids] = 0.0
+        env._point_goal_target_age_steps[reset_ids] = 0
+        env._point_goal_timed_out[reset_ids] = False
+        env._point_goal_remaining_time_fraction[reset_ids] = 1.0
+
+    env._point_goal_target_age_steps += 1
+    per_target_timeout_steps = max(1, int(round(per_target_timeout_s / env.step_dt)))
+    env._point_goal_remaining_time_fraction = torch.clamp(
+        (per_target_timeout_steps - env._point_goal_target_age_steps).float() / float(per_target_timeout_steps),
+        min=0.0,
+        max=1.0,
+    )
 
     env._point_goal_progress = env._point_goal_prev_distance - current_distance
     env._point_goal_current_distance = current_distance
@@ -351,9 +369,14 @@ def _sync_point_goal_state(
     env._point_goal_just_reached = env._point_goal_success_steps == success_hold_steps
     env._point_goal_in_zone = success_zone
     env._point_goal_stop_quality = stop_quality
+    env._point_goal_timed_out = env._point_goal_target_age_steps >= per_target_timeout_steps
     env._point_goal_prev_distance = current_distance
     env._point_goal_prev_episode_length_buf = current_episode_length
     env._point_goal_state_synced_step = env.common_step_counter
+
+    command_term.metrics["min_goal_distance"][:] = env._point_goal_min_distance
+    command_term.metrics["target_age_s"][:] = env._point_goal_target_age_steps.float() * env.step_dt
+    command_term.metrics["remaining_time_fraction"][:] = env._point_goal_remaining_time_fraction
 
 
 def point_goal_progress_reward(
@@ -363,6 +386,7 @@ def point_goal_progress_reward(
     success_hold_steps: int = 20,
     stop_velocity_threshold: float = 0.10,
     stop_yaw_rate_threshold: float = 0.15,
+    per_target_timeout_s: float = 4.0,
     clip_value: float = 0.05,
     positive_scale: float = 4.0,
     regress_scale: float = 2.0,
@@ -374,6 +398,7 @@ def point_goal_progress_reward(
         success_hold_steps=success_hold_steps,
         stop_velocity_threshold=stop_velocity_threshold,
         stop_yaw_rate_threshold=stop_yaw_rate_threshold,
+        per_target_timeout_s=per_target_timeout_s,
     )
     progress = torch.clamp(env._point_goal_progress, min=-clip_value, max=clip_value)
     return positive_scale * torch.clamp(progress, min=0.0) - regress_scale * torch.clamp(-progress, min=0.0)
@@ -386,6 +411,7 @@ def point_goal_completion_reward(
     success_hold_steps: int = 20,
     stop_velocity_threshold: float = 0.10,
     stop_yaw_rate_threshold: float = 0.15,
+    per_target_timeout_s: float = 4.0,
     exponent: float = 0.5,
 ):
     _sync_point_goal_state(
@@ -395,6 +421,7 @@ def point_goal_completion_reward(
         success_hold_steps=success_hold_steps,
         stop_velocity_threshold=stop_velocity_threshold,
         stop_yaw_rate_threshold=stop_yaw_rate_threshold,
+        per_target_timeout_s=per_target_timeout_s,
     )
     return torch.pow(env._point_goal_completion, exponent)
 
@@ -406,6 +433,7 @@ def point_goal_distance_reward(
     success_hold_steps: int = 20,
     stop_velocity_threshold: float = 0.10,
     stop_yaw_rate_threshold: float = 0.15,
+    per_target_timeout_s: float = 4.0,
     std: float = 0.35,
 ):
     _sync_point_goal_state(
@@ -415,6 +443,7 @@ def point_goal_distance_reward(
         success_hold_steps=success_hold_steps,
         stop_velocity_threshold=stop_velocity_threshold,
         stop_yaw_rate_threshold=stop_yaw_rate_threshold,
+        per_target_timeout_s=per_target_timeout_s,
     )
     return torch.exp(-env._point_goal_current_distance / std)
 
@@ -426,6 +455,7 @@ def point_goal_stop_reward(
     success_hold_steps: int = 20,
     stop_velocity_threshold: float = 0.10,
     stop_yaw_rate_threshold: float = 0.15,
+    per_target_timeout_s: float = 4.0,
     near_distance: float = 0.35,
 ):
     _sync_point_goal_state(
@@ -435,6 +465,7 @@ def point_goal_stop_reward(
         success_hold_steps=success_hold_steps,
         stop_velocity_threshold=stop_velocity_threshold,
         stop_yaw_rate_threshold=stop_yaw_rate_threshold,
+        per_target_timeout_s=per_target_timeout_s,
     )
     near_gate = torch.clamp(1.0 - env._point_goal_current_distance / max(near_distance, 1.0e-6), min=0.0, max=1.0)
     return env._point_goal_stop_quality * near_gate
@@ -447,6 +478,7 @@ def point_goal_success_bonus(
     success_hold_steps: int = 20,
     stop_velocity_threshold: float = 0.10,
     stop_yaw_rate_threshold: float = 0.15,
+    per_target_timeout_s: float = 4.0,
 ):
     _sync_point_goal_state(
         env,
@@ -455,8 +487,51 @@ def point_goal_success_bonus(
         success_hold_steps=success_hold_steps,
         stop_velocity_threshold=stop_velocity_threshold,
         stop_yaw_rate_threshold=stop_yaw_rate_threshold,
+        per_target_timeout_s=per_target_timeout_s,
     )
-    return env._point_goal_just_reached.float()
+    return env._point_goal_just_reached.float() * (1.0 + env._point_goal_remaining_time_fraction)
+
+
+def point_goal_time_penalty(
+    env,
+    command_name: str = "base_velocity",
+    success_distance: float = 0.10,
+    success_hold_steps: int = 20,
+    stop_velocity_threshold: float = 0.10,
+    stop_yaw_rate_threshold: float = 0.15,
+    per_target_timeout_s: float = 4.0,
+):
+    _sync_point_goal_state(
+        env,
+        command_name=command_name,
+        success_distance=success_distance,
+        success_hold_steps=success_hold_steps,
+        stop_velocity_threshold=stop_velocity_threshold,
+        stop_yaw_rate_threshold=stop_yaw_rate_threshold,
+        per_target_timeout_s=per_target_timeout_s,
+    )
+    return torch.ones(env.num_envs, device=env.device)
+
+
+def point_goal_timeout_penalty(
+    env,
+    command_name: str = "base_velocity",
+    success_distance: float = 0.10,
+    success_hold_steps: int = 20,
+    stop_velocity_threshold: float = 0.10,
+    stop_yaw_rate_threshold: float = 0.15,
+    per_target_timeout_s: float = 4.0,
+):
+    _sync_point_goal_state(
+        env,
+        command_name=command_name,
+        success_distance=success_distance,
+        success_hold_steps=success_hold_steps,
+        stop_velocity_threshold=stop_velocity_threshold,
+        stop_yaw_rate_threshold=stop_yaw_rate_threshold,
+        per_target_timeout_s=per_target_timeout_s,
+    )
+    return env._point_goal_timed_out.float()
 
 
 def point_goal_success(
@@ -466,6 +541,7 @@ def point_goal_success(
     success_hold_steps: int = 20,
     stop_velocity_threshold: float = 0.10,
     stop_yaw_rate_threshold: float = 0.15,
+    per_target_timeout_s: float = 4.0,
 ):
     _sync_point_goal_state(
         env,
@@ -474,5 +550,27 @@ def point_goal_success(
         success_hold_steps=success_hold_steps,
         stop_velocity_threshold=stop_velocity_threshold,
         stop_yaw_rate_threshold=stop_yaw_rate_threshold,
+        per_target_timeout_s=per_target_timeout_s,
     )
     return env._point_goal_just_reached
+
+
+def point_goal_target_timeout(
+    env,
+    command_name: str = "base_velocity",
+    success_distance: float = 0.10,
+    success_hold_steps: int = 20,
+    stop_velocity_threshold: float = 0.10,
+    stop_yaw_rate_threshold: float = 0.15,
+    per_target_timeout_s: float = 4.0,
+):
+    _sync_point_goal_state(
+        env,
+        command_name=command_name,
+        success_distance=success_distance,
+        success_hold_steps=success_hold_steps,
+        stop_velocity_threshold=stop_velocity_threshold,
+        stop_yaw_rate_threshold=stop_yaw_rate_threshold,
+        per_target_timeout_s=per_target_timeout_s,
+    )
+    return env._point_goal_timed_out & ~env._point_goal_just_reached

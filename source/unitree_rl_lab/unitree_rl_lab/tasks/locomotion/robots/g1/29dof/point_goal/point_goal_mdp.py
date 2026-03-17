@@ -285,6 +285,10 @@ class PointGoalCommandCfg(CommandTermCfg):
     reverse_trigger_distance: float = 0.04
     reverse_gain: float = 0.8
     max_reverse_lin_vel_x: float = 0.08
+    terminal_slow_distance: float = 0.30
+    terminal_max_lin_vel_x: float = 0.12
+    terminal_max_lin_vel_y: float = 0.08
+    terminal_max_ang_vel_z: float = 0.30
     frame_yaw_offset: float = 0.0
     target_height_offset: float = 0.03
 

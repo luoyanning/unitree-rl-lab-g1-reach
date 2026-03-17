@@ -130,6 +130,10 @@ class HierarchicalPointGoalVecEnv:
         self._lin_x_max = float(command_cfg.max_lin_vel_x)
         self._lin_y_max = float(command_cfg.max_lin_vel_y)
         self._ang_z_max = float(command_cfg.max_ang_vel_z)
+        self._terminal_slow_distance = float(command_cfg.terminal_slow_distance)
+        self._terminal_max_lin_vel_x = float(command_cfg.terminal_max_lin_vel_x)
+        self._terminal_max_lin_vel_y = float(command_cfg.terminal_max_lin_vel_y)
+        self._terminal_max_ang_vel_z = float(command_cfg.terminal_max_ang_vel_z)
 
     def __getattr__(self, name: str):
         return getattr(self.low_level_env, name)
@@ -148,6 +152,28 @@ class HierarchicalPointGoalVecEnv:
         policy_command[:, 1] = normalized_actions[:, 1] * self._lin_y_max
         policy_command[:, 2] = normalized_actions[:, 2] * self._ang_z_max
         return policy_command
+
+    def _apply_terminal_command_cap(self, policy_command: torch.Tensor) -> torch.Tensor:
+        goal_distance = point_goal_mdp.point_goal_distance_obs(self.base_env, command_name=self.command_name).squeeze(-1)
+        terminal_gate = torch.clamp(
+            goal_distance / max(self._terminal_slow_distance, 1.0e-6),
+            min=0.0,
+            max=1.0,
+        )
+
+        lin_x_cap = self._terminal_max_lin_vel_x + (self._lin_x_max - self._terminal_max_lin_vel_x) * terminal_gate
+        lin_y_cap = self._terminal_max_lin_vel_y + (self._lin_y_max - self._terminal_max_lin_vel_y) * terminal_gate
+        ang_z_cap = self._terminal_max_ang_vel_z + (self._ang_z_max - self._terminal_max_ang_vel_z) * terminal_gate
+        reverse_cap = torch.clamp(lin_x_cap, max=abs(self._lin_x_min))
+
+        capped_command = policy_command.clone()
+        capped_command[:, 0] = torch.maximum(
+            torch.minimum(capped_command[:, 0], lin_x_cap),
+            -reverse_cap,
+        )
+        capped_command[:, 1] = torch.clamp(capped_command[:, 1], min=-lin_y_cap, max=lin_y_cap)
+        capped_command[:, 2] = torch.clamp(capped_command[:, 2], min=-ang_z_cap, max=ang_z_cap)
+        return capped_command
 
     def _inject_policy_command(self, observations: torch.Tensor, policy_command: torch.Tensor) -> torch.Tensor:
         if observations.shape[1] != self.low_level_obs_dim:
@@ -254,6 +280,7 @@ class HierarchicalPointGoalVecEnv:
 
     def step(self, actions: torch.Tensor):
         policy_command = self._scale_high_level_actions(actions)
+        policy_command = self._apply_terminal_command_cap(policy_command)
         point_goal_mdp.set_point_goal_policy_command(self.base_env, policy_command)
         if self._low_level_obs is None:
             low_level_obs, _ = self._policy_obs_from_result(self.low_level_env.get_observations())

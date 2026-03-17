@@ -29,11 +29,11 @@ from .point_goal_mdp import (
 )
 
 
-SUCCESS_DISTANCE = 0.25
-SUCCESS_HOLD_STEPS = 5
-STOP_VELOCITY_THRESHOLD = 0.15
-STOP_YAW_RATE_THRESHOLD = 0.35
-PER_TARGET_TIMEOUT_S = 4.0
+SUCCESS_DISTANCE = 0.12
+SUCCESS_HOLD_STEPS = 8
+STOP_VELOCITY_THRESHOLD = 0.10
+STOP_YAW_RATE_THRESHOLD = 0.25
+PER_TARGET_TIMEOUT_S = 4.5
 
 
 @configclass
@@ -62,17 +62,21 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
             slow_down_distance=1.0,
             stop_distance=0.35,
             heading_slow_down_distance=0.6,
-            hold_position_distance=0.22,
-            near_recovery_distance=0.45,
+            hold_position_distance=0.10,
+            near_recovery_distance=0.30,
             recovery_turn_threshold=0.30,
             heading_block_threshold=0.90,
             min_recovery_ang_vel_z=0.24,
-            reverse_recovery_distance=0.40,
+            reverse_recovery_distance=0.25,
             reverse_heading_threshold=0.35,
             reverse_trigger_distance=0.02,
             reverse_gain=1.0,
             max_reverse_lin_vel_x=0.12,
             turn_in_place_threshold=0.45,
+            terminal_slow_distance=0.30,
+            terminal_max_lin_vel_x=0.10,
+            terminal_max_lin_vel_y=0.06,
+            terminal_max_ang_vel_z=0.25,
             frame_yaw_offset=frame_yaw_offset,
             target_height_offset=0.03,
         )
@@ -150,7 +154,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
                 "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
                 "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
                 "per_target_timeout_s": PER_TARGET_TIMEOUT_S,
-                "near_distance": 0.40,
+                "near_distance": 0.22,
             },
         )
         self.rewards.goal_heading_align = RewTerm(
@@ -163,8 +167,8 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
                 "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
                 "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
                 "per_target_timeout_s": PER_TARGET_TIMEOUT_S,
-                "near_distance": 0.45,
-                "std": 0.60,
+                "near_distance": 0.28,
+                "std": 0.45,
             },
         )
         self.rewards.goal_time_penalty = RewTerm(

@@ -100,10 +100,16 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
             func=point_goal_policy_command_obs,
         )
 
-        self.rewards.track_lin_vel_xy.func = track_policy_command_lin_vel_xy_exp
-        self.rewards.track_lin_vel_xy.weight = 1.00
-        self.rewards.track_ang_vel_z.func = track_policy_command_ang_vel_z_exp
-        self.rewards.track_ang_vel_z.weight = 0.20
+        self.rewards.track_lin_vel_xy = RewTerm(
+            func=track_policy_command_lin_vel_xy_exp,
+            weight=1.00,
+            params={"std": 0.5},
+        )
+        self.rewards.track_ang_vel_z = RewTerm(
+            func=track_policy_command_ang_vel_z_exp,
+            weight=0.20,
+            params={"std": 0.5},
+        )
         self.rewards.alive.weight = 0.15
         self.rewards.action_rate = None
         self.rewards.gait.weight = 0.40

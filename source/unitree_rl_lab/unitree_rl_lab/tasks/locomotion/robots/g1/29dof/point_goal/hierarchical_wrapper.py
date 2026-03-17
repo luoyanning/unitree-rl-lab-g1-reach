@@ -141,7 +141,10 @@ class HierarchicalPointGoalVecEnv:
         clipped_actions = torch.clamp(actions, -self.clip_actions, self.clip_actions)
         normalized_actions = clipped_actions / max(self.clip_actions, 1.0e-6)
         policy_command = torch.zeros(self.num_envs, self.num_actions, device=self.device)
-        policy_command[:, 0] = 0.5 * (normalized_actions[:, 0] + 1.0) * (self._lin_x_max - self._lin_x_min) + self._lin_x_min
+        # Keep zero-action mapped to zero forward speed while still allowing a small reverse range.
+        forward_branch = torch.clamp(normalized_actions[:, 0], min=0.0) * self._lin_x_max
+        reverse_branch = torch.clamp(normalized_actions[:, 0], max=0.0) * abs(self._lin_x_min)
+        policy_command[:, 0] = forward_branch + reverse_branch
         policy_command[:, 1] = normalized_actions[:, 1] * self._lin_y_max
         policy_command[:, 2] = normalized_actions[:, 2] * self._ang_z_max
         return policy_command

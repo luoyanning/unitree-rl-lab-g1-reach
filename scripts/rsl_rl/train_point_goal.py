@@ -123,7 +123,7 @@ def _merge_actor_input_history(current_weight: torch.Tensor, pretrained_weight: 
     if new_frame_dim <= old_frame_dim:
         return pretrained_weight
 
-    merged_weight = current_weight.clone()
+    merged_weight = torch.zeros_like(current_weight)
     for history_index in range(history_length):
         old_offset = history_index * old_frame_dim
         new_offset = history_index * new_frame_dim

@@ -51,6 +51,9 @@ class PointGoalCommand(CommandTerm):
         self.metrics["min_goal_distance"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["goal_heading_error"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["guidance_speed"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["recovery_turn_mode"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["reverse_recovery_mode"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["hold_mode"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["target_age_s"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["remaining_time_fraction"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["reset_goal_heading_error_raw"] = torch.zeros(self.num_envs, device=self.device)
@@ -118,11 +121,34 @@ class PointGoalCommand(CommandTerm):
         goal_delta_w_xy = self.goal_pos_w[:, :2] - self.robot.data.root_pos_w[:, :2]
         goal_distance = torch.linalg.norm(goal_delta_w_xy, dim=-1)
         goal_heading_error = _wrap_to_pi(torch.atan2(goal_delta_body_xy[:, 1], goal_delta_body_xy[:, 0]))
-        heading_alignment = torch.clamp(torch.cos(goal_heading_error), min=0.0, max=1.0)
-        heading_turn_gate = (torch.abs(goal_heading_error) < self.cfg.turn_in_place_threshold).float()
+        goal_heading_abs = torch.abs(goal_heading_error)
+        hold_mode = goal_distance < self.cfg.hold_position_distance
+        recovery_turn_mode = (
+            (~hold_mode)
+            & (goal_distance < self.cfg.near_recovery_distance)
+            & (goal_heading_abs > self.cfg.recovery_turn_threshold)
+        )
+        reverse_recovery_mode = (
+            (~hold_mode)
+            & (~recovery_turn_mode)
+            & (goal_distance < self.cfg.reverse_recovery_distance)
+            & (goal_delta_body_xy[:, 0] < -self.cfg.reverse_trigger_distance)
+            & (goal_heading_abs < self.cfg.reverse_heading_threshold)
+        )
 
         distance_scale = torch.clamp(goal_distance / self.cfg.slow_down_distance, min=0.0, max=1.0)
-        stop_scale = torch.clamp(goal_distance / self.cfg.stop_distance, min=0.0, max=1.0)
+        stop_scale = torch.clamp(
+            (goal_distance - self.cfg.hold_position_distance)
+            / max(self.cfg.stop_distance - self.cfg.hold_position_distance, 1.0e-6),
+            min=0.0,
+            max=1.0,
+        )
+        heading_forward_gate = torch.clamp(
+            1.0 - goal_heading_abs / max(self.cfg.heading_block_threshold, 1.0e-6),
+            min=0.0,
+            max=1.0,
+        )
+        heading_forward_gate = torch.square(heading_forward_gate)
 
         lin_vel_x = torch.clamp(
             self.cfg.forward_gain * goal_delta_body_xy[:, 0],
@@ -140,13 +166,39 @@ class PointGoalCommand(CommandTerm):
             max=self.cfg.max_ang_vel_z,
         )
 
-        self._command[:, 0] = lin_vel_x * distance_scale * stop_scale * heading_alignment * heading_turn_gate
-        self._command[:, 1] = lin_vel_y * distance_scale * stop_scale * heading_alignment * heading_turn_gate
-        self._command[:, 2] = ang_vel_z * torch.clamp(goal_distance / self.cfg.heading_slow_down_distance, 0.0, 1.0)
+        lin_vel_x = lin_vel_x * distance_scale * stop_scale * heading_forward_gate
+        lin_vel_y = lin_vel_y * distance_scale * stop_scale * heading_forward_gate
+
+        reverse_lin_vel_x = -torch.clamp(
+            self.cfg.reverse_gain * (-goal_delta_body_xy[:, 0]),
+            min=0.0,
+            max=self.cfg.max_reverse_lin_vel_x,
+        )
+        lin_vel_x = torch.where(reverse_recovery_mode, reverse_lin_vel_x, lin_vel_x)
+        lin_vel_y = torch.where(reverse_recovery_mode, torch.zeros_like(lin_vel_y), lin_vel_y)
+
+        ang_distance_scale = torch.clamp(goal_distance / self.cfg.heading_slow_down_distance, 0.0, 1.0)
+        ang_vel_z = ang_vel_z * ang_distance_scale
+        min_recovery_turn = torch.sign(goal_heading_error) * torch.maximum(
+            torch.abs(ang_vel_z),
+            torch.full_like(ang_vel_z, self.cfg.min_recovery_ang_vel_z),
+        )
+        ang_vel_z = torch.where(recovery_turn_mode, min_recovery_turn, ang_vel_z)
+
+        lin_vel_x = torch.where(hold_mode | recovery_turn_mode, torch.zeros_like(lin_vel_x), lin_vel_x)
+        lin_vel_y = torch.where(hold_mode | recovery_turn_mode, torch.zeros_like(lin_vel_y), lin_vel_y)
+        ang_vel_z = torch.where(hold_mode, torch.zeros_like(ang_vel_z), ang_vel_z)
+
+        self._command[:, 0] = lin_vel_x
+        self._command[:, 1] = lin_vel_y
+        self._command[:, 2] = ang_vel_z
 
         self.metrics["goal_distance"][:] = goal_distance
         self.metrics["goal_heading_error"][:] = torch.abs(goal_heading_error)
         self.metrics["guidance_speed"][:] = torch.linalg.norm(self._command[:, :2], dim=-1)
+        self.metrics["recovery_turn_mode"][:] = recovery_turn_mode.float()
+        self.metrics["reverse_recovery_mode"][:] = reverse_recovery_mode.float()
+        self.metrics["hold_mode"][:] = hold_mode.float()
 
     def _resample_command(self, env_ids: Sequence[int]):
         if len(env_ids) == 0:
@@ -214,6 +266,16 @@ class PointGoalCommandCfg(CommandTermCfg):
     stop_distance: float = 0.2
     heading_slow_down_distance: float = 0.35
     turn_in_place_threshold: float = 0.60
+    hold_position_distance: float = 0.22
+    near_recovery_distance: float = 0.45
+    recovery_turn_threshold: float = 0.40
+    heading_block_threshold: float = 1.10
+    min_recovery_ang_vel_z: float = 0.18
+    reverse_recovery_distance: float = 0.30
+    reverse_heading_threshold: float = 0.25
+    reverse_trigger_distance: float = 0.04
+    reverse_gain: float = 0.8
+    max_reverse_lin_vel_x: float = 0.08
     frame_yaw_offset: float = 0.0
     target_height_offset: float = 0.03
 

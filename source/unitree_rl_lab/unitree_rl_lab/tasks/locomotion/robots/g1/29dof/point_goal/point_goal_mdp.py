@@ -10,7 +10,7 @@ from isaaclab.managers import CommandTerm, CommandTermCfg, SceneEntityCfg
 from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.utils import configclass
-from isaaclab.utils.math import sample_uniform, yaw_quat
+from isaaclab.utils.math import quat_apply, sample_uniform, yaw_quat
 
 try:
     from isaaclab.utils.math import quat_apply_inverse
@@ -50,7 +50,7 @@ class PointGoalCommand(CommandTerm):
         if not isinstance(env_ids, torch.Tensor):
             env_ids = torch.tensor(env_ids, dtype=torch.long, device=self.device)
         self.goal_pos_w[env_ids, :2] = goal_pos_w[:, :2]
-        self.goal_pos_w[env_ids, 2] = self.robot.data.root_pos_w[env_ids, 2]
+        self.goal_pos_w[env_ids, 2] = self._env.scene.env_origins[env_ids, 2] + self.cfg.target_height_offset
         self._update_guidance_command()
 
     def _goal_delta_body_xy(self) -> torch.Tensor:
@@ -63,7 +63,7 @@ class PointGoalCommand(CommandTerm):
         goal_delta_w_xy = self.goal_pos_w[:, :2] - self.robot.data.root_pos_w[:, :2]
         goal_distance = torch.linalg.norm(goal_delta_w_xy, dim=-1)
         goal_heading_error = _wrap_to_pi(torch.atan2(goal_delta_body_xy[:, 1], goal_delta_body_xy[:, 0]))
-        heading_alignment = torch.clamp(torch.cos(goal_heading_error), min=0.0, max=1.0)
+        heading_alignment = torch.clamp(0.25 + 0.75 * torch.cos(goal_heading_error), min=0.10, max=1.0)
 
         distance_scale = torch.clamp(goal_distance / self.cfg.slow_down_distance, min=0.0, max=1.0)
         stop_scale = torch.clamp(goal_distance / self.cfg.stop_distance, min=0.0, max=1.0)
@@ -99,13 +99,17 @@ class PointGoalCommand(CommandTerm):
         if not isinstance(env_ids, torch.Tensor):
             env_ids = torch.tensor(env_ids, dtype=torch.long, device=self.device)
 
-        root_pos_xy = self.robot.data.root_pos_w[env_ids, :2]
+        root_pos_w = self.robot.data.root_pos_w[env_ids]
+        root_yaw_w = yaw_quat(self.robot.data.root_quat_w[env_ids])
         radius = sample_uniform(self.cfg.radius_range[0], self.cfg.radius_range[1], (len(env_ids),), device=self.device)
         angle = sample_uniform(self.cfg.angle_range[0], self.cfg.angle_range[1], (len(env_ids),), device=self.device)
-        offset_xy = torch.stack((radius * torch.cos(angle), radius * torch.sin(angle)), dim=-1)
+        offset_local = torch.zeros(len(env_ids), 3, device=self.device)
+        offset_local[:, 0] = radius * torch.cos(angle)
+        offset_local[:, 1] = radius * torch.sin(angle)
+        offset_w = quat_apply(root_yaw_w, offset_local)
 
-        self.goal_pos_w[env_ids, :2] = root_pos_xy + offset_xy
-        self.goal_pos_w[env_ids, 2] = self.robot.data.root_pos_w[env_ids, 2]
+        self.goal_pos_w[env_ids, :2] = root_pos_w[:, :2] + offset_w[:, :2]
+        self.goal_pos_w[env_ids, 2] = self._env.scene.env_origins[env_ids, 2] + self.cfg.target_height_offset
         self._update_guidance_command()
 
     def _update_command(self):
@@ -151,6 +155,7 @@ class PointGoalCommandCfg(CommandTermCfg):
     slow_down_distance: float = 0.8
     stop_distance: float = 0.2
     heading_slow_down_distance: float = 0.35
+    target_height_offset: float = 0.03
 
     target_visualizer_cfg: VisualizationMarkersCfg = POINT_GOAL_MARKER_CFG
 

@@ -346,10 +346,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         print(f"[INFO]: Loading high-level adapter checkpoint from: {resume_path}")
         runner.load(resume_path)
-        install_positive_std_guard(runner, freeze_std=False)
+        install_positive_std_guard(runner, std_min=0.05, std_max=0.25, freeze_std=True)
     else:
         print(f"[INFO]: Using frozen low-level velocity checkpoint: {low_level_checkpoint_path}")
-        install_positive_std_guard(runner, std_min=1.0e-3, std_max=1.0, freeze_std=False)
+        install_positive_std_guard(runner, std_min=0.05, std_max=0.25, freeze_std=True)
 
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)

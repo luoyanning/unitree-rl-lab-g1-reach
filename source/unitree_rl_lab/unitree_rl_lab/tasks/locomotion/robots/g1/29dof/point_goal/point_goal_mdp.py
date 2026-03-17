@@ -218,6 +218,8 @@ def _sync_point_goal_state(
     if getattr(env, "_point_goal_state_synced_step", None) == env.common_step_counter:
         return
 
+    command_term = _point_goal_term(env, command_name=command_name)
+
     if not hasattr(env, "_point_goal_prev_distance"):
         env._point_goal_prev_distance = torch.zeros(env.num_envs, device=env.device)
         env._point_goal_current_distance = torch.zeros(env.num_envs, device=env.device)
@@ -230,6 +232,14 @@ def _sync_point_goal_state(
         env._point_goal_in_zone = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         env._point_goal_stop_quality = torch.zeros(env.num_envs, device=env.device)
 
+    if hasattr(env, "episode_length_buf"):
+        reset_ids = env.episode_length_buf == 0
+    else:
+        reset_ids = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+
+    if torch.any(reset_ids):
+        command_term._resample_command(reset_ids.nonzero(as_tuple=False).squeeze(-1))
+
     robot: Articulation = env.scene["robot"]
     current_distance = torch.linalg.norm(_goal_delta_w_xy(env, command_name=command_name), dim=-1)
     base_speed = torch.linalg.norm(robot.data.root_lin_vel_w[:, :2], dim=-1)
@@ -237,11 +247,6 @@ def _sync_point_goal_state(
     stop_quality = torch.exp(-base_speed / max(stop_velocity_threshold, 1.0e-6)) * torch.exp(
         -yaw_rate / max(stop_yaw_rate_threshold, 1.0e-6)
     )
-
-    if hasattr(env, "episode_length_buf"):
-        reset_ids = env.episode_length_buf == 0
-    else:
-        reset_ids = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
 
     if torch.any(reset_ids):
         env._point_goal_prev_distance[reset_ids] = current_distance[reset_ids]

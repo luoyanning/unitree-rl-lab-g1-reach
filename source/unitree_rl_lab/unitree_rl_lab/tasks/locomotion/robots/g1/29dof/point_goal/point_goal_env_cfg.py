@@ -7,6 +7,7 @@ from unitree_rl_lab.tasks.locomotion import mdp
 
 from ..velocity_env_cfg import RobotEnvCfg
 from .point_goal_mdp import (
+    point_goal_completion_reward,
     PointGoalCommandCfg,
     point_goal_distance_obs,
     point_goal_distance_reward,
@@ -21,10 +22,10 @@ from .point_goal_mdp import (
 )
 
 
-SUCCESS_DISTANCE = 0.10
-SUCCESS_HOLD_STEPS = 20
-STOP_VELOCITY_THRESHOLD = 0.10
-STOP_YAW_RATE_THRESHOLD = 0.15
+SUCCESS_DISTANCE = 0.20
+SUCCESS_HOLD_STEPS = 10
+STOP_VELOCITY_THRESHOLD = 0.15
+STOP_YAW_RATE_THRESHOLD = 0.25
 
 
 @configclass
@@ -37,7 +38,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
             asset_name="robot",
             resampling_time_range=(self.episode_length_s, self.episode_length_s),
             debug_vis=True,
-            radius_range=(0.5, 1.5),
+            radius_range=(0.4, 1.2),
             angle_range=(-0.7853981633974483, 0.7853981633974483),
             forward_gain=1.0,
             lateral_gain=0.8,
@@ -46,8 +47,8 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
             max_lin_vel_x=0.5,
             max_lin_vel_y=0.2,
             max_ang_vel_z=0.6,
-            slow_down_distance=0.8,
-            stop_distance=0.2,
+            slow_down_distance=1.0,
+            stop_distance=0.35,
             heading_slow_down_distance=0.6,
             target_height_offset=0.03,
         )
@@ -92,11 +93,55 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
             params={"command_name": "base_velocity"},
         )
 
-        self.rewards.track_lin_vel_xy.weight = 1.0
-        self.rewards.track_ang_vel_z.weight = 0.5
+        self.rewards.track_lin_vel_xy.weight = 0.35
+        self.rewards.track_ang_vel_z.weight = 0.15
+        self.rewards.alive.weight = 0.05
         self.rewards.action_rate = None
+        self.rewards.gait.weight = 0.10
+        self.rewards.feet_clearance.weight = 0.15
+        self.rewards.joint_deviation_arms.weight = -0.05
+        self.rewards.joint_deviation_waists.weight = -0.20
+        self.rewards.joint_deviation_legs.weight = -0.20
         self.rewards.goal_progress = RewTerm(
             func=point_goal_progress_reward,
+            weight=24.0,
+            params={
+                "command_name": "base_velocity",
+                "success_distance": SUCCESS_DISTANCE,
+                "success_hold_steps": SUCCESS_HOLD_STEPS,
+                "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
+                "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
+                "clip_value": 0.10,
+                "positive_scale": 4.0,
+                "regress_scale": 2.0,
+            },
+        )
+        self.rewards.goal_completion = RewTerm(
+            func=point_goal_completion_reward,
+            weight=12.0,
+            params={
+                "command_name": "base_velocity",
+                "success_distance": SUCCESS_DISTANCE,
+                "success_hold_steps": SUCCESS_HOLD_STEPS,
+                "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
+                "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
+                "exponent": 0.5,
+            },
+        )
+        self.rewards.goal_distance = RewTerm(
+            func=point_goal_distance_reward,
+            weight=6.0,
+            params={
+                "command_name": "base_velocity",
+                "success_distance": SUCCESS_DISTANCE,
+                "success_hold_steps": SUCCESS_HOLD_STEPS,
+                "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
+                "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
+                "std": 0.50,
+            },
+        )
+        self.rewards.goal_stop = RewTerm(
+            func=point_goal_stop_reward,
             weight=8.0,
             params={
                 "command_name": "base_velocity",
@@ -104,36 +149,12 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
                 "success_hold_steps": SUCCESS_HOLD_STEPS,
                 "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
                 "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
-                "clip_value": 0.05,
-            },
-        )
-        self.rewards.goal_distance = RewTerm(
-            func=point_goal_distance_reward,
-            weight=2.0,
-            params={
-                "command_name": "base_velocity",
-                "success_distance": SUCCESS_DISTANCE,
-                "success_hold_steps": SUCCESS_HOLD_STEPS,
-                "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
-                "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
-                "std": 0.35,
-            },
-        )
-        self.rewards.goal_stop = RewTerm(
-            func=point_goal_stop_reward,
-            weight=2.0,
-            params={
-                "command_name": "base_velocity",
-                "success_distance": SUCCESS_DISTANCE,
-                "success_hold_steps": SUCCESS_HOLD_STEPS,
-                "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
-                "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
-                "near_distance": 0.35,
+                "near_distance": 0.45,
             },
         )
         self.rewards.goal_success = RewTerm(
             func=point_goal_success_bonus,
-            weight=12.0,
+            weight=80.0,
             params={
                 "command_name": "base_velocity",
                 "success_distance": SUCCESS_DISTANCE,

@@ -219,7 +219,9 @@ def _sync_point_goal_state(
     if not hasattr(env, "_point_goal_prev_distance"):
         env._point_goal_prev_distance = torch.zeros(env.num_envs, device=env.device)
         env._point_goal_current_distance = torch.zeros(env.num_envs, device=env.device)
+        env._point_goal_initial_distance = torch.ones(env.num_envs, device=env.device)
         env._point_goal_progress = torch.zeros(env.num_envs, device=env.device)
+        env._point_goal_completion = torch.zeros(env.num_envs, device=env.device)
         env._point_goal_min_distance = torch.full((env.num_envs,), float("inf"), device=env.device)
         env._point_goal_success_steps = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
         env._point_goal_just_reached = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
@@ -241,6 +243,7 @@ def _sync_point_goal_state(
 
     if torch.any(reset_ids):
         env._point_goal_prev_distance[reset_ids] = current_distance[reset_ids]
+        env._point_goal_initial_distance[reset_ids] = torch.clamp(current_distance[reset_ids], min=success_distance)
         env._point_goal_min_distance[reset_ids] = current_distance[reset_ids]
         env._point_goal_success_steps[reset_ids] = 0
         env._point_goal_just_reached[reset_ids] = False
@@ -249,6 +252,11 @@ def _sync_point_goal_state(
 
     env._point_goal_progress = env._point_goal_prev_distance - current_distance
     env._point_goal_current_distance = current_distance
+    env._point_goal_completion = torch.clamp(
+        1.0 - current_distance / torch.clamp(env._point_goal_initial_distance, min=success_distance),
+        min=0.0,
+        max=1.0,
+    )
     env._point_goal_min_distance = torch.minimum(env._point_goal_min_distance, current_distance)
 
     success_zone = (
@@ -276,6 +284,8 @@ def point_goal_progress_reward(
     stop_velocity_threshold: float = 0.10,
     stop_yaw_rate_threshold: float = 0.15,
     clip_value: float = 0.05,
+    positive_scale: float = 4.0,
+    regress_scale: float = 2.0,
 ):
     _sync_point_goal_state(
         env,
@@ -285,7 +295,28 @@ def point_goal_progress_reward(
         stop_velocity_threshold=stop_velocity_threshold,
         stop_yaw_rate_threshold=stop_yaw_rate_threshold,
     )
-    return torch.clamp(env._point_goal_progress, min=-clip_value, max=clip_value)
+    progress = torch.clamp(env._point_goal_progress, min=-clip_value, max=clip_value)
+    return positive_scale * torch.clamp(progress, min=0.0) - regress_scale * torch.clamp(-progress, min=0.0)
+
+
+def point_goal_completion_reward(
+    env,
+    command_name: str = "base_velocity",
+    success_distance: float = 0.10,
+    success_hold_steps: int = 20,
+    stop_velocity_threshold: float = 0.10,
+    stop_yaw_rate_threshold: float = 0.15,
+    exponent: float = 0.5,
+):
+    _sync_point_goal_state(
+        env,
+        command_name=command_name,
+        success_distance=success_distance,
+        success_hold_steps=success_hold_steps,
+        stop_velocity_threshold=stop_velocity_threshold,
+        stop_yaw_rate_threshold=stop_yaw_rate_threshold,
+    )
+    return torch.pow(env._point_goal_completion, exponent)
 
 
 def point_goal_distance_reward(
@@ -325,8 +356,8 @@ def point_goal_stop_reward(
         stop_velocity_threshold=stop_velocity_threshold,
         stop_yaw_rate_threshold=stop_yaw_rate_threshold,
     )
-    near_goal = env._point_goal_current_distance < near_distance
-    return env._point_goal_stop_quality * near_goal.float()
+    near_gate = torch.clamp(1.0 - env._point_goal_current_distance / max(near_distance, 1.0e-6), min=0.0, max=1.0)
+    return env._point_goal_stop_quality * near_gate
 
 
 def point_goal_success_bonus(

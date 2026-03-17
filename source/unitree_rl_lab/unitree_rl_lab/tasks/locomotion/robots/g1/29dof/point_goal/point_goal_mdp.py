@@ -26,6 +26,14 @@ def _wrap_to_pi(angle: torch.Tensor) -> torch.Tensor:
     return torch.atan2(torch.sin(angle), torch.cos(angle))
 
 
+def _rotate_xy(xy: torch.Tensor, angle: float) -> torch.Tensor:
+    cos_angle = math.cos(angle)
+    sin_angle = math.sin(angle)
+    x = xy[:, 0]
+    y = xy[:, 1]
+    return torch.stack((cos_angle * x - sin_angle * y, sin_angle * x + cos_angle * y), dim=-1)
+
+
 class PointGoalCommand(CommandTerm):
     cfg: PointGoalCommandCfg
 
@@ -56,7 +64,8 @@ class PointGoalCommand(CommandTerm):
     def _goal_delta_body_xy(self) -> torch.Tensor:
         goal_delta_w = torch.zeros(self.num_envs, 3, device=self.device)
         goal_delta_w[:, :2] = self.goal_pos_w[:, :2] - self.robot.data.root_pos_w[:, :2]
-        return quat_apply_inverse(yaw_quat(self.robot.data.root_quat_w), goal_delta_w)[:, :2]
+        goal_delta_body_xy_raw = quat_apply_inverse(yaw_quat(self.robot.data.root_quat_w), goal_delta_w)[:, :2]
+        return _rotate_xy(goal_delta_body_xy_raw, self.cfg.frame_yaw_offset)
 
     def _update_guidance_command(self):
         goal_delta_body_xy = self._goal_delta_body_xy()
@@ -104,9 +113,10 @@ class PointGoalCommand(CommandTerm):
         root_yaw_w = yaw_quat(self.robot.data.root_quat_w[env_ids])
         radius = sample_uniform(self.cfg.radius_range[0], self.cfg.radius_range[1], (len(env_ids),), device=self.device)
         angle = sample_uniform(self.cfg.angle_range[0], self.cfg.angle_range[1], (len(env_ids),), device=self.device)
+        offset_command_xy = torch.stack((radius * torch.cos(angle), radius * torch.sin(angle)), dim=-1)
+        offset_body_xy_raw = _rotate_xy(offset_command_xy, -self.cfg.frame_yaw_offset)
         offset_local = torch.zeros(len(env_ids), 3, device=self.device)
-        offset_local[:, 0] = radius * torch.cos(angle)
-        offset_local[:, 1] = radius * torch.sin(angle)
+        offset_local[:, :2] = offset_body_xy_raw
         offset_w = quat_apply(root_yaw_w, offset_local)
 
         self.goal_pos_w[env_ids, :2] = root_pos_w[:, :2] + offset_w[:, :2]
@@ -157,6 +167,7 @@ class PointGoalCommandCfg(CommandTermCfg):
     stop_distance: float = 0.2
     heading_slow_down_distance: float = 0.35
     turn_in_place_threshold: float = 0.60
+    frame_yaw_offset: float = 0.0
     target_height_offset: float = 0.03
 
     target_visualizer_cfg: VisualizationMarkersCfg = POINT_GOAL_MARKER_CFG
@@ -180,7 +191,8 @@ def _goal_delta_body_xy(env, command_name: str = "base_velocity") -> torch.Tenso
     robot: Articulation = env.scene[command_term.cfg.asset_name]
     goal_delta_w = torch.zeros(env.num_envs, 3, device=env.device)
     goal_delta_w[:, :2] = command_term.goal_pos_w[:, :2] - robot.data.root_pos_w[:, :2]
-    return quat_apply_inverse(yaw_quat(robot.data.root_quat_w), goal_delta_w)[:, :2]
+    goal_delta_body_xy_raw = quat_apply_inverse(yaw_quat(robot.data.root_quat_w), goal_delta_w)[:, :2]
+    return _rotate_xy(goal_delta_body_xy_raw, command_term.cfg.frame_yaw_offset)
 
 
 def point_goal_target_pos_env(env, command_name: str = "base_velocity") -> torch.Tensor:
@@ -205,6 +217,25 @@ def point_goal_heading_error_obs(env, command_name: str = "base_velocity") -> to
     goal_delta_body_xy = _goal_delta_body_xy(env, command_name=command_name)
     heading_error = _wrap_to_pi(torch.atan2(goal_delta_body_xy[:, 1], goal_delta_body_xy[:, 0]))
     return torch.stack((torch.sin(heading_error), torch.cos(heading_error)), dim=-1)
+
+
+def _episode_length_buf(env):
+    if hasattr(env, "episode_length_buf"):
+        return env.episode_length_buf.clone()
+    return torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+
+
+def _compute_just_reset_mask(env):
+    current_episode_length = _episode_length_buf(env)
+    if not hasattr(env, "_point_goal_prev_episode_length_buf"):
+        env._point_goal_prev_episode_length_buf = torch.full(
+            (env.num_envs,), -1, dtype=torch.long, device=env.device
+        )
+    prev_episode_length = env._point_goal_prev_episode_length_buf
+    just_reset = prev_episode_length < 0
+    just_reset |= current_episode_length == 0
+    just_reset |= current_episode_length < prev_episode_length
+    return just_reset, current_episode_length
 
 
 def _sync_point_goal_state(
@@ -232,10 +263,7 @@ def _sync_point_goal_state(
         env._point_goal_in_zone = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         env._point_goal_stop_quality = torch.zeros(env.num_envs, device=env.device)
 
-    if hasattr(env, "episode_length_buf"):
-        reset_ids = env.episode_length_buf == 0
-    else:
-        reset_ids = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    reset_ids, current_episode_length = _compute_just_reset_mask(env)
 
     if torch.any(reset_ids):
         command_term._resample_command(reset_ids.nonzero(as_tuple=False).squeeze(-1))
@@ -280,6 +308,7 @@ def _sync_point_goal_state(
     env._point_goal_in_zone = success_zone
     env._point_goal_stop_quality = stop_quality
     env._point_goal_prev_distance = current_distance
+    env._point_goal_prev_episode_length_buf = current_episode_length
     env._point_goal_state_synced_step = env.common_step_counter
 
 

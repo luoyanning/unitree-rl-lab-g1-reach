@@ -53,6 +53,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
             stop_distance=0.35,
             heading_slow_down_distance=0.6,
             turn_in_place_threshold=3.14,
+            frame_yaw_offset=-1.5707963267948966,
             target_height_offset=0.03,
         )
         self.events.reset_base.params["pose_range"] = {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)}

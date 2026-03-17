@@ -286,9 +286,12 @@ class PointGoalCommandCfg(CommandTermCfg):
     reverse_gain: float = 0.8
     max_reverse_lin_vel_x: float = 0.08
     terminal_slow_distance: float = 0.30
+    terminal_latch_distance: float = 0.16
     terminal_max_lin_vel_x: float = 0.12
     terminal_max_lin_vel_y: float = 0.08
     terminal_max_ang_vel_z: float = 0.30
+    terminal_settle_lin_vel_x: float = 0.05
+    terminal_settle_reverse_lin_vel_x: float = 0.04
     frame_yaw_offset: float = 0.0
     target_height_offset: float = 0.03
 
@@ -433,6 +436,7 @@ def _sync_point_goal_state(
         env._point_goal_success_steps = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
         env._point_goal_just_reached = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         env._point_goal_in_zone = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        env._point_goal_terminal_latched = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         env._point_goal_stop_quality = torch.zeros(env.num_envs, device=env.device)
         env._point_goal_target_age_steps = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
         env._point_goal_timed_out = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
@@ -458,6 +462,7 @@ def _sync_point_goal_state(
         env._point_goal_success_steps[reset_ids] = 0
         env._point_goal_just_reached[reset_ids] = False
         env._point_goal_in_zone[reset_ids] = False
+        env._point_goal_terminal_latched[reset_ids] = False
         env._point_goal_stop_quality[reset_ids] = 0.0
         env._point_goal_target_age_steps[reset_ids] = 0
         env._point_goal_timed_out[reset_ids] = False
@@ -480,9 +485,13 @@ def _sync_point_goal_state(
         max=1.0,
     )
     env._point_goal_min_distance = torch.minimum(env._point_goal_min_distance, current_distance)
+    terminal_latch_distance = max(success_distance, min(0.18, success_distance + 0.04))
+    terminal_settle_distance = max(success_distance, min(0.22, success_distance + 0.08))
+    env._point_goal_terminal_latched |= env._point_goal_min_distance < terminal_latch_distance
 
     success_zone = (
-        (current_distance < success_distance)
+        env._point_goal_terminal_latched
+        & (current_distance < terminal_settle_distance)
         & (base_speed < stop_velocity_threshold)
         & (yaw_rate < stop_yaw_rate_threshold)
     )
@@ -500,6 +509,8 @@ def _sync_point_goal_state(
     env._point_goal_state_synced_step = env.common_step_counter
 
     command_term.metrics["min_goal_distance"][:] = env._point_goal_min_distance
+    command_term.metrics.setdefault("terminal_latched", torch.zeros(env.num_envs, device=env.device))
+    command_term.metrics["terminal_latched"][:] = env._point_goal_terminal_latched.float()
     command_term.metrics["target_age_s"][:] = env._point_goal_target_age_steps.float() * env.step_dt
     command_term.metrics["remaining_time_fraction"][:] = env._point_goal_remaining_time_fraction
 

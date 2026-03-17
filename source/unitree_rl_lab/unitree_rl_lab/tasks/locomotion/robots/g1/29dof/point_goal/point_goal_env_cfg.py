@@ -11,7 +11,6 @@ from ..velocity_env_cfg import RobotEnvCfg
 from .point_goal_mdp import (
     PointGoalCommandCfg,
     point_goal_distance_obs,
-    point_goal_heading_alignment_reward,
     point_goal_heading_error_obs,
     point_goal_policy_command_obs,
     point_goal_progress_reward,
@@ -74,9 +73,12 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
             max_reverse_lin_vel_x=0.12,
             turn_in_place_threshold=0.45,
             terminal_slow_distance=0.30,
+            terminal_latch_distance=0.16,
             terminal_max_lin_vel_x=0.10,
             terminal_max_lin_vel_y=0.06,
             terminal_max_ang_vel_z=0.25,
+            terminal_settle_lin_vel_x=0.05,
+            terminal_settle_reverse_lin_vel_x=0.04,
             frame_yaw_offset=frame_yaw_offset,
             target_height_offset=0.03,
         )
@@ -154,23 +156,10 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
                 "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
                 "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
                 "per_target_timeout_s": PER_TARGET_TIMEOUT_S,
-                "near_distance": 0.22,
+                "near_distance": 0.18,
             },
         )
-        self.rewards.goal_heading_align = RewTerm(
-            func=point_goal_heading_alignment_reward,
-            weight=10.0,
-            params={
-                "command_name": "base_velocity",
-                "success_distance": SUCCESS_DISTANCE,
-                "success_hold_steps": SUCCESS_HOLD_STEPS,
-                "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
-                "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
-                "per_target_timeout_s": PER_TARGET_TIMEOUT_S,
-                "near_distance": 0.28,
-                "std": 0.45,
-            },
-        )
+        self.rewards.goal_heading_align = None
         self.rewards.goal_time_penalty = RewTerm(
             func=point_goal_time_penalty,
             weight=-0.20,

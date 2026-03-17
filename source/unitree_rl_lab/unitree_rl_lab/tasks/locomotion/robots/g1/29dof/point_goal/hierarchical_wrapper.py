@@ -131,9 +131,12 @@ class HierarchicalPointGoalVecEnv:
         self._lin_y_max = float(command_cfg.max_lin_vel_y)
         self._ang_z_max = float(command_cfg.max_ang_vel_z)
         self._terminal_slow_distance = float(command_cfg.terminal_slow_distance)
+        self._terminal_latch_distance = float(command_cfg.terminal_latch_distance)
         self._terminal_max_lin_vel_x = float(command_cfg.terminal_max_lin_vel_x)
         self._terminal_max_lin_vel_y = float(command_cfg.terminal_max_lin_vel_y)
         self._terminal_max_ang_vel_z = float(command_cfg.terminal_max_ang_vel_z)
+        self._terminal_settle_lin_vel_x = float(command_cfg.terminal_settle_lin_vel_x)
+        self._terminal_settle_reverse_lin_vel_x = float(command_cfg.terminal_settle_reverse_lin_vel_x)
 
     def __getattr__(self, name: str):
         return getattr(self.low_level_env, name)
@@ -155,6 +158,8 @@ class HierarchicalPointGoalVecEnv:
 
     def _apply_terminal_command_cap(self, policy_command: torch.Tensor) -> torch.Tensor:
         goal_distance = point_goal_mdp.point_goal_distance_obs(self.base_env, command_name=self.command_name).squeeze(-1)
+        min_goal_distance = getattr(self.base_env, "_point_goal_min_distance", goal_distance)
+        settle_latched = min_goal_distance < self._terminal_latch_distance
         terminal_gate = torch.clamp(
             goal_distance / max(self._terminal_slow_distance, 1.0e-6),
             min=0.0,
@@ -173,6 +178,21 @@ class HierarchicalPointGoalVecEnv:
         )
         capped_command[:, 1] = torch.clamp(capped_command[:, 1], min=-lin_y_cap, max=lin_y_cap)
         capped_command[:, 2] = torch.clamp(capped_command[:, 2], min=-ang_z_cap, max=ang_z_cap)
+        if torch.any(settle_latched):
+            goal_rel_body = point_goal_mdp.point_goal_rel_body_xy(self.base_env, command_name=self.command_name)
+            settle_forward = torch.clamp(
+                goal_rel_body[:, 0] * 0.8,
+                min=-self._terminal_settle_reverse_lin_vel_x,
+                max=self._terminal_settle_lin_vel_x,
+            )
+            settle_forward = torch.where(
+                torch.abs(goal_rel_body[:, 0]) < 0.02,
+                torch.zeros_like(settle_forward),
+                settle_forward,
+            )
+            capped_command[settle_latched, 0] = settle_forward[settle_latched]
+            capped_command[settle_latched, 1] = 0.0
+            capped_command[settle_latched, 2] = 0.0
         return capped_command
 
     def _inject_policy_command(self, observations: torch.Tensor, policy_command: torch.Tensor) -> torch.Tensor:

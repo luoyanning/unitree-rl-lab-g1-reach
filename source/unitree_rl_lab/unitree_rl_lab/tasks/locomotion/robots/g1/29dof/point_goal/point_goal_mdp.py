@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 import torch
 from collections.abc import Sequence
 from dataclasses import MISSING
@@ -20,6 +21,8 @@ except ImportError:
 
 POINT_GOAL_MARKER_CFG = FRAME_MARKER_CFG.replace(prim_path="/Visuals/Command/point_goal")
 POINT_GOAL_MARKER_CFG.markers["frame"].scale = (0.16, 0.16, 0.16)
+ENABLE_POINT_GOAL_RESET_DEBUG = os.getenv("UTRL_POINT_GOAL_RESET_DEBUG", "0") == "1"
+POINT_GOAL_RESET_DEBUG_MAX_GLOBAL_STEPS = int(os.getenv("UTRL_POINT_GOAL_RESET_DEBUG_STEPS", "8"))
 
 
 def _wrap_to_pi(angle: torch.Tensor) -> torch.Tensor:
@@ -47,6 +50,13 @@ class PointGoalCommand(CommandTerm):
         self.metrics["goal_distance"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["goal_heading_error"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["guidance_speed"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["reset_goal_heading_error_raw"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["reset_goal_heading_error_command"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["reset_goal_distance"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["reset_goal_delta_raw_x"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["reset_goal_delta_raw_y"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["reset_goal_delta_command_x"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["reset_goal_delta_command_y"] = torch.zeros(self.num_envs, device=self.device)
 
     @property
     def command(self) -> torch.Tensor:
@@ -61,11 +71,44 @@ class PointGoalCommand(CommandTerm):
         self.goal_pos_w[env_ids, 2] = self._env.scene.env_origins[env_ids, 2] + self.cfg.target_height_offset
         self._update_guidance_command()
 
-    def _goal_delta_body_xy(self) -> torch.Tensor:
+    def _goal_delta_body_xy_raw(self) -> torch.Tensor:
         goal_delta_w = torch.zeros(self.num_envs, 3, device=self.device)
         goal_delta_w[:, :2] = self.goal_pos_w[:, :2] - self.robot.data.root_pos_w[:, :2]
-        goal_delta_body_xy_raw = quat_apply_inverse(yaw_quat(self.robot.data.root_quat_w), goal_delta_w)[:, :2]
+        return quat_apply_inverse(yaw_quat(self.robot.data.root_quat_w), goal_delta_w)[:, :2]
+
+    def _goal_delta_body_xy(self) -> torch.Tensor:
+        goal_delta_body_xy_raw = self._goal_delta_body_xy_raw()
         return _rotate_xy(goal_delta_body_xy_raw, self.cfg.frame_yaw_offset)
+
+    def _record_reset_debug_metrics(self, env_ids: torch.Tensor):
+        if env_ids.numel() == 0:
+            return
+        goal_delta_body_xy_raw = self._goal_delta_body_xy_raw()[env_ids]
+        goal_delta_body_xy = _rotate_xy(goal_delta_body_xy_raw, self.cfg.frame_yaw_offset)
+        goal_distance = torch.linalg.norm(goal_delta_body_xy_raw, dim=-1)
+        raw_heading_error = _wrap_to_pi(torch.atan2(goal_delta_body_xy_raw[:, 1], goal_delta_body_xy_raw[:, 0]))
+        command_heading_error = _wrap_to_pi(torch.atan2(goal_delta_body_xy[:, 1], goal_delta_body_xy[:, 0]))
+
+        self.metrics["reset_goal_heading_error_raw"][env_ids] = torch.abs(raw_heading_error)
+        self.metrics["reset_goal_heading_error_command"][env_ids] = torch.abs(command_heading_error)
+        self.metrics["reset_goal_distance"][env_ids] = goal_distance
+        self.metrics["reset_goal_delta_raw_x"][env_ids] = goal_delta_body_xy_raw[:, 0]
+        self.metrics["reset_goal_delta_raw_y"][env_ids] = goal_delta_body_xy_raw[:, 1]
+        self.metrics["reset_goal_delta_command_x"][env_ids] = goal_delta_body_xy[:, 0]
+        self.metrics["reset_goal_delta_command_y"][env_ids] = goal_delta_body_xy[:, 1]
+
+        if ENABLE_POINT_GOAL_RESET_DEBUG and self._env.common_step_counter <= POINT_GOAL_RESET_DEBUG_MAX_GLOBAL_STEPS:
+            env_id = int(env_ids[0].item())
+            print(
+                "[POINT_GOAL_DEBUG] "
+                f"global_step={int(self._env.common_step_counter)} env_id={env_id} "
+                f"frame_yaw_offset={self.cfg.frame_yaw_offset:.4f} "
+                f"goal_distance={float(goal_distance[0].item()):.4f} "
+                f"raw_xy=({float(goal_delta_body_xy_raw[0, 0].item()):.4f}, {float(goal_delta_body_xy_raw[0, 1].item()):.4f}) "
+                f"cmd_xy=({float(goal_delta_body_xy[0, 0].item()):.4f}, {float(goal_delta_body_xy[0, 1].item()):.4f}) "
+                f"raw_heading={float(raw_heading_error[0].item()):.4f} "
+                f"cmd_heading={float(command_heading_error[0].item()):.4f}"
+            )
 
     def _update_guidance_command(self):
         goal_delta_body_xy = self._goal_delta_body_xy()
@@ -121,6 +164,7 @@ class PointGoalCommand(CommandTerm):
 
         self.goal_pos_w[env_ids, :2] = root_pos_w[:, :2] + offset_w[:, :2]
         self.goal_pos_w[env_ids, 2] = self._env.scene.env_origins[env_ids, 2] + self.cfg.target_height_offset
+        self._record_reset_debug_metrics(env_ids)
         self._update_guidance_command()
 
     def _update_command(self):

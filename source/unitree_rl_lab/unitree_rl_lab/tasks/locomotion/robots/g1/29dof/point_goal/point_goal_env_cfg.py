@@ -1,3 +1,5 @@
+import os
+
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import TerminationTermCfg as DoneTerm
@@ -33,6 +35,8 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
     def __post_init__(self):
         super().__post_init__()
 
+        frame_yaw_offset = float(os.getenv("UTRL_POINT_GOAL_FRAME_YAW_OFFSET", "0.0"))
+
         self.episode_length_s = 12.0
         self.scene.terrain.terrain_type = "plane"
         self.scene.terrain.terrain_generator = None
@@ -53,7 +57,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
             stop_distance=0.35,
             heading_slow_down_distance=0.6,
             turn_in_place_threshold=3.14,
-            frame_yaw_offset=-1.5707963267948966,
+            frame_yaw_offset=frame_yaw_offset,
             target_height_offset=0.03,
         )
         self.events.reset_base.params["pose_range"] = {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)}

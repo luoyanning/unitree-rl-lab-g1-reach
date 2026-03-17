@@ -246,6 +246,27 @@ def install_positive_std_guard(
     )
 
 
+def install_actor_grad_scale(runner: OnPolicyRunner, scale: float):
+    if scale >= 1.0:
+        return
+
+    policy_nn = getattr(runner.alg, "actor_critic", None)
+    if policy_nn is None:
+        policy_nn = getattr(runner.alg, "policy", None)
+    if policy_nn is None:
+        return
+    if getattr(policy_nn, "_codex_actor_grad_scale_installed", False):
+        return
+
+    for name, parameter in policy_nn.named_parameters():
+        if not name.startswith("actor.") or not parameter.requires_grad:
+            continue
+        parameter.register_hook(lambda grad, scale=scale: grad * scale)
+
+    policy_nn._codex_actor_grad_scale_installed = True
+    print(f"[INFO]: Installed actor gradient scaling (scale={scale}).")
+
+
 def maybe_export_deploy_cfg(env, log_dir: str):
     try:
         export_deploy_cfg(env, log_dir)
@@ -324,6 +345,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         install_positive_std_guard(runner, std_min=1.0e-3, std_max=1.0, freeze_std=True)
     else:
         install_positive_std_guard(runner, std_min=1.0e-3, std_max=1.0, freeze_std=True)
+
+    actor_grad_scale = float(os.getenv("UTRL_POINT_GOAL_ACTOR_GRAD_SCALE", "0.02"))
+    install_actor_grad_scale(runner, scale=actor_grad_scale)
 
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)

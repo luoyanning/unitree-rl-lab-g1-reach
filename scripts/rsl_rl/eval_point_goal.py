@@ -159,7 +159,10 @@ def main():
         log_project_name=None,
     )
     agent_cfg = cli_args.parse_rsl_rl_cfg(args_cli.task, rsl_args)
-    runner = OnPolicyRunner(vec_env, agent_cfg.to_dict(), log_dir=None, device=args_cli.device)
+    agent_cfg_dict = agent_cfg.to_dict()
+    if not agent_cfg_dict.get("obs_groups"):
+        agent_cfg_dict["obs_groups"] = {"policy": ["policy"], "critic": ["critic"]}
+    runner = OnPolicyRunner(vec_env, agent_cfg_dict, log_dir=None, device=args_cli.device)
     runner.load(retrieve_file_path(args_cli.checkpoint))
     policy = runner.get_inference_policy(device=vec_env.device)
 

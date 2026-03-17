@@ -337,7 +337,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         low_level_checkpoint_path=low_level_checkpoint_path,
         clip_actions=agent_cfg.clip_actions,
     )
-    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+    agent_cfg_dict = agent_cfg.to_dict()
+    if not agent_cfg_dict.get("obs_groups"):
+        agent_cfg_dict["obs_groups"] = {"policy": ["policy"], "critic": ["critic"]}
+    runner = OnPolicyRunner(env, agent_cfg_dict, log_dir=log_dir, device=agent_cfg.device)
     runner.add_git_repo_to_log(__file__)
 
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import gymnasium as gym
 import torch
 import torch.nn as nn
+from tensordict import TensorDict
 
 from isaaclab.assets import Articulation
 from isaaclab.utils.math import yaw_quat
@@ -96,7 +98,7 @@ class HierarchicalPointGoalVecEnv:
         self.max_episode_length = getattr(low_level_env, "max_episode_length", self.base_env.max_episode_length)
         self.episode_length_buf = getattr(low_level_env, "episode_length_buf", self.base_env.episode_length_buf)
         self.rew_buf = torch.zeros(self.num_envs, device=self.device)
-        self.reset_buf = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        self.reset_buf = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self.extras = getattr(low_level_env, "extras", {})
 
         self.low_level_actor = FrozenVelocityActor.from_checkpoint(low_level_checkpoint_path, device=self.device)
@@ -118,6 +120,11 @@ class HierarchicalPointGoalVecEnv:
         self.privileged_obs_buf = torch.zeros(self.num_envs, self.num_privileged_obs, device=self.device)
         self._low_level_obs = None
 
+        self.single_action_space = gym.spaces.Box(low=-self.clip_actions, high=self.clip_actions, shape=(self.num_actions,))
+        self.action_space = gym.vector.utils.batch_space(self.single_action_space, self.num_envs)
+        self.observation_space = None
+        self.render_mode = getattr(low_level_env, "render_mode", None)
+
         command_cfg = self.base_env.command_manager.get_term(self.command_name).cfg
         self._lin_x_min = float(command_cfg.min_lin_vel_x)
         self._lin_x_max = float(command_cfg.max_lin_vel_x)
@@ -126,6 +133,9 @@ class HierarchicalPointGoalVecEnv:
 
     def __getattr__(self, name: str):
         return getattr(self.low_level_env, name)
+
+    def seed(self, seed: int = -1) -> int:
+        return self.unwrapped.seed(seed)
 
     def _scale_high_level_actions(self, actions: torch.Tensor) -> torch.Tensor:
         clipped_actions = torch.clamp(actions, -self.clip_actions, self.clip_actions)
@@ -199,49 +209,67 @@ class HierarchicalPointGoalVecEnv:
         self.obs_buf = self._actor_observations()
         self.privileged_obs_buf = self._critic_observations()
 
-    def get_observations(self) -> torch.Tensor:
-        self._refresh_observation_buffers()
-        return self.obs_buf
+    def _obs_tensordict(self) -> TensorDict:
+        return TensorDict(
+            {"policy": self.obs_buf, "critic": self.privileged_obs_buf},
+            batch_size=[self.num_envs],
+        )
 
-    def get_privileged_observations(self) -> torch.Tensor:
+    def _split_obs_and_extras(self, result):
+        if isinstance(result, tuple):
+            if len(result) == 2:
+                return result
+            if len(result) > 2:
+                return result[0], result[-1]
+        return result, {}
+
+    def _policy_obs_from_result(self, result) -> torch.Tensor:
+        observations, extras = self._split_obs_and_extras(result)
+        if isinstance(observations, TensorDict):
+            return observations["policy"], extras
+        if isinstance(observations, dict):
+            return observations["policy"], extras
+        return observations, extras
+
+    def get_observations(self):
+        self._refresh_observation_buffers()
+        return self._obs_tensordict(), self.extras
+
+    def get_privileged_observations(self):
         self._refresh_observation_buffers()
         return self.privileged_obs_buf
 
     def reset(self, env_ids=None):
         del env_ids
-        reset_result = self.low_level_env.reset()
-        if isinstance(reset_result, tuple):
-            self._low_level_obs = reset_result[0]
-        else:
-            self._low_level_obs = reset_result
+        low_level_obs, extras = self._policy_obs_from_result(self.low_level_env.reset())
+        self._low_level_obs = low_level_obs
         zero_command = torch.zeros(self.num_envs, self.num_actions, device=self.device)
         point_goal_mdp.set_point_goal_policy_command(self.base_env, zero_command)
         self._refresh_observation_buffers()
-        self.extras = getattr(self.low_level_env, "extras", {})
-        return self.obs_buf, self.privileged_obs_buf
+        self.extras = extras
+        return self._obs_tensordict(), extras
 
     def step(self, actions: torch.Tensor):
         policy_command = self._scale_high_level_actions(actions)
         point_goal_mdp.set_point_goal_policy_command(self.base_env, policy_command)
-        low_level_obs = self._low_level_obs if self._low_level_obs is not None else self.low_level_env.get_observations()
+        if self._low_level_obs is None:
+            low_level_obs, _ = self._policy_obs_from_result(self.low_level_env.get_observations())
+        else:
+            low_level_obs = self._low_level_obs
         low_level_obs = self._inject_policy_command(low_level_obs, policy_command)
         with torch.inference_mode():
             low_level_actions = self.low_level_actor(low_level_obs)
 
-        step_result = self.low_level_env.step(low_level_actions)
-        if len(step_result) == 5:
-            low_level_obs, _, rewards, dones, extras = step_result
-        elif len(step_result) == 4:
-            low_level_obs, rewards, dones, extras = step_result
-        else:
-            raise ValueError(f"Unexpected low-level env.step result with {len(step_result)} elements.")
-
-        self._low_level_obs = low_level_obs
+        low_level_result = self.low_level_env.step(low_level_actions)
+        if len(low_level_result) != 4:
+            raise ValueError(f"Expected low-level env step to return 4 items, got {len(low_level_result)}.")
+        low_level_obs, rewards, dones, extras = low_level_result
+        self._low_level_obs, _ = self._policy_obs_from_result((low_level_obs, extras))
         self.rew_buf = rewards
         self.reset_buf = dones
         self.extras = extras
         self._refresh_observation_buffers()
-        return self.obs_buf, self.privileged_obs_buf, rewards, dones, extras
+        return self._obs_tensordict(), rewards, dones, extras
 
     def close(self):
         return self.low_level_env.close()

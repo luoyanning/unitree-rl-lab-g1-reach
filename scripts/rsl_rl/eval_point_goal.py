@@ -178,16 +178,13 @@ def main():
     for offset_xy in benchmark_offsets:
         case_records: list[dict[str, float | bool]] = []
         for _ in range(args_cli.episodes_per_case):
-            reset_result = vec_env.reset()
-            del reset_result
+            obs, _ = vec_env.reset()
 
             goal_pos_w = torch.zeros(base_env.num_envs, 3, device=base_env.device)
             goal_pos_w[:, :2] = base_env.scene.env_origins[:, :2]
             goal_pos_w[:, 0] += float(offset_xy[0])
             goal_pos_w[:, 1] += float(offset_xy[1])
             command_term.set_goal_positions(torch.arange(base_env.num_envs, device=base_env.device), goal_pos_w)
-
-            obs = vec_env.get_observations()
 
             robot = base_env.scene["robot"]
             last_root_pos = robot.data.root_pos_w[:, :2].clone()
@@ -207,7 +204,7 @@ def main():
                 start_time = time.time()
                 with torch.inference_mode():
                     actions = policy(obs)
-                    obs, _, _, _, _ = vec_env.step(actions)
+                    obs, _, _, _ = vec_env.step(actions)
 
                 root_pos = robot.data.root_pos_w[:, :2].clone()
                 root_lin_vel = torch.linalg.norm(robot.data.root_lin_vel_w[:, :2], dim=-1)

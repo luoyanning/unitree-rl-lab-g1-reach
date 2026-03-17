@@ -20,6 +20,12 @@ import cli_args  # isort: skip
 parser = argparse.ArgumentParser(description="Evaluate the G1 point-goal policy on fixed benchmark cases.")
 parser.add_argument("--task", type=str, default="Unitree-G1-29dof-PointGoal-v0", help="Task name.")
 parser.add_argument("--checkpoint", type=str, required=True, help="Checkpoint file to evaluate.")
+parser.add_argument(
+    "--low_level_checkpoint",
+    type=str,
+    required=True,
+    help="Frozen low-level velocity-policy checkpoint used by the hierarchical point-goal controller.",
+)
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
 parser.add_argument("--episodes_per_case", type=int, default=20, help="Episodes per benchmark case.")
 parser.add_argument("--benchmark", type=str, default="medium", choices=["easy", "medium", "hard"], help="Preset.")
@@ -44,6 +50,9 @@ import unitree_rl_lab.tasks  # noqa: F401
 from unitree_rl_lab.utils.parser_cfg import parse_env_cfg
 
 importlib.import_module("unitree_rl_lab.tasks.locomotion.robots.g1.29dof.point_goal")
+HierarchicalPointGoalVecEnv = importlib.import_module(
+    "unitree_rl_lab.tasks.locomotion.robots.g1.29dof.point_goal.hierarchical_wrapper"
+).HierarchicalPointGoalVecEnv
 
 
 BENCHMARK_CASES = {
@@ -133,7 +142,12 @@ def main():
     if isinstance(env.unwrapped, DirectMARLEnv):
         env = multi_agent_to_single_agent(env)
 
-    vec_env = RslRlVecEnvWrapper(env, clip_actions=1.0)
+    low_level_env = RslRlVecEnvWrapper(env, clip_actions=1.0)
+    vec_env = HierarchicalPointGoalVecEnv(
+        low_level_env,
+        low_level_checkpoint_path=retrieve_file_path(args_cli.low_level_checkpoint),
+        clip_actions=1.0,
+    )
     rsl_args = argparse.Namespace(
         task=args_cli.task,
         seed=None,
@@ -147,7 +161,7 @@ def main():
     agent_cfg = cli_args.parse_rsl_rl_cfg(args_cli.task, rsl_args)
     runner = OnPolicyRunner(vec_env, agent_cfg.to_dict(), log_dir=None, device=args_cli.device)
     runner.load(retrieve_file_path(args_cli.checkpoint))
-    policy = runner.get_inference_policy(device=vec_env.unwrapped.device)
+    policy = runner.get_inference_policy(device=vec_env.device)
 
     base_env = env.unwrapped
     command_term = base_env.command_manager.get_term("base_velocity")
@@ -164,7 +178,7 @@ def main():
     for offset_xy in benchmark_offsets:
         case_records: list[dict[str, float | bool]] = []
         for _ in range(args_cli.episodes_per_case):
-            reset_result = env.reset()
+            reset_result = vec_env.reset()
             del reset_result
 
             goal_pos_w = torch.zeros(base_env.num_envs, 3, device=base_env.device)
@@ -174,8 +188,6 @@ def main():
             command_term.set_goal_positions(torch.arange(base_env.num_envs, device=base_env.device), goal_pos_w)
 
             obs = vec_env.get_observations()
-            if isinstance(obs, tuple):
-                obs = obs[0]
 
             robot = base_env.scene["robot"]
             last_root_pos = robot.data.root_pos_w[:, :2].clone()
@@ -195,7 +207,7 @@ def main():
                 start_time = time.time()
                 with torch.inference_mode():
                     actions = policy(obs)
-                    obs, _, _, _ = vec_env.step(actions)
+                    obs, _, _, _, _ = vec_env.step(actions)
 
                 root_pos = robot.data.root_pos_w[:, :2].clone()
                 root_lin_vel = torch.linalg.norm(robot.data.root_lin_vel_w[:, :2], dim=-1)

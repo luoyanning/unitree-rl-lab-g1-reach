@@ -200,6 +200,15 @@ class PointGoalCommand(CommandTerm):
         self.metrics["reverse_recovery_mode"][:] = reverse_recovery_mode.float()
         self.metrics["hold_mode"][:] = hold_mode.float()
 
+        if hasattr(self._env, "_point_goal_policy_command"):
+            policy_command = self._env._point_goal_policy_command
+            self._command[:] = policy_command
+            self.metrics["guidance_speed"][:] = torch.linalg.norm(policy_command[:, :2], dim=-1)
+            self.metrics.setdefault("policy_command_speed", torch.zeros(self.num_envs, device=self.device))
+            self.metrics.setdefault("policy_command_turn", torch.zeros(self.num_envs, device=self.device))
+            self.metrics["policy_command_speed"][:] = torch.linalg.norm(policy_command[:, :2], dim=-1)
+            self.metrics["policy_command_turn"][:] = torch.abs(policy_command[:, 2])
+
     def _resample_command(self, env_ids: Sequence[int]):
         if len(env_ids) == 0:
             return
@@ -304,6 +313,55 @@ def _goal_delta_body_xy(env, command_name: str = "base_velocity") -> torch.Tenso
     return _rotate_xy(goal_delta_body_xy_raw, command_term.cfg.frame_yaw_offset)
 
 
+def _ensure_policy_command_state(env) -> torch.Tensor:
+    if not hasattr(env, "_point_goal_policy_command"):
+        env._point_goal_policy_command = torch.zeros(env.num_envs, 3, device=env.device)
+    return env._point_goal_policy_command
+
+
+def set_point_goal_policy_command(env, command: torch.Tensor):
+    policy_command = _ensure_policy_command_state(env)
+    policy_command[:] = command
+    try:
+        command_term = _point_goal_term(env, command_name="base_velocity")
+    except RuntimeError:
+        return
+    command_term.metrics["guidance_speed"][:] = torch.linalg.norm(command[:, :2], dim=-1)
+    command_term.metrics.setdefault("policy_command_speed", torch.zeros(env.num_envs, device=env.device))
+    command_term.metrics.setdefault("policy_command_turn", torch.zeros(env.num_envs, device=env.device))
+    command_term.metrics["policy_command_speed"][:] = torch.linalg.norm(command[:, :2], dim=-1)
+    command_term.metrics["policy_command_turn"][:] = torch.abs(command[:, 2])
+
+
+def point_goal_policy_command_obs(env) -> torch.Tensor:
+    return _ensure_policy_command_state(env)
+
+
+def track_policy_command_lin_vel_xy_exp(
+    env,
+    std: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    policy_command = _ensure_policy_command_state(env)
+    asset: Articulation = env.scene[asset_cfg.name]
+    vel_w = torch.zeros(env.num_envs, 3, device=env.device)
+    vel_w[:, :2] = asset.data.root_lin_vel_w[:, :2]
+    vel_body = quat_apply_inverse(yaw_quat(asset.data.root_quat_w), vel_w)[:, :2]
+    lin_vel_error = torch.sum(torch.square(policy_command[:, :2] - vel_body), dim=1)
+    return torch.exp(-lin_vel_error / (std**2))
+
+
+def track_policy_command_ang_vel_z_exp(
+    env,
+    std: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    policy_command = _ensure_policy_command_state(env)
+    asset: Articulation = env.scene[asset_cfg.name]
+    ang_vel_error = torch.square(policy_command[:, 2] - asset.data.root_ang_vel_b[:, 2])
+    return torch.exp(-ang_vel_error / (std**2))
+
+
 def point_goal_target_pos_env(env, command_name: str = "base_velocity") -> torch.Tensor:
     command_term = _point_goal_term(env, command_name=command_name)
     return command_term.goal_pos_w[:, :2] - env.scene.env_origins[:, :2]
@@ -400,6 +458,7 @@ def _sync_point_goal_state(
         env._point_goal_target_age_steps[reset_ids] = 0
         env._point_goal_timed_out[reset_ids] = False
         env._point_goal_remaining_time_fraction[reset_ids] = 1.0
+        _ensure_policy_command_state(env)[reset_ids] = 0.0
 
     env._point_goal_target_age_steps += 1
     per_target_timeout_steps = max(1, int(round(per_target_timeout_s / env.step_dt)))

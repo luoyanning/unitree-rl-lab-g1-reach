@@ -12,6 +12,7 @@ from .point_goal_mdp import (
     PointGoalCommandCfg,
     point_goal_distance_obs,
     point_goal_heading_error_obs,
+    point_goal_policy_command_obs,
     point_goal_progress_reward,
     point_goal_rel_body_xy,
     point_goal_root_pos_env,
@@ -21,6 +22,8 @@ from .point_goal_mdp import (
     point_goal_target_pos_env,
     point_goal_time_penalty,
     point_goal_timeout_penalty,
+    track_policy_command_ang_vel_z_exp,
+    track_policy_command_lin_vel_xy_exp,
 )
 
 
@@ -93,8 +96,13 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
             func=point_goal_heading_error_obs,
             params={"command_name": "base_velocity"},
         )
+        self.observations.critic.policy_command = ObsTerm(
+            func=point_goal_policy_command_obs,
+        )
 
+        self.rewards.track_lin_vel_xy.func = track_policy_command_lin_vel_xy_exp
         self.rewards.track_lin_vel_xy.weight = 1.00
+        self.rewards.track_ang_vel_z.func = track_policy_command_ang_vel_z_exp
         self.rewards.track_ang_vel_z.weight = 0.20
         self.rewards.alive.weight = 0.15
         self.rewards.action_rate = None

@@ -40,21 +40,22 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
             asset_name="robot",
             resampling_time_range=(self.episode_length_s, self.episode_length_s),
             debug_vis=True,
-            radius_range=(0.35, 0.8),
-            angle_range=(-0.17453292519943295, 0.17453292519943295),
+            radius_range=(0.30, 0.70),
+            angle_range=(0.0, 0.0),
             forward_gain=0.8,
             lateral_gain=0.0,
-            heading_gain=0.2,
+            heading_gain=0.0,
             min_lin_vel_x=0.0,
             max_lin_vel_x=0.35,
             max_lin_vel_y=0.0,
-            max_ang_vel_z=0.15,
+            max_ang_vel_z=0.0,
             slow_down_distance=1.0,
             stop_distance=0.35,
             heading_slow_down_distance=0.6,
-            turn_in_place_threshold=1.20,
+            turn_in_place_threshold=3.14,
             target_height_offset=0.03,
         )
+        self.events.reset_base.params["pose_range"] = {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)}
         self.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
 
         self.observations.policy.point_goal_target_world = ObsTerm(

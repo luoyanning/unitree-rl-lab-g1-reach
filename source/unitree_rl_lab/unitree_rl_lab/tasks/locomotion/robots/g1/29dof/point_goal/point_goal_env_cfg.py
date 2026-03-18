@@ -51,15 +51,15 @@ SLOW_DOWN_DISTANCE_START = 0.45
 HEADING_SLOW_DOWN_DISTANCE_START = 0.35
 POINT_GOAL_CURRICULUM_PROMOTE_SUCCESS = 0.80
 POINT_GOAL_CURRICULUM_DEMOTE_SUCCESS = 0.62
-PER_TARGET_TIMEOUT_S = 4.5
-POINT_GOAL_START_RADIUS = (0.30, 0.50)
-POINT_GOAL_MID_RADIUS = (0.35, 0.75)
-POINT_GOAL_LATE_RADIUS = (0.38, 0.90)
-POINT_GOAL_FINAL_RADIUS = (0.40, 1.00)
+PER_TARGET_TIMEOUT_S = 5.0
+POINT_GOAL_START_RADIUS = (0.40, 0.80)
+POINT_GOAL_MID_RADIUS = (0.60, 1.50)
+POINT_GOAL_LATE_RADIUS = (1.00, 3.00)
+POINT_GOAL_FINAL_RADIUS = (0.50, 5.00)
 POINT_GOAL_START_ANGLE = (0.0, 0.0)
-POINT_GOAL_MID_ANGLE = (-math.radians(20.0), math.radians(20.0))
-POINT_GOAL_LATE_ANGLE = (-math.radians(60.0), math.radians(60.0))
-POINT_GOAL_FINAL_ANGLE = (-math.radians(90.0), math.radians(90.0))
+POINT_GOAL_MID_ANGLE = (-math.radians(30.0), math.radians(30.0))
+POINT_GOAL_LATE_ANGLE = (-math.radians(90.0), math.radians(90.0))
+POINT_GOAL_FINAL_ANGLE = (-math.pi, math.pi)
 POINT_GOAL_CURRICULUM_EPISODES = 48
 
 
@@ -130,7 +130,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
 
         frame_yaw_offset = float(os.getenv("UTRL_POINT_GOAL_FRAME_YAW_OFFSET", "0.0"))
 
-        self.episode_length_s = 12.0
+        self.episode_length_s = 20.0
         self.scene.terrain.terrain_type = "plane"
         self.scene.terrain.terrain_generator = None
         self.commands.base_velocity = PointGoalCommandCfg(

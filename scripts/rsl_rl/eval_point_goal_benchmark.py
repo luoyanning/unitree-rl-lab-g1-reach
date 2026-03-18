@@ -28,8 +28,28 @@ parser.add_argument("--task", type=str, default="Unitree-G1-29dof-PointGoal-v0",
 parser.add_argument("--disable_fabric", action="store_true", default=False, help="Disable fabric.")
 parser.add_argument("--num_envs", type=int, default=16, help="Number of parallel environments.")
 parser.add_argument("--episodes_per_case", type=int, default=20, help="Episodes per distance-angle case.")
+parser.add_argument(
+    "--layout",
+    type=str,
+    default="rings",
+    choices=["rings", "grid"],
+    help="Benchmark layout. 'rings' generates evenly spaced points on multiple circles.",
+)
 parser.add_argument("--case_distance", type=float, default=None, help="If set, evaluate only this one target distance.")
 parser.add_argument("--case_angle_deg", type=float, default=None, help="If set, evaluate only this one target angle.")
+parser.add_argument(
+    "--ring_radii",
+    type=str,
+    default="0.5,1.0,1.5,2.0,3.0,4.0,5.0",
+    help="Comma-separated benchmark ring radii in meters.",
+)
+parser.add_argument("--points_per_ring", type=int, default=24, help="Number of equally spaced points on each ring.")
+parser.add_argument(
+    "--ring_angle_offset_deg",
+    type=float,
+    default=0.0,
+    help="Angular offset applied to all ring points.",
+)
 parser.add_argument(
     "--distances",
     type=str,
@@ -152,6 +172,10 @@ def _lerp_scalar(start: float, end: float, progress: float) -> float:
     return float(start + (end - start) * progress)
 
 
+def _wrap_to_pi(angle: float) -> float:
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
 def _clamp_progress(progress: float) -> float:
     return max(0.0, min(1.0, float(progress)))
 
@@ -206,6 +230,10 @@ def _summarize_records(records: list[dict]) -> dict[str, float]:
         "min_error_m",
         "final_error_m",
         "final_stop_error_m",
+        "final_radius_error_m",
+        "final_stop_radius_error_m",
+        "final_target_bearing_error_deg",
+        "final_stop_target_bearing_error_deg",
         "path_efficiency",
         "path_length_m",
         "time_to_reach_20cm_s",
@@ -348,15 +376,42 @@ def _to_goal_frame_errors(root_pos_xy: torch.Tensor, env_origins_xy: torch.Tenso
 def _build_cases(distances: list[float], angles_deg: list[float]) -> list[dict[str, float]]:
     cases = []
     for distance in distances:
-        for angle_deg in angles_deg:
+        for point_index, angle_deg in enumerate(angles_deg):
             angle_rad = math.radians(angle_deg)
             cases.append(
                 {
                     "distance_m": float(distance),
                     "angle_deg": float(angle_deg),
                     "angle_rad": angle_rad,
+                    "point_index": float(point_index),
                     "goal_x_m": float(distance * math.cos(angle_rad)),
                     "goal_y_m": float(distance * math.sin(angle_rad)),
+                }
+            )
+    return cases
+
+
+def _build_ring_cases(radii: list[float], points_per_ring: int, angle_offset_deg: float) -> list[dict[str, float]]:
+    if points_per_ring <= 0:
+        raise ValueError("points_per_ring must be positive.")
+    angles_deg = []
+    for point_index in range(points_per_ring):
+        raw_angle_deg = angle_offset_deg + point_index * (360.0 / float(points_per_ring))
+        wrapped_angle_deg = math.degrees(_wrap_to_pi(math.radians(raw_angle_deg)))
+        angles_deg.append((point_index, wrapped_angle_deg))
+
+    cases = []
+    for radius in radii:
+        for point_index, angle_deg in angles_deg:
+            angle_rad = math.radians(angle_deg)
+            cases.append(
+                {
+                    "distance_m": float(radius),
+                    "angle_deg": float(angle_deg),
+                    "angle_rad": angle_rad,
+                    "point_index": float(point_index),
+                    "goal_x_m": float(radius * math.cos(angle_rad)),
+                    "goal_y_m": float(radius * math.sin(angle_rad)),
                 }
             )
     return cases
@@ -373,10 +428,30 @@ def _get_output_dir(resume_path: str) -> str:
     return os.path.join(os.path.dirname(resume_path), "benchmark_v1", timestamp)
 
 
+def _polar_errors(root_pos_xy: torch.Tensor, env_origins_xy: torch.Tensor, target_radius: float, target_angle_rad: float):
+    rel_pos = root_pos_xy - env_origins_xy
+    radius = torch.linalg.norm(rel_pos, dim=-1)
+    radius_error = torch.abs(radius - target_radius)
+    azimuth = torch.atan2(rel_pos[:, 1], rel_pos[:, 0])
+    bearing_error = torch.abs(torch.atan2(torch.sin(azimuth - target_angle_rad), torch.cos(azimuth - target_angle_rad)))
+    return radius_error, torch.rad2deg(bearing_error)
+
+
 def main():
-    distances = [float(args_cli.case_distance)] if args_cli.case_distance is not None else _parse_float_list(args_cli.distances)
-    angles_deg = [float(args_cli.case_angle_deg)] if args_cli.case_angle_deg is not None else _parse_float_list(args_cli.angles_deg)
-    benchmark_cases = _build_cases(distances, angles_deg)
+    if args_cli.case_distance is not None or args_cli.case_angle_deg is not None:
+        if args_cli.case_distance is None or args_cli.case_angle_deg is None:
+            raise ValueError("--case_distance and --case_angle_deg must be set together.")
+        distances = [float(args_cli.case_distance)]
+        angles_deg = [float(args_cli.case_angle_deg)]
+        benchmark_cases = _build_cases(distances, angles_deg)
+    elif args_cli.layout == "rings":
+        distances = _parse_float_list(args_cli.ring_radii)
+        angles_deg = [math.degrees(_wrap_to_pi(math.radians(args_cli.ring_angle_offset_deg + index * (360.0 / float(args_cli.points_per_ring))))) for index in range(args_cli.points_per_ring)]
+        benchmark_cases = _build_ring_cases(distances, args_cli.points_per_ring, args_cli.ring_angle_offset_deg)
+    else:
+        distances = _parse_float_list(args_cli.distances)
+        angles_deg = _parse_float_list(args_cli.angles_deg)
+        benchmark_cases = _build_cases(distances, angles_deg)
 
     env_cfg = parse_env_cfg(
         args_cli.task,
@@ -431,9 +506,13 @@ def main():
     print("[INFO] Benchmark configuration:")
     print(f"  checkpoint: {resume_path}")
     print(f"  output_dir: {output_dir}")
+    print(f"  layout: {args_cli.layout}")
     print(f"  episodes_per_case: {args_cli.episodes_per_case}")
     print(f"  distances_m: {distances}")
     print(f"  angles_deg: {angles_deg}")
+    if args_cli.layout == "rings" and args_cli.case_distance is None:
+        print(f"  points_per_ring: {args_cli.points_per_ring}")
+        print(f"  ring_angle_offset_deg: {args_cli.ring_angle_offset_deg:.2f}")
     print(f"  timeout_s: {args_cli.timeout_s:.2f}")
     print(f"  benchmark_progress: {args_cli.benchmark_progress:.3f}")
     for key, value in applied_schedule.items():
@@ -495,6 +574,8 @@ def main():
             final_stop_heading_error = torch.full((num_envs,), float("nan"), device=base_env.device)
             final_stop_along_error = torch.full((num_envs,), float("nan"), device=base_env.device)
             final_stop_cross_error = torch.full((num_envs,), float("nan"), device=base_env.device)
+            final_stop_radius_error = torch.full((num_envs,), float("nan"), device=base_env.device)
+            final_stop_target_bearing_error = torch.full((num_envs,), float("nan"), device=base_env.device)
 
             for step in range(step_budget):
                 start_time = time.time()
@@ -514,6 +595,12 @@ def main():
                     env_origins_xy,
                     target_unit_dir,
                     case["distance_m"],
+                )
+                radius_error, target_bearing_error = _polar_errors(
+                    root_pos,
+                    env_origins_xy,
+                    case["distance_m"],
+                    angle_rad,
                 )
 
                 tracking_mask = active_mask & (~fall)
@@ -552,6 +639,8 @@ def main():
                 final_stop_heading_error[any_stop_mask] = torch.rad2deg(current_heading_error[any_stop_mask])
                 final_stop_along_error[any_stop_mask] = along_error[any_stop_mask]
                 final_stop_cross_error[any_stop_mask] = cross_error[any_stop_mask]
+                final_stop_radius_error[any_stop_mask] = radius_error[any_stop_mask]
+                final_stop_target_bearing_error[any_stop_mask] = target_bearing_error[any_stop_mask]
 
                 newly_stop_20cm = (~stop_20cm) & (hold_20cm >= stop_hold_steps)
                 stop_20cm |= newly_stop_20cm
@@ -582,6 +671,12 @@ def main():
                 target_unit_dir,
                 case["distance_m"],
             )
+            final_radius_error, final_target_bearing_error = _polar_errors(
+                last_root_pos,
+                env_origins_xy,
+                case["distance_m"],
+                angle_rad,
+            )
 
             for env_id in range(batch_size):
                 path_length_value = float(path_length[env_id].item())
@@ -590,6 +685,7 @@ def main():
                 case_records.append(
                     {
                         "case_index": float(case_index),
+                        "point_index": float(case["point_index"]),
                         "distance_m": float(case["distance_m"]),
                         "angle_deg": float(case["angle_deg"]),
                         "start_distance_m": start_distance_value,
@@ -603,6 +699,10 @@ def main():
                         "min_error_m": float(min_error[env_id].item()),
                         "final_error_m": float(final_error[env_id].item()),
                         "final_stop_error_m": float(final_stop_error[env_id].item()),
+                        "final_radius_error_m": float(final_radius_error[env_id].item()),
+                        "final_stop_radius_error_m": float(final_stop_radius_error[env_id].item()),
+                        "final_target_bearing_error_deg": float(final_target_bearing_error[env_id].item()),
+                        "final_stop_target_bearing_error_deg": float(final_stop_target_bearing_error[env_id].item()),
                         "time_to_reach_20cm_s": float(time_to_reach_20cm[env_id].item()),
                         "time_to_stop_20cm_s": float(time_to_stop_20cm[env_id].item()),
                         "time_to_precise_stop_10cm_s": float(time_to_precise_stop_10cm[env_id].item()),
@@ -664,8 +764,12 @@ def main():
         "task": args_cli.task,
         "checkpoint": resume_path,
         "episodes_per_case": args_cli.episodes_per_case,
+        "layout": args_cli.layout,
         "distances_m": distances,
         "angles_deg": angles_deg,
+        "ring_radii_m": _parse_float_list(args_cli.ring_radii),
+        "points_per_ring": args_cli.points_per_ring,
+        "ring_angle_offset_deg": args_cli.ring_angle_offset_deg,
         "timeout_s": args_cli.timeout_s,
         "num_envs": num_envs,
         "benchmark_progress": args_cli.benchmark_progress,
@@ -686,6 +790,7 @@ def main():
 
     episode_fieldnames = [
         "case_index",
+        "point_index",
         "distance_m",
         "angle_deg",
         "start_distance_m",
@@ -699,6 +804,10 @@ def main():
         "min_error_m",
         "final_error_m",
         "final_stop_error_m",
+        "final_radius_error_m",
+        "final_stop_radius_error_m",
+        "final_target_bearing_error_deg",
+        "final_stop_target_bearing_error_deg",
         "time_to_reach_20cm_s",
         "time_to_stop_20cm_s",
         "time_to_precise_stop_10cm_s",

@@ -700,9 +700,14 @@ def _sync_point_goal_state(
             env._point_goal_policy_command[reset_ids] = 0.0
 
     env._point_goal_target_age_steps += 1
-    per_target_timeout_steps = max(1, int(round(per_target_timeout_s / env.step_dt)))
+    nominal_forward_speed = max(float(getattr(command_term.cfg, "max_lin_vel_x", 0.45)) * 0.8, 0.20)
+    distance_based_timeout_s = torch.clamp(env._point_goal_initial_distance / nominal_forward_speed + 1.5, min=per_target_timeout_s)
+    per_target_timeout_steps = torch.clamp(
+        torch.round(distance_based_timeout_s / env.step_dt).long(),
+        min=1,
+    )
     env._point_goal_remaining_time_fraction = torch.clamp(
-        (per_target_timeout_steps - env._point_goal_target_age_steps).float() / float(per_target_timeout_steps),
+        (per_target_timeout_steps - env._point_goal_target_age_steps).float() / per_target_timeout_steps.float(),
         min=0.0,
         max=1.0,
     )
@@ -743,6 +748,8 @@ def _sync_point_goal_state(
     command_term.metrics["terminal_latched"][:] = env._point_goal_terminal_latched.float()
     command_term.metrics["target_age_s"][:] = env._point_goal_target_age_steps.float() * env.step_dt
     command_term.metrics["remaining_time_fraction"][:] = env._point_goal_remaining_time_fraction
+    command_term.metrics.setdefault("scheduled_target_timeout_s", torch.zeros(env.num_envs, device=env.device))
+    command_term.metrics["scheduled_target_timeout_s"][:] = per_target_timeout_steps.float() * env.step_dt
 
 
 def point_goal_progress_reward(

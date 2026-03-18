@@ -401,11 +401,14 @@ def point_goal_target_levels(
     num_curriculum_episodes: int = 12,
     start_radius_range: tuple[float, float] = (0.30, 0.70),
     mid_radius_range: tuple[float, float] = (0.35, 1.00),
+    late_radius_range: tuple[float, float] = (0.40, 1.20),
     final_radius_range: tuple[float, float] = (0.40, 1.50),
     start_angle_range: tuple[float, float] = (-math.pi / 12.0, math.pi / 12.0),
     mid_angle_range: tuple[float, float] = (-math.pi / 3.0, math.pi / 3.0),
+    late_angle_range: tuple[float, float] = (-2.0 * math.pi / 3.0, 2.0 * math.pi / 3.0),
     final_angle_range: tuple[float, float] = (-math.pi, math.pi),
     promote_success_threshold: float = 0.75,
+    demote_success_threshold: float = 0.60,
 ):
     del env_ids
     command_term = env.command_manager.get_term(command_name)
@@ -415,34 +418,31 @@ def point_goal_target_levels(
         env,
         num_curriculum_episodes,
         promote_success_threshold=promote_success_threshold,
+        demote_success_threshold=demote_success_threshold,
     )
-    halfway_tensor = torch.tensor(0.5, device=env.device)
+    mid_tensor = torch.tensor(0.40, device=env.device)
+    late_tensor = torch.tensor(0.80, device=env.device)
+
+    def _blend_range(start_range: tuple[float, float], end_range: tuple[float, float], phase_progress: torch.Tensor):
+        return torch.lerp(
+            torch.tensor(start_range, device=env.device),
+            torch.tensor(end_range, device=env.device),
+            phase_progress,
+        ).tolist()
 
     if env.common_step_counter % env.max_episode_length == 0:
-        if progress <= 0.5:
-            phase_progress = progress_tensor / halfway_tensor
-            cfg.radius_range = torch.lerp(
-                torch.tensor(start_radius_range, device=env.device),
-                torch.tensor(mid_radius_range, device=env.device),
-                phase_progress,
-            ).tolist()
-            cfg.angle_range = torch.lerp(
-                torch.tensor(start_angle_range, device=env.device),
-                torch.tensor(mid_angle_range, device=env.device),
-                phase_progress,
-            ).tolist()
+        if progress <= 0.40:
+            phase_progress = progress_tensor / torch.clamp(mid_tensor, min=1.0e-6)
+            cfg.radius_range = _blend_range(start_radius_range, mid_radius_range, phase_progress)
+            cfg.angle_range = _blend_range(start_angle_range, mid_angle_range, phase_progress)
+        elif progress <= 0.80:
+            phase_progress = (progress_tensor - mid_tensor) / torch.clamp(late_tensor - mid_tensor, min=1.0e-6)
+            cfg.radius_range = _blend_range(mid_radius_range, late_radius_range, phase_progress)
+            cfg.angle_range = _blend_range(mid_angle_range, late_angle_range, phase_progress)
         else:
-            phase_progress = (progress_tensor - halfway_tensor) / halfway_tensor
-            cfg.radius_range = torch.lerp(
-                torch.tensor(mid_radius_range, device=env.device),
-                torch.tensor(final_radius_range, device=env.device),
-                phase_progress,
-            ).tolist()
-            cfg.angle_range = torch.lerp(
-                torch.tensor(mid_angle_range, device=env.device),
-                torch.tensor(final_angle_range, device=env.device),
-                phase_progress,
-            ).tolist()
+            phase_progress = (progress_tensor - late_tensor) / torch.clamp(1.0 - late_tensor, min=1.0e-6)
+            cfg.radius_range = _blend_range(late_radius_range, final_radius_range, phase_progress)
+            cfg.angle_range = _blend_range(late_angle_range, final_angle_range, phase_progress)
 
     return progress_tensor
 
@@ -451,6 +451,7 @@ def _point_goal_curriculum_progress(
     env,
     num_curriculum_episodes: int,
     promote_success_threshold: float = 0.75,
+    demote_success_threshold: float = 0.60,
 ) -> tuple[float, torch.Tensor]:
     if not hasattr(env, "_point_goal_curriculum_progress"):
         env._point_goal_curriculum_progress = 0.0
@@ -460,8 +461,11 @@ def _point_goal_curriculum_progress(
     progress_step = 1.0 / max(num_curriculum_episodes, 1)
     should_update = env.common_step_counter % env.max_episode_length == 0
     if should_update and env._point_goal_curriculum_last_update_step != env.common_step_counter:
-        if float(env._point_goal_curriculum_success_ema) >= promote_success_threshold:
+        success_ema = float(env._point_goal_curriculum_success_ema)
+        if success_ema >= promote_success_threshold:
             env._point_goal_curriculum_progress = min(env._point_goal_curriculum_progress + progress_step, 1.0)
+        elif success_ema <= demote_success_threshold:
+            env._point_goal_curriculum_progress = max(env._point_goal_curriculum_progress - progress_step, 0.0)
         env._point_goal_curriculum_last_update_step = env.common_step_counter
 
     progress = float(env._point_goal_curriculum_progress)
@@ -506,12 +510,14 @@ def point_goal_reward_levels(
     start_heading_slow_down_distance: float = 0.35,
     final_heading_slow_down_distance: float = 0.60,
     promote_success_threshold: float = 0.75,
+    demote_success_threshold: float = 0.60,
 ):
     del env_ids
     progress, progress_tensor = _point_goal_curriculum_progress(
         env,
         num_curriculum_episodes,
         promote_success_threshold=promote_success_threshold,
+        demote_success_threshold=demote_success_threshold,
     )
 
     env._point_goal_success_distance = _lerp_scalar(start_success_distance, final_success_distance, progress)

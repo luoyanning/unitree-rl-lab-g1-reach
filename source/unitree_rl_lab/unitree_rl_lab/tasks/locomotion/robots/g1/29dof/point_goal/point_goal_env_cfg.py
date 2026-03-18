@@ -50,14 +50,17 @@ STOP_DISTANCE_START = 0.30
 SLOW_DOWN_DISTANCE_START = 0.45
 HEADING_SLOW_DOWN_DISTANCE_START = 0.35
 POINT_GOAL_CURRICULUM_PROMOTE_SUCCESS = 0.80
+POINT_GOAL_CURRICULUM_DEMOTE_SUCCESS = 0.62
 PER_TARGET_TIMEOUT_S = 4.5
 POINT_GOAL_START_RADIUS = (0.30, 0.50)
 POINT_GOAL_MID_RADIUS = (0.35, 0.75)
+POINT_GOAL_LATE_RADIUS = (0.38, 0.90)
 POINT_GOAL_FINAL_RADIUS = (0.40, 1.00)
 POINT_GOAL_START_ANGLE = (0.0, 0.0)
 POINT_GOAL_MID_ANGLE = (-math.radians(20.0), math.radians(20.0))
+POINT_GOAL_LATE_ANGLE = (-math.radians(60.0), math.radians(60.0))
 POINT_GOAL_FINAL_ANGLE = (-math.radians(90.0), math.radians(90.0))
-POINT_GOAL_CURRICULUM_EPISODES = 24
+POINT_GOAL_CURRICULUM_EPISODES = 48
 
 
 @configclass
@@ -69,11 +72,14 @@ class PointGoalCurriculumCfg(BaseCurriculumCfg):
             "num_curriculum_episodes": POINT_GOAL_CURRICULUM_EPISODES,
             "start_radius_range": POINT_GOAL_START_RADIUS,
             "mid_radius_range": POINT_GOAL_MID_RADIUS,
+            "late_radius_range": POINT_GOAL_LATE_RADIUS,
             "final_radius_range": POINT_GOAL_FINAL_RADIUS,
             "start_angle_range": POINT_GOAL_START_ANGLE,
             "mid_angle_range": POINT_GOAL_MID_ANGLE,
+            "late_angle_range": POINT_GOAL_LATE_ANGLE,
             "final_angle_range": POINT_GOAL_FINAL_ANGLE,
             "promote_success_threshold": POINT_GOAL_CURRICULUM_PROMOTE_SUCCESS,
+            "demote_success_threshold": POINT_GOAL_CURRICULUM_DEMOTE_SUCCESS,
         },
     )
     point_goal_reward_levels = CurrTerm(
@@ -110,6 +116,7 @@ class PointGoalCurriculumCfg(BaseCurriculumCfg):
             "start_heading_slow_down_distance": HEADING_SLOW_DOWN_DISTANCE_START,
             "final_heading_slow_down_distance": 0.60,
             "promote_success_threshold": POINT_GOAL_CURRICULUM_PROMOTE_SUCCESS,
+            "demote_success_threshold": POINT_GOAL_CURRICULUM_DEMOTE_SUCCESS,
         },
     )
 

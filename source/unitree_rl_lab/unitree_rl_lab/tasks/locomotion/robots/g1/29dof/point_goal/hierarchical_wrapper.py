@@ -137,6 +137,9 @@ class HierarchicalPointGoalVecEnv:
         self._terminal_max_ang_vel_z = float(command_cfg.terminal_max_ang_vel_z)
         self._terminal_settle_lin_vel_x = float(command_cfg.terminal_settle_lin_vel_x)
         self._terminal_settle_reverse_lin_vel_x = float(command_cfg.terminal_settle_reverse_lin_vel_x)
+        self._stand_blend_speed = 0.25
+        self._stand_blend_yaw_rate = 0.75
+        self._stand_min_blend = 0.35
 
     def __getattr__(self, name: str):
         return getattr(self.low_level_env, name)
@@ -194,6 +197,37 @@ class HierarchicalPointGoalVecEnv:
             capped_command[settle_latched, 1] = 0.0
             capped_command[settle_latched, 2] = 0.0
         return capped_command
+
+    def _apply_low_level_terminal_stand_controller(self, low_level_actions: torch.Tensor) -> torch.Tensor:
+        terminal_latched = getattr(
+            self.base_env,
+            "_point_goal_terminal_latched",
+            torch.zeros(self.num_envs, dtype=torch.bool, device=self.device),
+        )
+        if not torch.any(terminal_latched):
+            command_term = self.base_env.command_manager.get_term(self.command_name)
+            command_term.metrics.setdefault("low_level_stand_blend", torch.zeros(self.num_envs, device=self.device))
+            command_term.metrics["low_level_stand_blend"].zero_()
+            return low_level_actions
+
+        robot: Articulation = self.base_env.scene["robot"]
+        base_speed = torch.linalg.norm(robot.data.root_lin_vel_w[:, :2], dim=-1)
+        yaw_rate = torch.abs(robot.data.root_ang_vel_w[:, 2])
+        speed_settle = torch.clamp(1.0 - base_speed / self._stand_blend_speed, min=0.0, max=1.0)
+        yaw_settle = torch.clamp(1.0 - yaw_rate / self._stand_blend_yaw_rate, min=0.0, max=1.0)
+        stand_blend = torch.where(
+            terminal_latched,
+            self._stand_min_blend + (1.0 - self._stand_min_blend) * torch.minimum(speed_settle, yaw_settle),
+            torch.zeros_like(base_speed),
+        )
+        hard_stand = terminal_latched & (base_speed < 0.12) & (yaw_rate < 0.30)
+        stand_blend = torch.where(hard_stand, torch.ones_like(stand_blend), stand_blend)
+
+        command_term = self.base_env.command_manager.get_term(self.command_name)
+        command_term.metrics.setdefault("low_level_stand_blend", torch.zeros(self.num_envs, device=self.device))
+        command_term.metrics["low_level_stand_blend"][:] = stand_blend
+
+        return (1.0 - stand_blend.unsqueeze(-1)) * low_level_actions
 
     def _inject_policy_command(self, observations: torch.Tensor, policy_command: torch.Tensor) -> torch.Tensor:
         if observations.shape[1] != self.low_level_obs_dim:
@@ -309,6 +343,7 @@ class HierarchicalPointGoalVecEnv:
         low_level_obs = self._inject_policy_command(low_level_obs, policy_command)
         with torch.inference_mode():
             low_level_actions = self.low_level_actor(low_level_obs)
+        low_level_actions = self._apply_low_level_terminal_stand_controller(low_level_actions)
 
         low_level_result = self.low_level_env.step(low_level_actions)
         if len(low_level_result) != 4:

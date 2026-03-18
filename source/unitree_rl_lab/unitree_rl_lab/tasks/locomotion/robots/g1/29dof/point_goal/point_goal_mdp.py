@@ -548,26 +548,29 @@ def point_goal_reward_levels(
     )
 
     command_term = env.command_manager.get_term(command_name)
-    command_term.cfg.hold_position_distance = _lerp_scalar(
-        start_hold_position_distance,
-        final_hold_position_distance,
-        progress,
+    scheduled_hold_position_distance = max(
+        _lerp_scalar(start_hold_position_distance, final_hold_position_distance, progress),
+        env._point_goal_success_distance + 0.01,
     )
-    command_term.cfg.stop_distance = _lerp_scalar(
-        start_stop_distance,
-        final_stop_distance,
-        progress,
+    scheduled_stop_distance = max(
+        _lerp_scalar(start_stop_distance, final_stop_distance, progress),
+        scheduled_hold_position_distance + 0.07,
     )
-    command_term.cfg.slow_down_distance = _lerp_scalar(
-        start_slow_down_distance,
-        final_slow_down_distance,
-        progress,
+    scheduled_slow_down_distance = max(
+        _lerp_scalar(start_slow_down_distance, final_slow_down_distance, progress),
+        scheduled_stop_distance + 0.18,
     )
-    command_term.cfg.heading_slow_down_distance = _lerp_scalar(
-        start_heading_slow_down_distance,
-        final_heading_slow_down_distance,
-        progress,
+    scheduled_heading_slow_down_distance = max(
+        _lerp_scalar(start_heading_slow_down_distance, final_heading_slow_down_distance, progress),
+        scheduled_stop_distance + 0.05,
     )
+    scheduled_near_recovery_distance = scheduled_hold_position_distance + 0.02
+
+    command_term.cfg.hold_position_distance = scheduled_hold_position_distance
+    command_term.cfg.stop_distance = scheduled_stop_distance
+    command_term.cfg.slow_down_distance = scheduled_slow_down_distance
+    command_term.cfg.heading_slow_down_distance = scheduled_heading_slow_down_distance
+    command_term.cfg.near_recovery_distance = scheduled_near_recovery_distance
     command_term.metrics.setdefault("scheduled_success_distance", torch.zeros(env.num_envs, device=env.device))
     command_term.metrics.setdefault("scheduled_success_hold_steps", torch.zeros(env.num_envs, device=env.device))
     command_term.metrics.setdefault("scheduled_stop_velocity_threshold", torch.zeros(env.num_envs, device=env.device))
@@ -578,6 +581,7 @@ def point_goal_reward_levels(
     command_term.metrics.setdefault("scheduled_hold_position_distance", torch.zeros(env.num_envs, device=env.device))
     command_term.metrics.setdefault("scheduled_stop_distance", torch.zeros(env.num_envs, device=env.device))
     command_term.metrics.setdefault("scheduled_slow_down_distance", torch.zeros(env.num_envs, device=env.device))
+    command_term.metrics.setdefault("scheduled_near_recovery_distance", torch.zeros(env.num_envs, device=env.device))
     command_term.metrics["scheduled_success_distance"][:] = env._point_goal_success_distance
     command_term.metrics["scheduled_success_hold_steps"][:] = float(env._point_goal_success_hold_steps)
     command_term.metrics["scheduled_stop_velocity_threshold"][:] = env._point_goal_stop_velocity_threshold
@@ -585,9 +589,10 @@ def point_goal_reward_levels(
     command_term.metrics["scheduled_goal_stop_near_distance"][:] = env._point_goal_goal_stop_near_distance
     command_term.metrics["scheduled_goal_success_scale"][:] = env._point_goal_goal_success_scale
     command_term.metrics["curriculum_success_ema"][:] = float(env._point_goal_curriculum_success_ema)
-    command_term.metrics["scheduled_hold_position_distance"][:] = command_term.cfg.hold_position_distance
-    command_term.metrics["scheduled_stop_distance"][:] = command_term.cfg.stop_distance
-    command_term.metrics["scheduled_slow_down_distance"][:] = command_term.cfg.slow_down_distance
+    command_term.metrics["scheduled_hold_position_distance"][:] = scheduled_hold_position_distance
+    command_term.metrics["scheduled_stop_distance"][:] = scheduled_stop_distance
+    command_term.metrics["scheduled_slow_down_distance"][:] = scheduled_slow_down_distance
+    command_term.metrics["scheduled_near_recovery_distance"][:] = scheduled_near_recovery_distance
     return progress_tensor
 
 

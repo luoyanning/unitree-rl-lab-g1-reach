@@ -45,6 +45,10 @@ GOAL_STOP_SCALE_START = 0.5
 GOAL_SUCCESS_SCALE_START = 2.0
 GOAL_TIME_PENALTY_SCALE_START = 0.8
 GOAL_TIMEOUT_PENALTY_SCALE_START = 0.75
+HOLD_POSITION_DISTANCE_START = 0.18
+STOP_DISTANCE_START = 0.30
+SLOW_DOWN_DISTANCE_START = 0.45
+HEADING_SLOW_DOWN_DISTANCE_START = 0.35
 POINT_GOAL_CURRICULUM_PROMOTE_SUCCESS = 0.80
 PER_TARGET_TIMEOUT_S = 4.5
 POINT_GOAL_START_RADIUS = (0.30, 0.50)
@@ -97,6 +101,14 @@ class PointGoalCurriculumCfg(BaseCurriculumCfg):
             "final_goal_time_penalty_scale": 1.0,
             "start_goal_timeout_penalty_scale": GOAL_TIMEOUT_PENALTY_SCALE_START,
             "final_goal_timeout_penalty_scale": 1.0,
+            "start_hold_position_distance": HOLD_POSITION_DISTANCE_START,
+            "final_hold_position_distance": 0.08,
+            "start_stop_distance": STOP_DISTANCE_START,
+            "final_stop_distance": 0.20,
+            "start_slow_down_distance": SLOW_DOWN_DISTANCE_START,
+            "final_slow_down_distance": 0.55,
+            "start_heading_slow_down_distance": HEADING_SLOW_DOWN_DISTANCE_START,
+            "final_heading_slow_down_distance": 0.60,
             "promote_success_threshold": POINT_GOAL_CURRICULUM_PROMOTE_SUCCESS,
         },
     )
@@ -127,10 +139,10 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
             max_lin_vel_x=0.45,
             max_lin_vel_y=0.18,
             max_ang_vel_z=0.30,
-            slow_down_distance=0.55,
-            stop_distance=0.35,
-            heading_slow_down_distance=0.6,
-            hold_position_distance=0.08,
+            slow_down_distance=SLOW_DOWN_DISTANCE_START,
+            stop_distance=STOP_DISTANCE_START,
+            heading_slow_down_distance=HEADING_SLOW_DOWN_DISTANCE_START,
+            hold_position_distance=HOLD_POSITION_DISTANCE_START,
             near_recovery_distance=0.18,
             recovery_turn_threshold=1.05,
             heading_block_threshold=1.65,

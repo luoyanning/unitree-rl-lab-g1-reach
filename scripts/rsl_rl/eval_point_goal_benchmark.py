@@ -22,10 +22,14 @@ import cli_args  # isort: skip
 
 
 parser = argparse.ArgumentParser(description="Benchmark a low-level G1 point-goal checkpoint on fixed targets.")
+parser.add_argument("--video", action="store_true", default=False, help="Record a video during benchmark playback.")
+parser.add_argument("--video_length", type=int, default=2000, help="Recorded video length in steps.")
 parser.add_argument("--task", type=str, default="Unitree-G1-29dof-PointGoal-v0", help="Task name.")
 parser.add_argument("--disable_fabric", action="store_true", default=False, help="Disable fabric.")
 parser.add_argument("--num_envs", type=int, default=16, help="Number of parallel environments.")
 parser.add_argument("--episodes_per_case", type=int, default=20, help="Episodes per distance-angle case.")
+parser.add_argument("--case_distance", type=float, default=None, help="If set, evaluate only this one target distance.")
+parser.add_argument("--case_angle_deg", type=float, default=None, help="If set, evaluate only this one target angle.")
 parser.add_argument(
     "--distances",
     type=str,
@@ -94,10 +98,18 @@ parser.add_argument(
     default=None,
     help="Directory for benchmark outputs. Defaults to <run_dir>/benchmark_v1/<timestamp>.",
 )
+parser.add_argument(
+    "--world_camera",
+    action="store_true",
+    default=False,
+    help="Use a fixed world camera instead of following the robot.",
+)
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time if possible.")
 cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
+if args_cli.video:
+    args_cli.enable_cameras = True
 
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -253,6 +265,10 @@ def _configure_benchmark_env(env_cfg, timeout_s: float):
     ]:
         if hasattr(env_cfg.terminations, attr_name):
             setattr(env_cfg.terminations, attr_name, None)
+    if getattr(args_cli, "world_camera", False):
+        env_cfg.viewer.origin_type = "world"
+        env_cfg.viewer.eye = (3.7, -4.3, 2.4)
+        env_cfg.viewer.lookat = (1.0, -0.2, 1.0)
 
 
 def _apply_benchmark_progress(env, progress: float, command_name: str = "base_velocity") -> dict[str, float]:
@@ -358,8 +374,8 @@ def _get_output_dir(resume_path: str) -> str:
 
 
 def main():
-    distances = _parse_float_list(args_cli.distances)
-    angles_deg = _parse_float_list(args_cli.angles_deg)
+    distances = [float(args_cli.case_distance)] if args_cli.case_distance is not None else _parse_float_list(args_cli.distances)
+    angles_deg = [float(args_cli.case_angle_deg)] if args_cli.case_angle_deg is not None else _parse_float_list(args_cli.angles_deg)
     benchmark_cases = _build_cases(distances, angles_deg)
 
     env_cfg = parse_env_cfg(
@@ -375,9 +391,17 @@ def main():
     output_dir = _get_output_dir(resume_path)
     os.makedirs(output_dir, exist_ok=True)
 
-    env = gym.make(args_cli.task, cfg=env_cfg)
+    env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
     if isinstance(env.unwrapped, DirectMARLEnv):
         env = multi_agent_to_single_agent(env)
+    if args_cli.video:
+        video_kwargs = {
+            "video_folder": os.path.join(output_dir, "videos"),
+            "step_trigger": lambda step: step == 0,
+            "video_length": args_cli.video_length,
+            "disable_logger": True,
+        }
+        env = gym.wrappers.RecordVideo(env, **video_kwargs)
     vec_env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
     print(f"[INFO] Loading model checkpoint from: {resume_path}")

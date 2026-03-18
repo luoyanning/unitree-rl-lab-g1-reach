@@ -44,8 +44,8 @@ POST_SWITCH_STEPS = 30
 SUCCESS_ENTER_RADIUS = 0.08
 SUCCESS_EXIT_RADIUS = 0.12
 SUCCESS_HOLD_STEPS = 1
-POST_SUCCESS_DWELL_STEPS = 20
-POST_SUCCESS_DWELL_EXIT_RADIUS = 0.12
+POST_SUCCESS_DWELL_STEPS = 12
+POST_SUCCESS_DWELL_EXIT_RADIUS = 0.14
 NEAR_SUCCESS_PENALTY_RADIUS = 0.14
 NEAR_SUCCESS_PENALTY_SCALE = 0.05
 ADAPTER_GATE_STD = 0.04
@@ -317,22 +317,24 @@ class RobotLeftHandLocoReachAdapterAcquireTightStaySoftDwellHardStartStablePoseE
         )
         self.rewards.dwell_right_arm_neutral = RewTerm(
             func=dwell_right_arm_neutral_reward,
-            weight=3.0,
+            weight=1.5,
             params={
                 "asset_cfg": right_arm_cfg,
                 **long_horizon_params,
-                "joint_dev_scale": 0.24,
+                "joint_dev_scale": 0.30,
+                "activation_progress": 0.5,
             },
         )
         self.rewards.dwell_stationary = RewTerm(
             func=dwell_stationary_reward,
-            weight=4.0,
+            weight=2.0,
             params={
                 "asset_cfg": feet_cfg,
                 **long_horizon_params,
-                "base_lin_speed_scale": 0.08,
-                "base_ang_speed_scale": 0.22,
-                "foot_speed_scale": 0.06,
+                "base_lin_speed_scale": 0.12,
+                "base_ang_speed_scale": 0.28,
+                "foot_speed_scale": 0.08,
+                "activation_progress": 0.5,
             },
         )
         self.rewards.left_hand_position_tracking = RewTerm(

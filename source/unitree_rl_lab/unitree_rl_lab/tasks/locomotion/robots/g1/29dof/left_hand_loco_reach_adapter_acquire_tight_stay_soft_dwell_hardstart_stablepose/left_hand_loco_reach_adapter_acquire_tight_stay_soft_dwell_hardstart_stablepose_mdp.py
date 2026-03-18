@@ -44,6 +44,16 @@ def _dwell_gate_and_progress(env, post_success_dwell_steps: int):
     return dwell_gate, dwell_progress
 
 
+def _late_dwell_gate(env, post_success_dwell_steps: int, activation_progress: float):
+    dwell_gate, dwell_progress = _dwell_gate_and_progress(env, post_success_dwell_steps)
+    late_progress = torch.clamp(
+        (dwell_progress - float(activation_progress)) / max(1.0e-6, 1.0 - float(activation_progress)),
+        min=0.0,
+        max=1.0,
+    )
+    return dwell_gate, dwell_progress, late_progress
+
+
 def _compute_adapter_command(
     env,
     x_range: tuple[float, float],
@@ -1054,6 +1064,7 @@ def dwell_right_arm_neutral_reward(
     sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
     sample_weights: dict[str, float] | None = None,
     joint_dev_scale: float = 0.30,
+    activation_progress: float = 0.5,
 ):
     _sync_adapter_hold_stay_state(
         env,
@@ -1077,8 +1088,10 @@ def dwell_right_arm_neutral_reward(
         torch.abs(robot.data.joint_pos[:, asset_cfg.joint_ids] - robot.data.default_joint_pos[:, asset_cfg.joint_ids]),
         dim=1,
     )
-    dwell_gate, dwell_progress = _dwell_gate_and_progress(env, post_success_dwell_steps)
-    return dwell_gate * torch.exp(-joint_dev / joint_dev_scale) * dwell_progress
+    dwell_gate, _dwell_progress, late_progress = _late_dwell_gate(
+        env, post_success_dwell_steps, activation_progress
+    )
+    return dwell_gate * torch.exp(-joint_dev / joint_dev_scale) * late_progress
 
 
 def dwell_stationary_reward(
@@ -1101,6 +1114,7 @@ def dwell_stationary_reward(
     base_lin_speed_scale: float = 0.10,
     base_ang_speed_scale: float = 0.30,
     foot_speed_scale: float = 0.08,
+    activation_progress: float = 0.5,
 ):
     _sync_adapter_hold_stay_state(
         env,
@@ -1124,13 +1138,15 @@ def dwell_stationary_reward(
     base_ang_speed = torch.linalg.norm(robot.data.root_ang_vel_w[:, :3], dim=-1)
     foot_vel_xy = robot.data.body_lin_vel_w[:, asset_cfg.body_ids, :2] - robot.data.root_lin_vel_w[:, None, :2]
     foot_speed = torch.linalg.norm(foot_vel_xy, dim=-1).mean(dim=1)
-    dwell_gate, dwell_progress = _dwell_gate_and_progress(env, post_success_dwell_steps)
+    dwell_gate, _dwell_progress, late_progress = _late_dwell_gate(
+        env, post_success_dwell_steps, activation_progress
+    )
     stability = (
         torch.exp(-base_lin_speed / base_lin_speed_scale)
         * torch.exp(-base_ang_speed / base_ang_speed_scale)
         * torch.exp(-foot_speed / foot_speed_scale)
     )
-    return dwell_gate * stability * dwell_progress
+    return dwell_gate * stability * late_progress
 
 
 def near_target_action_rate_l2(

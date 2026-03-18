@@ -3,12 +3,11 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Train G1 point-goal navigation with a frozen velocity-policy low-level controller."""
+"""Train G1 point-goal navigation by warm-starting from the velocity policy."""
 
 """Launch Isaac Sim Simulator first."""
 
 import argparse
-import importlib
 import importlib.metadata as metadata
 import inspect
 import os
@@ -92,11 +91,6 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import unitree_rl_lab.tasks  # noqa: F401
 from unitree_rl_lab.utils.export_deploy_cfg import export_deploy_cfg
-
-importlib.import_module("unitree_rl_lab.tasks.locomotion.robots.g1.29dof.point_goal")
-HierarchicalPointGoalVecEnv = importlib.import_module(
-    "unitree_rl_lab.tasks.locomotion.robots.g1.29dof.point_goal.hierarchical_wrapper"
-).HierarchicalPointGoalVecEnv
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -314,11 +308,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         resume_path = resolve_resume_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
     else:
         resume_path = None
-    low_level_checkpoint_path = retrieve_file_path(args_cli.init_checkpoint) if args_cli.init_checkpoint else None
-    if low_level_checkpoint_path is None:
-        raise ValueError(
-            "Point-goal training now requires --init_checkpoint to specify the frozen low-level velocity policy."
-        )
+    warm_start_checkpoint_path = retrieve_file_path(args_cli.init_checkpoint) if args_cli.init_checkpoint else None
 
     if args_cli.video:
         video_kwargs = {
@@ -331,12 +321,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print_dict(video_kwargs, nesting=4)
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
-    low_level_env = RslRlVecEnvWrapper(env, clip_actions=1.0)
-    env = HierarchicalPointGoalVecEnv(
-        low_level_env,
-        low_level_checkpoint_path=low_level_checkpoint_path,
-        clip_actions=agent_cfg.clip_actions,
-    )
+    env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
     agent_cfg_dict = agent_cfg.to_dict()
     if not agent_cfg_dict.get("obs_groups"):
         agent_cfg_dict["obs_groups"] = {"policy": ["policy"], "critic": ["critic"]}
@@ -344,12 +329,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     runner.add_git_repo_to_log(__file__)
 
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
-        print(f"[INFO]: Loading high-level adapter checkpoint from: {resume_path}")
+        print(f"[INFO]: Loading point-goal checkpoint from: {resume_path}")
         runner.load(resume_path)
-        install_positive_std_guard(runner, std_min=0.05, std_max=0.25, freeze_std=True)
+        install_positive_std_guard(runner, std_min=0.05, std_max=0.20, freeze_std=True)
     else:
-        print(f"[INFO]: Using frozen low-level velocity checkpoint: {low_level_checkpoint_path}")
-        install_positive_std_guard(runner, std_min=0.05, std_max=0.25, freeze_std=True)
+        if warm_start_checkpoint_path is not None:
+            print(f"[INFO]: Initializing model weights from checkpoint: {warm_start_checkpoint_path}")
+            load_policy_weights_only(
+                runner,
+                warm_start_checkpoint_path,
+                task_name=args_cli.task,
+                init_noise_std=agent_cfg.policy.init_noise_std,
+            )
+            install_actor_grad_scale(runner, scale=0.1)
+        install_positive_std_guard(runner, std_min=0.05, std_max=0.20, freeze_std=True)
 
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)

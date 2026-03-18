@@ -1,30 +1,32 @@
+import math
 import os
 
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import TerminationTermCfg as DoneTerm
+from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
 from unitree_rl_lab.tasks.locomotion import mdp
 
+from ..velocity_env_cfg import CurriculumCfg as BaseCurriculumCfg
 from ..velocity_env_cfg import RobotEnvCfg
 from .point_goal_mdp import (
     PointGoalCommandCfg,
     point_goal_distance_obs,
     point_goal_heading_error_obs,
-    point_goal_policy_command_obs,
     point_goal_progress_reward,
     point_goal_rel_body_xy,
     point_goal_root_pos_env,
     point_goal_stop_reward,
     point_goal_success,
     point_goal_success_bonus,
+    point_goal_target_levels,
     point_goal_target_timeout,
     point_goal_target_pos_env,
     point_goal_time_penalty,
     point_goal_timeout_penalty,
-    track_policy_command_ang_vel_z_exp,
-    track_policy_command_lin_vel_xy_exp,
 )
 
 
@@ -33,10 +35,36 @@ SUCCESS_HOLD_STEPS = 8
 STOP_VELOCITY_THRESHOLD = 0.10
 STOP_YAW_RATE_THRESHOLD = 0.25
 PER_TARGET_TIMEOUT_S = 4.5
+POINT_GOAL_START_RADIUS = (0.30, 0.70)
+POINT_GOAL_MID_RADIUS = (0.35, 1.00)
+POINT_GOAL_FINAL_RADIUS = (0.40, 1.50)
+POINT_GOAL_START_ANGLE = (-math.radians(15.0), math.radians(15.0))
+POINT_GOAL_MID_ANGLE = (-math.radians(60.0), math.radians(60.0))
+POINT_GOAL_FINAL_ANGLE = (-math.pi, math.pi)
+POINT_GOAL_CURRICULUM_EPISODES = 12
+
+
+@configclass
+class PointGoalCurriculumCfg(BaseCurriculumCfg):
+    point_goal_target_levels = CurrTerm(
+        func=point_goal_target_levels,
+        params={
+            "command_name": "base_velocity",
+            "num_curriculum_episodes": POINT_GOAL_CURRICULUM_EPISODES,
+            "start_radius_range": POINT_GOAL_START_RADIUS,
+            "mid_radius_range": POINT_GOAL_MID_RADIUS,
+            "final_radius_range": POINT_GOAL_FINAL_RADIUS,
+            "start_angle_range": POINT_GOAL_START_ANGLE,
+            "mid_angle_range": POINT_GOAL_MID_ANGLE,
+            "final_angle_range": POINT_GOAL_FINAL_ANGLE,
+        },
+    )
 
 
 @configclass
 class RobotPointGoalEnvCfg(RobotEnvCfg):
+    curriculum: PointGoalCurriculumCfg = PointGoalCurriculumCfg()
+
     def __post_init__(self):
         super().__post_init__()
 
@@ -49,8 +77,8 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
             asset_name="robot",
             resampling_time_range=(self.episode_length_s, self.episode_length_s),
             debug_vis=True,
-            radius_range=(0.30, 0.70),
-            angle_range=(0.0, 0.0),
+            radius_range=POINT_GOAL_START_RADIUS,
+            angle_range=POINT_GOAL_START_ANGLE,
             forward_gain=0.8,
             lateral_gain=0.4,
             heading_gain=1.6,
@@ -85,6 +113,25 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
         self.events.reset_base.params["pose_range"] = {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)}
         self.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
 
+        self.observations.policy.point_goal_target_world = ObsTerm(
+            func=point_goal_target_pos_env,
+            params={"command_name": "base_velocity"},
+        )
+        self.observations.policy.point_goal_root_world = ObsTerm(
+            func=point_goal_root_pos_env,
+        )
+        self.observations.policy.point_goal_rel_body = ObsTerm(
+            func=point_goal_rel_body_xy,
+            params={"command_name": "base_velocity"},
+        )
+        self.observations.policy.point_goal_distance = ObsTerm(
+            func=point_goal_distance_obs,
+            params={"command_name": "base_velocity"},
+        )
+        self.observations.policy.point_goal_heading = ObsTerm(
+            func=point_goal_heading_error_obs,
+            params={"command_name": "base_velocity"},
+        )
         self.observations.critic.point_goal_target_world = ObsTerm(
             func=point_goal_target_pos_env,
             params={"command_name": "base_velocity"},
@@ -104,34 +151,87 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
             func=point_goal_heading_error_obs,
             params={"command_name": "base_velocity"},
         )
-        self.observations.critic.policy_command = ObsTerm(
-            func=point_goal_policy_command_obs,
-        )
 
-        # For hierarchical training the high-level policy should optimize task completion,
-        # not "easy-to-track" low-level commands or survival bonuses.
-        self.rewards.track_lin_vel_xy = None
-        self.rewards.track_ang_vel_z = None
-        self.rewards.alive = None
+        self.rewards.track_lin_vel_xy = RewTerm(
+            func=mdp.track_lin_vel_xy_yaw_frame_exp,
+            weight=1.0,
+            params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
+        )
+        self.rewards.track_ang_vel_z = RewTerm(
+            func=mdp.track_ang_vel_z_exp,
+            weight=0.2,
+            params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
+        )
+        self.rewards.alive = RewTerm(func=mdp.is_alive, weight=0.15)
         self.rewards.action_rate = None
-        self.rewards.gait = None
-        self.rewards.feet_clearance = None
-        self.rewards.base_linear_velocity = None
-        self.rewards.base_angular_velocity = None
-        self.rewards.joint_vel = None
-        self.rewards.joint_acc = None
-        self.rewards.dof_pos_limits = None
-        self.rewards.energy = None
-        self.rewards.joint_deviation_arms = None
-        self.rewards.joint_deviation_waists = None
-        self.rewards.joint_deviation_legs = None
-        self.rewards.feet_slide = None
-        self.rewards.flat_orientation_l2.weight = -2.0
-        self.rewards.base_height.weight = -4.0
-        self.rewards.undesired_contacts.weight = -1.0
+        self.rewards.base_linear_velocity = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
+        self.rewards.base_angular_velocity = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
+        self.rewards.joint_vel = RewTerm(func=mdp.joint_vel_l2, weight=-0.001)
+        self.rewards.joint_acc = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
+        self.rewards.dof_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=-5.0)
+        self.rewards.energy = RewTerm(func=mdp.energy, weight=-2e-5)
+        self.rewards.joint_deviation_arms = RewTerm(
+            func=mdp.joint_deviation_l1,
+            weight=-0.05,
+            params={
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    joint_names=[".*_shoulder_.*_joint", ".*_elbow_joint", ".*_wrist_.*"],
+                )
+            },
+        )
+        self.rewards.joint_deviation_waists = RewTerm(
+            func=mdp.joint_deviation_l1,
+            weight=-0.8,
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=["waist.*"])},
+        )
+        self.rewards.joint_deviation_legs = RewTerm(
+            func=mdp.joint_deviation_l1,
+            weight=-0.8,
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_roll_joint", ".*_hip_yaw_joint"])},
+        )
+        self.rewards.flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-10.0)
+        self.rewards.base_height = RewTerm(func=mdp.base_height_l2, weight=-18.0, params={"target_height": 0.78})
+        self.rewards.gait = RewTerm(
+            func=mdp.feet_gait,
+            weight=0.4,
+            params={
+                "period": 0.8,
+                "offset": [0.0, 0.5],
+                "threshold": 0.55,
+                "command_name": "base_velocity",
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_roll.*"),
+            },
+        )
+        self.rewards.feet_slide = RewTerm(
+            func=mdp.feet_slide,
+            weight=-0.2,
+            params={
+                "asset_cfg": SceneEntityCfg("robot", body_names=".*ankle_roll.*"),
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_roll.*"),
+            },
+        )
+        self.rewards.feet_clearance = RewTerm(
+            func=mdp.foot_clearance_reward,
+            weight=0.5,
+            params={
+                "std": 0.05,
+                "tanh_mult": 2.0,
+                "target_height": 0.1,
+                "asset_cfg": SceneEntityCfg("robot", body_names=".*ankle_roll.*"),
+            },
+        )
+        self.rewards.undesired_contacts = RewTerm(
+            func=mdp.undesired_contacts,
+            weight=-3.0,
+            params={
+                "threshold": 1,
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["(?!.*ankle.*).*"]),
+            },
+        )
         self.rewards.goal_progress = RewTerm(
             func=point_goal_progress_reward,
-            weight=60.0,
+            weight=6.0,
             params={
                 "command_name": "base_velocity",
                 "success_distance": SUCCESS_DISTANCE,
@@ -140,7 +240,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
                 "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
                 "per_target_timeout_s": PER_TARGET_TIMEOUT_S,
                 "clip_value": 0.08,
-                "positive_scale": 2.0,
+                "positive_scale": 1.5,
                 "regress_scale": 2.0,
             },
         )
@@ -148,7 +248,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
         self.rewards.goal_distance = None
         self.rewards.goal_stop = RewTerm(
             func=point_goal_stop_reward,
-            weight=8.0,
+            weight=2.0,
             params={
                 "command_name": "base_velocity",
                 "success_distance": SUCCESS_DISTANCE,
@@ -156,13 +256,13 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
                 "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
                 "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
                 "per_target_timeout_s": PER_TARGET_TIMEOUT_S,
-                "near_distance": 0.18,
+                "near_distance": 0.20,
             },
         )
         self.rewards.goal_heading_align = None
         self.rewards.goal_time_penalty = RewTerm(
             func=point_goal_time_penalty,
-            weight=-0.20,
+            weight=-0.05,
             params={
                 "command_name": "base_velocity",
                 "success_distance": SUCCESS_DISTANCE,
@@ -174,7 +274,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
         )
         self.rewards.goal_timeout_penalty = RewTerm(
             func=point_goal_timeout_penalty,
-            weight=-60.0,
+            weight=-10.0,
             params={
                 "command_name": "base_velocity",
                 "success_distance": SUCCESS_DISTANCE,
@@ -186,7 +286,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
         )
         self.rewards.goal_success = RewTerm(
             func=point_goal_success_bonus,
-            weight=120.0,
+            weight=25.0,
             params={
                 "command_name": "base_velocity",
                 "success_distance": SUCCESS_DISTANCE,

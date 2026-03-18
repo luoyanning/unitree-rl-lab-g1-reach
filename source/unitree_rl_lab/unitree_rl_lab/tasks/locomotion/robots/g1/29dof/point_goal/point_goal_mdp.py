@@ -393,6 +393,55 @@ def point_goal_heading_error_obs(env, command_name: str = "base_velocity") -> to
     return torch.stack((torch.sin(heading_error), torch.cos(heading_error)), dim=-1)
 
 
+def point_goal_target_levels(
+    env,
+    env_ids: Sequence[int],
+    command_name: str = "base_velocity",
+    num_curriculum_episodes: int = 12,
+    start_radius_range: tuple[float, float] = (0.30, 0.70),
+    mid_radius_range: tuple[float, float] = (0.35, 1.00),
+    final_radius_range: tuple[float, float] = (0.40, 1.50),
+    start_angle_range: tuple[float, float] = (-math.pi / 12.0, math.pi / 12.0),
+    mid_angle_range: tuple[float, float] = (-math.pi / 3.0, math.pi / 3.0),
+    final_angle_range: tuple[float, float] = (-math.pi, math.pi),
+):
+    del env_ids
+    command_term = env.command_manager.get_term(command_name)
+    cfg = command_term.cfg
+
+    progress = min(env.common_step_counter / (env.max_episode_length * max(num_curriculum_episodes, 1)), 1.0)
+    progress_tensor = torch.tensor(progress, device=env.device)
+    halfway_tensor = torch.tensor(0.5, device=env.device)
+
+    if env.common_step_counter % env.max_episode_length == 0:
+        if progress <= 0.5:
+            phase_progress = progress_tensor / halfway_tensor
+            cfg.radius_range = torch.lerp(
+                torch.tensor(start_radius_range, device=env.device),
+                torch.tensor(mid_radius_range, device=env.device),
+                phase_progress,
+            ).tolist()
+            cfg.angle_range = torch.lerp(
+                torch.tensor(start_angle_range, device=env.device),
+                torch.tensor(mid_angle_range, device=env.device),
+                phase_progress,
+            ).tolist()
+        else:
+            phase_progress = (progress_tensor - halfway_tensor) / halfway_tensor
+            cfg.radius_range = torch.lerp(
+                torch.tensor(mid_radius_range, device=env.device),
+                torch.tensor(final_radius_range, device=env.device),
+                phase_progress,
+            ).tolist()
+            cfg.angle_range = torch.lerp(
+                torch.tensor(mid_angle_range, device=env.device),
+                torch.tensor(final_angle_range, device=env.device),
+                phase_progress,
+            ).tolist()
+
+    return progress_tensor
+
+
 def _episode_length_buf(env):
     if hasattr(env, "episode_length_buf"):
         return env.episode_length_buf.clone()

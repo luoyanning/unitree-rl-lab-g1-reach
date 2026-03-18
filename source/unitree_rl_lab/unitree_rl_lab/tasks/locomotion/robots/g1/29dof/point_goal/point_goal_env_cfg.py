@@ -35,9 +35,9 @@ SUCCESS_HOLD_STEPS = 8
 STOP_VELOCITY_THRESHOLD = 0.10
 STOP_YAW_RATE_THRESHOLD = 0.25
 PER_TARGET_TIMEOUT_S = 4.5
-POINT_GOAL_START_RADIUS = (0.35, 0.60)
-POINT_GOAL_MID_RADIUS = (0.35, 0.85)
-POINT_GOAL_FINAL_RADIUS = (0.40, 1.20)
+POINT_GOAL_START_RADIUS = (0.30, 0.50)
+POINT_GOAL_MID_RADIUS = (0.35, 0.75)
+POINT_GOAL_FINAL_RADIUS = (0.40, 1.00)
 POINT_GOAL_START_ANGLE = (0.0, 0.0)
 POINT_GOAL_MID_ANGLE = (-math.radians(20.0), math.radians(20.0))
 POINT_GOAL_FINAL_ANGLE = (-math.radians(90.0), math.radians(90.0))
@@ -79,14 +79,14 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
             debug_vis=True,
             radius_range=POINT_GOAL_START_RADIUS,
             angle_range=POINT_GOAL_START_ANGLE,
-            forward_gain=0.9,
+            forward_gain=1.1,
             lateral_gain=0.4,
             heading_gain=1.0,
             min_lin_vel_x=-0.12,
-            max_lin_vel_x=0.35,
+            max_lin_vel_x=0.45,
             max_lin_vel_y=0.18,
             max_ang_vel_z=0.30,
-            slow_down_distance=1.0,
+            slow_down_distance=0.55,
             stop_distance=0.35,
             heading_slow_down_distance=0.6,
             hold_position_distance=0.08,
@@ -135,15 +135,15 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
 
         self.rewards.track_lin_vel_xy = RewTerm(
             func=mdp.track_lin_vel_xy_yaw_frame_exp,
-            weight=1.0,
+            weight=0.6,
             params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
         )
         self.rewards.track_ang_vel_z = RewTerm(
             func=mdp.track_ang_vel_z_exp,
-            weight=0.2,
+            weight=0.1,
             params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
         )
-        self.rewards.alive = RewTerm(func=mdp.is_alive, weight=0.15)
+        self.rewards.alive = RewTerm(func=mdp.is_alive, weight=0.05)
         self.rewards.action_rate = None
         self.rewards.base_linear_velocity = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
         self.rewards.base_angular_velocity = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
@@ -175,7 +175,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
         self.rewards.base_height = RewTerm(func=mdp.base_height_l2, weight=-18.0, params={"target_height": 0.78})
         self.rewards.gait = RewTerm(
             func=mdp.feet_gait,
-            weight=0.4,
+            weight=0.2,
             params={
                 "period": 0.8,
                 "offset": [0.0, 0.5],
@@ -194,7 +194,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
         )
         self.rewards.feet_clearance = RewTerm(
             func=mdp.foot_clearance_reward,
-            weight=0.5,
+            weight=0.2,
             params={
                 "std": 0.05,
                 "tanh_mult": 2.0,
@@ -212,7 +212,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
         )
         self.rewards.goal_progress = RewTerm(
             func=point_goal_progress_reward,
-            weight=6.0,
+            weight=12.0,
             params={
                 "command_name": "base_velocity",
                 "success_distance": SUCCESS_DISTANCE,
@@ -221,8 +221,8 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
                 "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
                 "per_target_timeout_s": PER_TARGET_TIMEOUT_S,
                 "clip_value": 0.08,
-                "positive_scale": 1.5,
-                "regress_scale": 2.0,
+                "positive_scale": 2.5,
+                "regress_scale": 1.5,
             },
         )
         self.rewards.goal_completion = None
@@ -255,7 +255,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
         )
         self.rewards.goal_timeout_penalty = RewTerm(
             func=point_goal_timeout_penalty,
-            weight=-10.0,
+            weight=-20.0,
             params={
                 "command_name": "base_velocity",
                 "success_distance": SUCCESS_DISTANCE,
@@ -267,7 +267,7 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
         )
         self.rewards.goal_success = RewTerm(
             func=point_goal_success_bonus,
-            weight=25.0,
+            weight=60.0,
             params={
                 "command_name": "base_velocity",
                 "success_distance": SUCCESS_DISTANCE,

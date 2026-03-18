@@ -405,13 +405,17 @@ def point_goal_target_levels(
     start_angle_range: tuple[float, float] = (-math.pi / 12.0, math.pi / 12.0),
     mid_angle_range: tuple[float, float] = (-math.pi / 3.0, math.pi / 3.0),
     final_angle_range: tuple[float, float] = (-math.pi, math.pi),
+    promote_success_threshold: float = 0.75,
 ):
     del env_ids
     command_term = env.command_manager.get_term(command_name)
     cfg = command_term.cfg
 
-    progress = min(env.common_step_counter / (env.max_episode_length * max(num_curriculum_episodes, 1)), 1.0)
-    progress_tensor = torch.tensor(progress, device=env.device)
+    progress, progress_tensor = _point_goal_curriculum_progress(
+        env,
+        num_curriculum_episodes,
+        promote_success_threshold=promote_success_threshold,
+    )
     halfway_tensor = torch.tensor(0.5, device=env.device)
 
     if env.common_step_counter % env.max_episode_length == 0:
@@ -443,8 +447,24 @@ def point_goal_target_levels(
     return progress_tensor
 
 
-def _point_goal_curriculum_progress(env, num_curriculum_episodes: int) -> tuple[float, torch.Tensor]:
-    progress = min(env.common_step_counter / (env.max_episode_length * max(num_curriculum_episodes, 1)), 1.0)
+def _point_goal_curriculum_progress(
+    env,
+    num_curriculum_episodes: int,
+    promote_success_threshold: float = 0.75,
+) -> tuple[float, torch.Tensor]:
+    if not hasattr(env, "_point_goal_curriculum_progress"):
+        env._point_goal_curriculum_progress = 0.0
+        env._point_goal_curriculum_success_ema = 0.0
+        env._point_goal_curriculum_last_update_step = -1
+
+    progress_step = 1.0 / max(num_curriculum_episodes, 1)
+    should_update = env.common_step_counter % env.max_episode_length == 0
+    if should_update and env._point_goal_curriculum_last_update_step != env.common_step_counter:
+        if float(env._point_goal_curriculum_success_ema) >= promote_success_threshold:
+            env._point_goal_curriculum_progress = min(env._point_goal_curriculum_progress + progress_step, 1.0)
+        env._point_goal_curriculum_last_update_step = env.common_step_counter
+
+    progress = float(env._point_goal_curriculum_progress)
     return progress, torch.tensor(progress, device=env.device)
 
 
@@ -477,9 +497,14 @@ def point_goal_reward_levels(
     final_goal_time_penalty_scale: float = 1.0,
     start_goal_timeout_penalty_scale: float = 0.75,
     final_goal_timeout_penalty_scale: float = 1.0,
+    promote_success_threshold: float = 0.75,
 ):
     del env_ids
-    progress, progress_tensor = _point_goal_curriculum_progress(env, num_curriculum_episodes)
+    progress, progress_tensor = _point_goal_curriculum_progress(
+        env,
+        num_curriculum_episodes,
+        promote_success_threshold=promote_success_threshold,
+    )
 
     env._point_goal_success_distance = _lerp_scalar(start_success_distance, final_success_distance, progress)
     env._point_goal_success_hold_steps = int(
@@ -521,12 +546,14 @@ def point_goal_reward_levels(
     command_term.metrics.setdefault("scheduled_stop_yaw_rate_threshold", torch.zeros(env.num_envs, device=env.device))
     command_term.metrics.setdefault("scheduled_goal_stop_near_distance", torch.zeros(env.num_envs, device=env.device))
     command_term.metrics.setdefault("scheduled_goal_success_scale", torch.zeros(env.num_envs, device=env.device))
+    command_term.metrics.setdefault("curriculum_success_ema", torch.zeros(env.num_envs, device=env.device))
     command_term.metrics["scheduled_success_distance"][:] = env._point_goal_success_distance
     command_term.metrics["scheduled_success_hold_steps"][:] = float(env._point_goal_success_hold_steps)
     command_term.metrics["scheduled_stop_velocity_threshold"][:] = env._point_goal_stop_velocity_threshold
     command_term.metrics["scheduled_stop_yaw_rate_threshold"][:] = env._point_goal_stop_yaw_rate_threshold
     command_term.metrics["scheduled_goal_stop_near_distance"][:] = env._point_goal_goal_stop_near_distance
     command_term.metrics["scheduled_goal_success_scale"][:] = env._point_goal_goal_success_scale
+    command_term.metrics["curriculum_success_ema"][:] = float(env._point_goal_curriculum_success_ema)
     return progress_tensor
 
 
@@ -586,8 +613,20 @@ def _sync_point_goal_state(
         env._point_goal_target_age_steps = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
         env._point_goal_timed_out = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         env._point_goal_remaining_time_fraction = torch.ones(env.num_envs, device=env.device)
+    if not hasattr(env, "_point_goal_curriculum_success_ema"):
+        env._point_goal_curriculum_success_ema = 0.0
+        env._point_goal_curriculum_progress = 0.0
+        env._point_goal_curriculum_last_update_step = -1
 
     reset_ids, current_episode_length = _compute_just_reset_mask(env)
+    prev_episode_length = env._point_goal_prev_episode_length_buf
+    completed_ids = reset_ids & (prev_episode_length >= 0)
+    if torch.any(completed_ids):
+        completed_success = env._point_goal_just_reached[completed_ids].float().mean().item()
+        ema_decay = 0.9
+        env._point_goal_curriculum_success_ema = (
+            ema_decay * float(env._point_goal_curriculum_success_ema) + (1.0 - ema_decay) * completed_success
+        )
 
     if torch.any(reset_ids):
         command_term._resample_command(reset_ids.nonzero(as_tuple=False).squeeze(-1))

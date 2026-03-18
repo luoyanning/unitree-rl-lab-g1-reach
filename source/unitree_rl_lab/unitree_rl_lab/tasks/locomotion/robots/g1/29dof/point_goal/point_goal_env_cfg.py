@@ -45,6 +45,7 @@ GOAL_STOP_SCALE_START = 0.5
 GOAL_SUCCESS_SCALE_START = 2.0
 GOAL_TIME_PENALTY_SCALE_START = 0.8
 GOAL_TIMEOUT_PENALTY_SCALE_START = 0.75
+POINT_GOAL_CURRICULUM_PROMOTE_SUCCESS = 0.80
 PER_TARGET_TIMEOUT_S = 4.5
 POINT_GOAL_START_RADIUS = (0.30, 0.50)
 POINT_GOAL_MID_RADIUS = (0.35, 0.75)
@@ -68,6 +69,7 @@ class PointGoalCurriculumCfg(BaseCurriculumCfg):
             "start_angle_range": POINT_GOAL_START_ANGLE,
             "mid_angle_range": POINT_GOAL_MID_ANGLE,
             "final_angle_range": POINT_GOAL_FINAL_ANGLE,
+            "promote_success_threshold": POINT_GOAL_CURRICULUM_PROMOTE_SUCCESS,
         },
     )
     point_goal_reward_levels = CurrTerm(
@@ -95,6 +97,7 @@ class PointGoalCurriculumCfg(BaseCurriculumCfg):
             "final_goal_time_penalty_scale": 1.0,
             "start_goal_timeout_penalty_scale": GOAL_TIMEOUT_PENALTY_SCALE_START,
             "final_goal_timeout_penalty_scale": 1.0,
+            "promote_success_threshold": POINT_GOAL_CURRICULUM_PROMOTE_SUCCESS,
         },
     )
 

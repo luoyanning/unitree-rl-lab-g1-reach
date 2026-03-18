@@ -414,6 +414,10 @@ def main():
     command_term = base_env.command_manager.get_term("base_velocity")
     if hasattr(command_term.cfg, "resampling_time_range"):
         command_term.cfg.resampling_time_range = (1.0e9, 1.0e9)
+    # Keep fixed benchmark targets fixed after reset; otherwise the task sync logic
+    # will resample a random target on the first rollout step.
+    if hasattr(command_term, "_resample_command"):
+        command_term._resample_command = lambda env_ids: None
     applied_schedule = _apply_benchmark_progress(base_env, args_cli.benchmark_progress, command_name="base_velocity")
 
     step_dt = float(base_env.step_dt)

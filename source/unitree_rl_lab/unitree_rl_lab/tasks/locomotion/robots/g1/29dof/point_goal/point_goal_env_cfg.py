@@ -22,6 +22,7 @@ from .point_goal_mdp import (
     point_goal_stop_reward,
     point_goal_success,
     point_goal_success_bonus,
+    point_goal_reward_levels,
     point_goal_target_levels,
     point_goal_target_timeout,
     point_goal_target_pos_env,
@@ -34,6 +35,16 @@ SUCCESS_DISTANCE = 0.12
 SUCCESS_HOLD_STEPS = 8
 STOP_VELOCITY_THRESHOLD = 0.10
 STOP_YAW_RATE_THRESHOLD = 0.25
+SUCCESS_DISTANCE_START = 0.20
+SUCCESS_HOLD_STEPS_START = 2
+STOP_VELOCITY_THRESHOLD_START = 0.18
+STOP_YAW_RATE_THRESHOLD_START = 0.45
+GOAL_STOP_NEAR_DISTANCE_START = 0.30
+GOAL_PROGRESS_SCALE_START = 1.6
+GOAL_STOP_SCALE_START = 0.5
+GOAL_SUCCESS_SCALE_START = 2.0
+GOAL_TIME_PENALTY_SCALE_START = 0.8
+GOAL_TIMEOUT_PENALTY_SCALE_START = 0.75
 PER_TARGET_TIMEOUT_S = 4.5
 POINT_GOAL_START_RADIUS = (0.30, 0.50)
 POINT_GOAL_MID_RADIUS = (0.35, 0.75)
@@ -57,6 +68,33 @@ class PointGoalCurriculumCfg(BaseCurriculumCfg):
             "start_angle_range": POINT_GOAL_START_ANGLE,
             "mid_angle_range": POINT_GOAL_MID_ANGLE,
             "final_angle_range": POINT_GOAL_FINAL_ANGLE,
+        },
+    )
+    point_goal_reward_levels = CurrTerm(
+        func=point_goal_reward_levels,
+        params={
+            "command_name": "base_velocity",
+            "num_curriculum_episodes": POINT_GOAL_CURRICULUM_EPISODES,
+            "start_success_distance": SUCCESS_DISTANCE_START,
+            "final_success_distance": SUCCESS_DISTANCE,
+            "start_success_hold_steps": SUCCESS_HOLD_STEPS_START,
+            "final_success_hold_steps": SUCCESS_HOLD_STEPS,
+            "start_stop_velocity_threshold": STOP_VELOCITY_THRESHOLD_START,
+            "final_stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
+            "start_stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD_START,
+            "final_stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
+            "start_goal_stop_near_distance": GOAL_STOP_NEAR_DISTANCE_START,
+            "final_goal_stop_near_distance": 0.20,
+            "start_goal_progress_scale": GOAL_PROGRESS_SCALE_START,
+            "final_goal_progress_scale": 1.0,
+            "start_goal_stop_scale": GOAL_STOP_SCALE_START,
+            "final_goal_stop_scale": 1.0,
+            "start_goal_success_scale": GOAL_SUCCESS_SCALE_START,
+            "final_goal_success_scale": 1.0,
+            "start_goal_time_penalty_scale": GOAL_TIME_PENALTY_SCALE_START,
+            "final_goal_time_penalty_scale": 1.0,
+            "start_goal_timeout_penalty_scale": GOAL_TIMEOUT_PENALTY_SCALE_START,
+            "final_goal_timeout_penalty_scale": 1.0,
         },
     )
 

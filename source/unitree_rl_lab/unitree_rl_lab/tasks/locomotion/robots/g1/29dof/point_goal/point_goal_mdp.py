@@ -443,6 +443,93 @@ def point_goal_target_levels(
     return progress_tensor
 
 
+def _point_goal_curriculum_progress(env, num_curriculum_episodes: int) -> tuple[float, torch.Tensor]:
+    progress = min(env.common_step_counter / (env.max_episode_length * max(num_curriculum_episodes, 1)), 1.0)
+    return progress, torch.tensor(progress, device=env.device)
+
+
+def _lerp_scalar(start: float, final: float, progress: float) -> float:
+    return (1.0 - progress) * float(start) + progress * float(final)
+
+
+def point_goal_reward_levels(
+    env,
+    env_ids: Sequence[int],
+    command_name: str = "base_velocity",
+    num_curriculum_episodes: int = 12,
+    start_success_distance: float = 0.22,
+    final_success_distance: float = 0.12,
+    start_success_hold_steps: int = 2,
+    final_success_hold_steps: int = 8,
+    start_stop_velocity_threshold: float = 0.18,
+    final_stop_velocity_threshold: float = 0.10,
+    start_stop_yaw_rate_threshold: float = 0.45,
+    final_stop_yaw_rate_threshold: float = 0.25,
+    start_goal_stop_near_distance: float = 0.30,
+    final_goal_stop_near_distance: float = 0.20,
+    start_goal_progress_scale: float = 1.6,
+    final_goal_progress_scale: float = 1.0,
+    start_goal_stop_scale: float = 0.5,
+    final_goal_stop_scale: float = 1.0,
+    start_goal_success_scale: float = 2.0,
+    final_goal_success_scale: float = 1.0,
+    start_goal_time_penalty_scale: float = 0.8,
+    final_goal_time_penalty_scale: float = 1.0,
+    start_goal_timeout_penalty_scale: float = 0.75,
+    final_goal_timeout_penalty_scale: float = 1.0,
+):
+    del env_ids
+    progress, progress_tensor = _point_goal_curriculum_progress(env, num_curriculum_episodes)
+
+    env._point_goal_success_distance = _lerp_scalar(start_success_distance, final_success_distance, progress)
+    env._point_goal_success_hold_steps = int(
+        round(_lerp_scalar(start_success_hold_steps, final_success_hold_steps, progress))
+    )
+    env._point_goal_stop_velocity_threshold = _lerp_scalar(
+        start_stop_velocity_threshold,
+        final_stop_velocity_threshold,
+        progress,
+    )
+    env._point_goal_stop_yaw_rate_threshold = _lerp_scalar(
+        start_stop_yaw_rate_threshold,
+        final_stop_yaw_rate_threshold,
+        progress,
+    )
+    env._point_goal_goal_stop_near_distance = _lerp_scalar(
+        start_goal_stop_near_distance,
+        final_goal_stop_near_distance,
+        progress,
+    )
+    env._point_goal_goal_progress_scale = _lerp_scalar(start_goal_progress_scale, final_goal_progress_scale, progress)
+    env._point_goal_goal_stop_scale = _lerp_scalar(start_goal_stop_scale, final_goal_stop_scale, progress)
+    env._point_goal_goal_success_scale = _lerp_scalar(start_goal_success_scale, final_goal_success_scale, progress)
+    env._point_goal_goal_time_penalty_scale = _lerp_scalar(
+        start_goal_time_penalty_scale,
+        final_goal_time_penalty_scale,
+        progress,
+    )
+    env._point_goal_goal_timeout_penalty_scale = _lerp_scalar(
+        start_goal_timeout_penalty_scale,
+        final_goal_timeout_penalty_scale,
+        progress,
+    )
+
+    command_term = env.command_manager.get_term(command_name)
+    command_term.metrics.setdefault("scheduled_success_distance", torch.zeros(env.num_envs, device=env.device))
+    command_term.metrics.setdefault("scheduled_success_hold_steps", torch.zeros(env.num_envs, device=env.device))
+    command_term.metrics.setdefault("scheduled_stop_velocity_threshold", torch.zeros(env.num_envs, device=env.device))
+    command_term.metrics.setdefault("scheduled_stop_yaw_rate_threshold", torch.zeros(env.num_envs, device=env.device))
+    command_term.metrics.setdefault("scheduled_goal_stop_near_distance", torch.zeros(env.num_envs, device=env.device))
+    command_term.metrics.setdefault("scheduled_goal_success_scale", torch.zeros(env.num_envs, device=env.device))
+    command_term.metrics["scheduled_success_distance"][:] = env._point_goal_success_distance
+    command_term.metrics["scheduled_success_hold_steps"][:] = float(env._point_goal_success_hold_steps)
+    command_term.metrics["scheduled_stop_velocity_threshold"][:] = env._point_goal_stop_velocity_threshold
+    command_term.metrics["scheduled_stop_yaw_rate_threshold"][:] = env._point_goal_stop_yaw_rate_threshold
+    command_term.metrics["scheduled_goal_stop_near_distance"][:] = env._point_goal_goal_stop_near_distance
+    command_term.metrics["scheduled_goal_success_scale"][:] = env._point_goal_goal_success_scale
+    return progress_tensor
+
+
 def _episode_length_buf(env):
     if hasattr(env, "episode_length_buf"):
         return env.episode_length_buf.clone()
@@ -474,6 +561,14 @@ def _sync_point_goal_state(
     if getattr(env, "_point_goal_state_synced_step", None) == env.common_step_counter:
         return
 
+    success_distance = float(getattr(env, "_point_goal_success_distance", success_distance))
+    success_hold_steps = max(1, int(round(float(getattr(env, "_point_goal_success_hold_steps", success_hold_steps)))))
+    stop_velocity_threshold = float(
+        getattr(env, "_point_goal_stop_velocity_threshold", stop_velocity_threshold)
+    )
+    stop_yaw_rate_threshold = float(
+        getattr(env, "_point_goal_stop_yaw_rate_threshold", stop_yaw_rate_threshold)
+    )
     command_term = _point_goal_term(env, command_name=command_name)
 
     if not hasattr(env, "_point_goal_prev_distance"):
@@ -588,7 +683,8 @@ def point_goal_progress_reward(
         per_target_timeout_s=per_target_timeout_s,
     )
     progress = torch.clamp(env._point_goal_progress, min=-clip_value, max=clip_value)
-    return positive_scale * torch.clamp(progress, min=0.0) - regress_scale * torch.clamp(-progress, min=0.0)
+    reward = positive_scale * torch.clamp(progress, min=0.0) - regress_scale * torch.clamp(-progress, min=0.0)
+    return reward * float(getattr(env, "_point_goal_goal_progress_scale", 1.0))
 
 
 def point_goal_completion_reward(
@@ -654,8 +750,9 @@ def point_goal_stop_reward(
         stop_yaw_rate_threshold=stop_yaw_rate_threshold,
         per_target_timeout_s=per_target_timeout_s,
     )
+    near_distance = float(getattr(env, "_point_goal_goal_stop_near_distance", near_distance))
     near_gate = torch.clamp(1.0 - env._point_goal_current_distance / max(near_distance, 1.0e-6), min=0.0, max=1.0)
-    return env._point_goal_stop_quality * near_gate
+    return env._point_goal_stop_quality * near_gate * float(getattr(env, "_point_goal_goal_stop_scale", 1.0))
 
 
 def point_goal_heading_alignment_reward(
@@ -702,7 +799,8 @@ def point_goal_success_bonus(
         stop_yaw_rate_threshold=stop_yaw_rate_threshold,
         per_target_timeout_s=per_target_timeout_s,
     )
-    return env._point_goal_just_reached.float() * (1.0 + env._point_goal_remaining_time_fraction)
+    reward = env._point_goal_just_reached.float() * (1.0 + env._point_goal_remaining_time_fraction)
+    return reward * float(getattr(env, "_point_goal_goal_success_scale", 1.0))
 
 
 def point_goal_time_penalty(
@@ -723,7 +821,9 @@ def point_goal_time_penalty(
         stop_yaw_rate_threshold=stop_yaw_rate_threshold,
         per_target_timeout_s=per_target_timeout_s,
     )
-    return torch.ones(env.num_envs, device=env.device)
+    return torch.ones(env.num_envs, device=env.device) * float(
+        getattr(env, "_point_goal_goal_time_penalty_scale", 1.0)
+    )
 
 
 def point_goal_timeout_penalty(
@@ -744,7 +844,9 @@ def point_goal_timeout_penalty(
         stop_yaw_rate_threshold=stop_yaw_rate_threshold,
         per_target_timeout_s=per_target_timeout_s,
     )
-    return env._point_goal_timed_out.float()
+    return env._point_goal_timed_out.float() * float(
+        getattr(env, "_point_goal_goal_timeout_penalty_scale", 1.0)
+    )
 
 
 def point_goal_success(

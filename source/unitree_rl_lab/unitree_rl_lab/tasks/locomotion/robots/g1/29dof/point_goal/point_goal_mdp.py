@@ -200,7 +200,9 @@ class PointGoalCommand(CommandTerm):
         self.metrics["reverse_recovery_mode"][:] = reverse_recovery_mode.float()
         self.metrics["hold_mode"][:] = hold_mode.float()
 
-        if hasattr(self._env, "_point_goal_policy_command"):
+        if getattr(self._env, "_point_goal_use_policy_command", False) and hasattr(
+            self._env, "_point_goal_policy_command"
+        ):
             policy_command = self._env._point_goal_policy_command
             self._command[:] = policy_command
             self.metrics["guidance_speed"][:] = torch.linalg.norm(policy_command[:, :2], dim=-1)
@@ -516,7 +518,8 @@ def _sync_point_goal_state(
         env._point_goal_target_age_steps[reset_ids] = 0
         env._point_goal_timed_out[reset_ids] = False
         env._point_goal_remaining_time_fraction[reset_ids] = 1.0
-        _ensure_policy_command_state(env)[reset_ids] = 0.0
+        if getattr(env, "_point_goal_use_policy_command", False) and hasattr(env, "_point_goal_policy_command"):
+            env._point_goal_policy_command[reset_ids] = 0.0
 
     env._point_goal_target_age_steps += 1
     per_target_timeout_steps = max(1, int(round(per_target_timeout_s / env.step_dt)))

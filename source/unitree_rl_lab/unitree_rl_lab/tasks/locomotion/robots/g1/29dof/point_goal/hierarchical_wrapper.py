@@ -90,6 +90,7 @@ class HierarchicalPointGoalVecEnv:
         self.low_level_env = low_level_env
         self.base_env = getattr(low_level_env, "unwrapped", low_level_env)
         self.unwrapped = self.base_env
+        self.base_env._point_goal_use_policy_command = True
         self.command_name = command_name
         self.clip_actions = float(clip_actions)
 

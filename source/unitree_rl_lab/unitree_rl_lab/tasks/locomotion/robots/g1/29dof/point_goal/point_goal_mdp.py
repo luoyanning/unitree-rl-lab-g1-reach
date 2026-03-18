@@ -148,7 +148,6 @@ class PointGoalCommand(CommandTerm):
             min=0.0,
             max=1.0,
         )
-        heading_forward_gate = torch.square(heading_forward_gate)
 
         lin_vel_x = torch.clamp(
             self.cfg.forward_gain * goal_delta_body_xy[:, 0],

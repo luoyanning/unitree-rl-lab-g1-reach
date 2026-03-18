@@ -113,25 +113,6 @@ class RobotPointGoalEnvCfg(RobotEnvCfg):
         self.events.reset_base.params["pose_range"] = {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)}
         self.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
 
-        self.observations.policy.point_goal_target_world = ObsTerm(
-            func=point_goal_target_pos_env,
-            params={"command_name": "base_velocity"},
-        )
-        self.observations.policy.point_goal_root_world = ObsTerm(
-            func=point_goal_root_pos_env,
-        )
-        self.observations.policy.point_goal_rel_body = ObsTerm(
-            func=point_goal_rel_body_xy,
-            params={"command_name": "base_velocity"},
-        )
-        self.observations.policy.point_goal_distance = ObsTerm(
-            func=point_goal_distance_obs,
-            params={"command_name": "base_velocity"},
-        )
-        self.observations.policy.point_goal_heading = ObsTerm(
-            func=point_goal_heading_error_obs,
-            params={"command_name": "base_velocity"},
-        )
         self.observations.critic.point_goal_target_world = ObsTerm(
             func=point_goal_target_pos_env,
             params={"command_name": "base_velocity"},

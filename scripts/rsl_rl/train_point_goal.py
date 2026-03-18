@@ -341,7 +341,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 task_name=args_cli.task,
                 init_noise_std=agent_cfg.policy.init_noise_std,
             )
-            install_actor_grad_scale(runner, scale=0.1)
+            install_actor_grad_scale(runner, scale=0.02)
         install_positive_std_guard(runner, std_min=0.05, std_max=0.20, freeze_std=True)
 
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)

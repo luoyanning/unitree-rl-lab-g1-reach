@@ -198,17 +198,17 @@ def point_goal_turn_band_target_levels(
     env,
     env_ids: Sequence[int],
     command_name: str = "base_velocity",
-    num_curriculum_episodes: int = 32,
-    start_radius_range: tuple[float, float] = (0.8, 1.6),
-    mid_radius_range: tuple[float, float] = (1.0, 2.2),
-    late_radius_range: tuple[float, float] = (1.5, 3.0),
+    num_curriculum_episodes: int = 48,
+    start_radius_range: tuple[float, float] = (0.8, 1.2),
+    angle_master_radius_range: tuple[float, float] = (0.9, 1.4),
+    radius_expansion_range: tuple[float, float] = (1.0, 1.8),
     final_radius_range: tuple[float, float] = (1.5, 4.0),
-    start_abs_angle_range: tuple[float, float] = (math.radians(90.0), math.radians(110.0)),
+    start_abs_angle_range: tuple[float, float] = (math.radians(90.0), math.radians(105.0)),
     mid_abs_angle_range: tuple[float, float] = (math.radians(90.0), math.radians(135.0)),
-    late_abs_angle_range: tuple[float, float] = (math.radians(100.0), math.radians(160.0)),
+    late_abs_angle_range: tuple[float, float] = (math.radians(90.0), math.radians(180.0)),
     final_abs_angle_range: tuple[float, float] = (math.radians(90.0), math.pi),
-    promote_success_threshold: float = 0.78,
-    demote_success_threshold: float = 0.58,
+    promote_success_threshold: float = 0.76,
+    demote_success_threshold: float = 0.62,
 ):
     command_term = base_mdp._point_goal_term(env, command_name=command_name)
     progress, progress_tensor = base_mdp._point_goal_curriculum_progress(
@@ -218,17 +218,23 @@ def point_goal_turn_band_target_levels(
         demote_success_threshold=demote_success_threshold,
     )
 
-    if progress < 0.45:
-        stage_progress = progress / 0.45
-        radius_range = _lerp_range(start_radius_range, mid_radius_range, stage_progress)
-        abs_angle_range = _lerp_range(start_abs_angle_range, mid_abs_angle_range, stage_progress)
+    # Phase 1: expand heading demand while keeping the target close enough that
+    # the policy can focus on learning turn-first behavior.
+    if progress < 0.50:
+        stage_progress = progress / 0.50
+        radius_range = _lerp_range(start_radius_range, angle_master_radius_range, stage_progress)
+        if stage_progress < 0.50:
+            abs_angle_range = _lerp_range(start_abs_angle_range, mid_abs_angle_range, stage_progress / 0.50)
+        else:
+            abs_angle_range = _lerp_range(mid_abs_angle_range, late_abs_angle_range, (stage_progress - 0.50) / 0.50)
+    # Phase 2: keep the wide rear hemisphere but only grow distance moderately.
     elif progress < 0.80:
-        stage_progress = (progress - 0.45) / 0.35
-        radius_range = _lerp_range(mid_radius_range, late_radius_range, stage_progress)
-        abs_angle_range = _lerp_range(mid_abs_angle_range, late_abs_angle_range, stage_progress)
+        stage_progress = (progress - 0.50) / 0.30
+        radius_range = _lerp_range(angle_master_radius_range, radius_expansion_range, stage_progress)
+        abs_angle_range = late_abs_angle_range
     else:
         stage_progress = (progress - 0.80) / 0.20
-        radius_range = _lerp_range(late_radius_range, final_radius_range, stage_progress)
+        radius_range = _lerp_range(radius_expansion_range, final_radius_range, stage_progress)
         abs_angle_range = _lerp_range(late_abs_angle_range, final_abs_angle_range, stage_progress)
 
     command_term.cfg.radius_range = radius_range

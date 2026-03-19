@@ -35,18 +35,18 @@ from .point_goal_rear_turn_mdp import (
 )
 
 
-REAR_TURN_CURRICULUM_EPISODES = 32
-REAR_TURN_PER_TARGET_TIMEOUT_S = 7.0
-REAR_TURN_START_RADIUS = (0.8, 1.6)
-REAR_TURN_MID_RADIUS = (1.0, 2.2)
-REAR_TURN_LATE_RADIUS = (1.5, 3.0)
+REAR_TURN_CURRICULUM_EPISODES = 48
+REAR_TURN_PER_TARGET_TIMEOUT_S = 8.0
+REAR_TURN_START_RADIUS = (0.8, 1.2)
+REAR_TURN_ANGLE_MASTER_RADIUS = (0.9, 1.4)
+REAR_TURN_RADIUS_EXPANSION = (1.0, 1.8)
 REAR_TURN_FINAL_RADIUS = (1.5, 4.0)
-REAR_TURN_START_ABS_ANGLE = (math.radians(90.0), math.radians(110.0))
+REAR_TURN_START_ABS_ANGLE = (math.radians(90.0), math.radians(105.0))
 REAR_TURN_MID_ABS_ANGLE = (math.radians(90.0), math.radians(135.0))
-REAR_TURN_LATE_ABS_ANGLE = (math.radians(100.0), math.radians(160.0))
+REAR_TURN_LATE_ABS_ANGLE = (math.radians(90.0), math.radians(180.0))
 REAR_TURN_FINAL_ABS_ANGLE = (math.radians(90.0), math.pi)
-REAR_TURN_CURRICULUM_PROMOTE_SUCCESS = 0.78
-REAR_TURN_CURRICULUM_DEMOTE_SUCCESS = 0.58
+REAR_TURN_CURRICULUM_PROMOTE_SUCCESS = 0.76
+REAR_TURN_CURRICULUM_DEMOTE_SUCCESS = 0.62
 
 
 @configclass
@@ -57,8 +57,8 @@ class PointGoalRearTurnCurriculumCfg(BaseCurriculumCfg):
             "command_name": "base_velocity",
             "num_curriculum_episodes": REAR_TURN_CURRICULUM_EPISODES,
             "start_radius_range": REAR_TURN_START_RADIUS,
-            "mid_radius_range": REAR_TURN_MID_RADIUS,
-            "late_radius_range": REAR_TURN_LATE_RADIUS,
+            "angle_master_radius_range": REAR_TURN_ANGLE_MASTER_RADIUS,
+            "radius_expansion_range": REAR_TURN_RADIUS_EXPANSION,
             "final_radius_range": REAR_TURN_FINAL_RADIUS,
             "start_abs_angle_range": REAR_TURN_START_ABS_ANGLE,
             "mid_abs_angle_range": REAR_TURN_MID_ABS_ANGLE,
@@ -141,7 +141,7 @@ class RobotPointGoalRearTurnEnvCfg(RobotPointGoalEnvCfg):
             min_recovery_ang_vel_z=0.14,
             turn_in_place_threshold=1.10,
             turn_in_place_min_distance=0.35,
-            min_turn_in_place_ang_vel_z=0.24,
+            min_turn_in_place_ang_vel_z=0.28,
             reverse_recovery_distance=0.25,
             reverse_heading_threshold=0.30,
             reverse_trigger_distance=0.02,
@@ -170,7 +170,7 @@ class RobotPointGoalRearTurnEnvCfg(RobotPointGoalEnvCfg):
         self.terminations.point_goal_timeout.params["per_target_timeout_s"] = REAR_TURN_PER_TARGET_TIMEOUT_S
         self.rewards.goal_heading_align = RewTerm(
             func=point_goal_heading_alignment_reward,
-            weight=3.0,
+            weight=3.5,
             params={
                 "command_name": "base_velocity",
                 "success_distance": SUCCESS_DISTANCE,
@@ -178,8 +178,8 @@ class RobotPointGoalRearTurnEnvCfg(RobotPointGoalEnvCfg):
                 "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
                 "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
                 "per_target_timeout_s": REAR_TURN_PER_TARGET_TIMEOUT_S,
-                "near_distance": 3.0,
-                "std": 1.0,
+                "near_distance": 4.0,
+                "std": 1.1,
             },
         )
 

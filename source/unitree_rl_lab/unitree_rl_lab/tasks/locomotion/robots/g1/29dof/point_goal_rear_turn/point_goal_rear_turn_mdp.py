@@ -194,46 +194,82 @@ class RearTurnPointGoalCommandCfg(PointGoalCommandCfg):
     min_turn_in_place_ang_vel_z: float = 0.22
 
 
+def _rear_turn_curriculum_progress(
+    env,
+    num_curriculum_episodes: int,
+    early_promote_success_threshold: float = 0.68,
+    early_demote_success_threshold: float = 0.50,
+    mid_promote_success_threshold: float = 0.74,
+    mid_demote_success_threshold: float = 0.56,
+    late_promote_success_threshold: float = 0.78,
+    late_demote_success_threshold: float = 0.62,
+) -> tuple[float, torch.Tensor]:
+    if not hasattr(env, "_point_goal_curriculum_progress"):
+        env._point_goal_curriculum_progress = 0.0
+        env._point_goal_curriculum_success_ema = 0.0
+        env._point_goal_curriculum_last_update_step = -1
+
+    progress_step = 1.0 / max(num_curriculum_episodes, 1)
+    should_update = env.common_step_counter % env.max_episode_length == 0
+    if should_update and env._point_goal_curriculum_last_update_step != env.common_step_counter:
+        current_progress = float(env._point_goal_curriculum_progress)
+        if current_progress < 0.25:
+            promote_success_threshold = early_promote_success_threshold
+            demote_success_threshold = early_demote_success_threshold
+        elif current_progress < 0.60:
+            promote_success_threshold = mid_promote_success_threshold
+            demote_success_threshold = mid_demote_success_threshold
+        else:
+            promote_success_threshold = late_promote_success_threshold
+            demote_success_threshold = late_demote_success_threshold
+
+        success_ema = float(env._point_goal_curriculum_success_ema)
+        if success_ema >= promote_success_threshold:
+            env._point_goal_curriculum_progress = min(current_progress + progress_step, 1.0)
+        elif success_ema <= demote_success_threshold:
+            env._point_goal_curriculum_progress = max(current_progress - progress_step, 0.0)
+        env._point_goal_curriculum_last_update_step = env.common_step_counter
+
+    progress = float(env._point_goal_curriculum_progress)
+    return progress, torch.tensor(progress, device=env.device)
+
+
 def point_goal_turn_band_target_levels(
     env,
     env_ids: Sequence[int],
     command_name: str = "base_velocity",
     num_curriculum_episodes: int = 48,
-    start_radius_range: tuple[float, float] = (0.8, 1.2),
-    angle_master_radius_range: tuple[float, float] = (0.9, 1.4),
-    radius_expansion_range: tuple[float, float] = (1.0, 1.8),
+    start_radius_range: tuple[float, float] = (0.7, 0.95),
+    angle_master_radius_range: tuple[float, float] = (0.8, 1.15),
+    radius_expansion_range: tuple[float, float] = (1.0, 1.6),
     final_radius_range: tuple[float, float] = (1.5, 4.0),
-    start_abs_angle_range: tuple[float, float] = (math.radians(90.0), math.radians(105.0)),
-    mid_abs_angle_range: tuple[float, float] = (math.radians(90.0), math.radians(135.0)),
-    late_abs_angle_range: tuple[float, float] = (math.radians(90.0), math.radians(180.0)),
+    start_abs_angle_range: tuple[float, float] = (math.radians(90.0), math.radians(98.0)),
+    mid_abs_angle_range: tuple[float, float] = (math.radians(90.0), math.radians(125.0)),
+    late_abs_angle_range: tuple[float, float] = (math.radians(90.0), math.radians(170.0)),
     final_abs_angle_range: tuple[float, float] = (math.radians(90.0), math.pi),
-    promote_success_threshold: float = 0.76,
-    demote_success_threshold: float = 0.62,
 ):
     command_term = base_mdp._point_goal_term(env, command_name=command_name)
-    progress, progress_tensor = base_mdp._point_goal_curriculum_progress(
+    progress, progress_tensor = _rear_turn_curriculum_progress(
         env,
         num_curriculum_episodes=num_curriculum_episodes,
-        promote_success_threshold=promote_success_threshold,
-        demote_success_threshold=demote_success_threshold,
     )
 
     # Phase 1: expand heading demand while keeping the target close enough that
     # the policy can focus on learning turn-first behavior.
-    if progress < 0.50:
-        stage_progress = progress / 0.50
+    if progress < 0.60:
+        stage_progress = progress / 0.60
         radius_range = _lerp_range(start_radius_range, angle_master_radius_range, stage_progress)
         if stage_progress < 0.50:
             abs_angle_range = _lerp_range(start_abs_angle_range, mid_abs_angle_range, stage_progress / 0.50)
         else:
             abs_angle_range = _lerp_range(mid_abs_angle_range, late_abs_angle_range, (stage_progress - 0.50) / 0.50)
     # Phase 2: keep the wide rear hemisphere but only grow distance moderately.
-    elif progress < 0.80:
-        stage_progress = (progress - 0.50) / 0.30
+    elif progress < 0.85:
+        stage_progress = (progress - 0.60) / 0.25
         radius_range = _lerp_range(angle_master_radius_range, radius_expansion_range, stage_progress)
         abs_angle_range = late_abs_angle_range
     else:
-        stage_progress = (progress - 0.80) / 0.20
+        stage_progress = (progress - 0.85) / 0.15
         radius_range = _lerp_range(radius_expansion_range, final_radius_range, stage_progress)
         abs_angle_range = _lerp_range(late_abs_angle_range, final_abs_angle_range, stage_progress)
 
@@ -245,6 +281,8 @@ def point_goal_turn_band_target_levels(
 
 
 point_goal_distance_obs = base_mdp.point_goal_distance_obs
+point_goal_completion_reward = base_mdp.point_goal_completion_reward
+point_goal_distance_reward = base_mdp.point_goal_distance_reward
 point_goal_heading_alignment_reward = base_mdp.point_goal_heading_alignment_reward
 point_goal_heading_error_obs = base_mdp.point_goal_heading_error_obs
 point_goal_progress_reward = base_mdp.point_goal_progress_reward

@@ -29,6 +29,8 @@ from ..point_goal.point_goal_env_cfg import (
 from ..velocity_env_cfg import CurriculumCfg as BaseCurriculumCfg
 from .point_goal_rear_turn_mdp import (
     RearTurnPointGoalCommandCfg,
+    point_goal_completion_reward,
+    point_goal_distance_reward,
     point_goal_heading_alignment_reward,
     point_goal_reward_levels,
     point_goal_turn_band_target_levels,
@@ -37,16 +39,14 @@ from .point_goal_rear_turn_mdp import (
 
 REAR_TURN_CURRICULUM_EPISODES = 48
 REAR_TURN_PER_TARGET_TIMEOUT_S = 8.0
-REAR_TURN_START_RADIUS = (0.8, 1.2)
-REAR_TURN_ANGLE_MASTER_RADIUS = (0.9, 1.4)
-REAR_TURN_RADIUS_EXPANSION = (1.0, 1.8)
+REAR_TURN_START_RADIUS = (0.7, 0.95)
+REAR_TURN_ANGLE_MASTER_RADIUS = (0.8, 1.15)
+REAR_TURN_RADIUS_EXPANSION = (1.0, 1.6)
 REAR_TURN_FINAL_RADIUS = (1.5, 4.0)
-REAR_TURN_START_ABS_ANGLE = (math.radians(90.0), math.radians(105.0))
-REAR_TURN_MID_ABS_ANGLE = (math.radians(90.0), math.radians(135.0))
-REAR_TURN_LATE_ABS_ANGLE = (math.radians(90.0), math.radians(180.0))
+REAR_TURN_START_ABS_ANGLE = (math.radians(90.0), math.radians(98.0))
+REAR_TURN_MID_ABS_ANGLE = (math.radians(90.0), math.radians(125.0))
+REAR_TURN_LATE_ABS_ANGLE = (math.radians(90.0), math.radians(170.0))
 REAR_TURN_FINAL_ABS_ANGLE = (math.radians(90.0), math.pi)
-REAR_TURN_CURRICULUM_PROMOTE_SUCCESS = 0.76
-REAR_TURN_CURRICULUM_DEMOTE_SUCCESS = 0.62
 
 
 @configclass
@@ -64,8 +64,6 @@ class PointGoalRearTurnCurriculumCfg(BaseCurriculumCfg):
             "mid_abs_angle_range": REAR_TURN_MID_ABS_ANGLE,
             "late_abs_angle_range": REAR_TURN_LATE_ABS_ANGLE,
             "final_abs_angle_range": REAR_TURN_FINAL_ABS_ANGLE,
-            "promote_success_threshold": REAR_TURN_CURRICULUM_PROMOTE_SUCCESS,
-            "demote_success_threshold": REAR_TURN_CURRICULUM_DEMOTE_SUCCESS,
         },
     )
     point_goal_reward_levels = CurrTerm(
@@ -101,8 +99,8 @@ class PointGoalRearTurnCurriculumCfg(BaseCurriculumCfg):
             "final_slow_down_distance": 0.55,
             "start_heading_slow_down_distance": HEADING_SLOW_DOWN_DISTANCE_START,
             "final_heading_slow_down_distance": 0.60,
-            "promote_success_threshold": REAR_TURN_CURRICULUM_PROMOTE_SUCCESS,
-            "demote_success_threshold": REAR_TURN_CURRICULUM_DEMOTE_SUCCESS,
+            "promote_success_threshold": 0.76,
+            "demote_success_threshold": 0.62,
         },
     )
 
@@ -139,9 +137,9 @@ class RobotPointGoalRearTurnEnvCfg(RobotPointGoalEnvCfg):
             recovery_turn_threshold=0.80,
             heading_block_threshold=1.45,
             min_recovery_ang_vel_z=0.14,
-            turn_in_place_threshold=1.10,
-            turn_in_place_min_distance=0.35,
-            min_turn_in_place_ang_vel_z=0.28,
+            turn_in_place_threshold=1.00,
+            turn_in_place_min_distance=0.25,
+            min_turn_in_place_ang_vel_z=0.24,
             reverse_recovery_distance=0.25,
             reverse_heading_threshold=0.30,
             reverse_trigger_distance=0.02,
@@ -162,15 +160,11 @@ class RobotPointGoalRearTurnEnvCfg(RobotPointGoalEnvCfg):
         self.rewards.track_ang_vel_z.weight = 0.08
         self.rewards.goal_progress.weight = 14.0
         self.rewards.goal_progress.params["per_target_timeout_s"] = REAR_TURN_PER_TARGET_TIMEOUT_S
-        self.rewards.goal_stop.params["per_target_timeout_s"] = REAR_TURN_PER_TARGET_TIMEOUT_S
-        self.rewards.goal_time_penalty.params["per_target_timeout_s"] = REAR_TURN_PER_TARGET_TIMEOUT_S
-        self.rewards.goal_timeout_penalty.params["per_target_timeout_s"] = REAR_TURN_PER_TARGET_TIMEOUT_S
-        self.rewards.goal_success.params["per_target_timeout_s"] = REAR_TURN_PER_TARGET_TIMEOUT_S
-        self.terminations.point_goal_success.params["per_target_timeout_s"] = REAR_TURN_PER_TARGET_TIMEOUT_S
-        self.terminations.point_goal_timeout.params["per_target_timeout_s"] = REAR_TURN_PER_TARGET_TIMEOUT_S
-        self.rewards.goal_heading_align = RewTerm(
-            func=point_goal_heading_alignment_reward,
-            weight=3.5,
+        self.rewards.goal_progress.params["positive_scale"] = 3.0
+        self.rewards.goal_progress.params["regress_scale"] = 2.2
+        self.rewards.goal_completion = RewTerm(
+            func=point_goal_completion_reward,
+            weight=4.0,
             params={
                 "command_name": "base_velocity",
                 "success_distance": SUCCESS_DISTANCE,
@@ -178,8 +172,41 @@ class RobotPointGoalRearTurnEnvCfg(RobotPointGoalEnvCfg):
                 "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
                 "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
                 "per_target_timeout_s": REAR_TURN_PER_TARGET_TIMEOUT_S,
-                "near_distance": 4.0,
-                "std": 1.1,
+                "exponent": 0.5,
+            },
+        )
+        self.rewards.goal_distance = RewTerm(
+            func=point_goal_distance_reward,
+            weight=2.0,
+            params={
+                "command_name": "base_velocity",
+                "success_distance": SUCCESS_DISTANCE,
+                "success_hold_steps": SUCCESS_HOLD_STEPS,
+                "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
+                "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
+                "per_target_timeout_s": REAR_TURN_PER_TARGET_TIMEOUT_S,
+                "std": 0.45,
+            },
+        )
+        self.rewards.goal_stop.params["per_target_timeout_s"] = REAR_TURN_PER_TARGET_TIMEOUT_S
+        self.rewards.goal_time_penalty.params["per_target_timeout_s"] = REAR_TURN_PER_TARGET_TIMEOUT_S
+        self.rewards.goal_time_penalty.weight = -0.08
+        self.rewards.goal_timeout_penalty.params["per_target_timeout_s"] = REAR_TURN_PER_TARGET_TIMEOUT_S
+        self.rewards.goal_success.params["per_target_timeout_s"] = REAR_TURN_PER_TARGET_TIMEOUT_S
+        self.terminations.point_goal_success.params["per_target_timeout_s"] = REAR_TURN_PER_TARGET_TIMEOUT_S
+        self.terminations.point_goal_timeout.params["per_target_timeout_s"] = REAR_TURN_PER_TARGET_TIMEOUT_S
+        self.rewards.goal_heading_align = RewTerm(
+            func=point_goal_heading_alignment_reward,
+            weight=0.8,
+            params={
+                "command_name": "base_velocity",
+                "success_distance": SUCCESS_DISTANCE,
+                "success_hold_steps": SUCCESS_HOLD_STEPS,
+                "stop_velocity_threshold": STOP_VELOCITY_THRESHOLD,
+                "stop_yaw_rate_threshold": STOP_YAW_RATE_THRESHOLD,
+                "per_target_timeout_s": REAR_TURN_PER_TARGET_TIMEOUT_S,
+                "near_distance": 1.0,
+                "std": 1.2,
             },
         )
 

@@ -127,8 +127,12 @@ class RearTurnPointGoalCommand(PointGoalCommand):
         ang_vel_z = torch.where(turn_in_place_mode, min_turn_in_place, ang_vel_z)
         ang_vel_z = torch.where(recovery_turn_mode, min_recovery_turn, ang_vel_z)
 
-        lin_vel_x = torch.where(hold_mode | recovery_turn_mode | turn_in_place_mode, torch.zeros_like(lin_vel_x), lin_vel_x)
-        lin_vel_y = torch.where(hold_mode | recovery_turn_mode | turn_in_place_mode, torch.zeros_like(lin_vel_y), lin_vel_y)
+        # Keep a small amount of translation in rear-turn mode so the policy can
+        # learn arc-like approaches instead of being forced into pure turn-first behavior.
+        lin_vel_x = torch.where(turn_in_place_mode, lin_vel_x * 0.35, lin_vel_x)
+        lin_vel_y = torch.where(turn_in_place_mode, lin_vel_y * 0.65, lin_vel_y)
+        lin_vel_x = torch.where(hold_mode | recovery_turn_mode, torch.zeros_like(lin_vel_x), lin_vel_x)
+        lin_vel_y = torch.where(hold_mode | recovery_turn_mode, torch.zeros_like(lin_vel_y), lin_vel_y)
         ang_vel_z = torch.where(hold_mode, torch.zeros_like(ang_vel_z), ang_vel_z)
 
         self._command[:, 0] = lin_vel_x

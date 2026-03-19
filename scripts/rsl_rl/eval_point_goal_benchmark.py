@@ -579,7 +579,7 @@ def main():
 
             for step in range(step_budget):
                 start_time = time.time()
-                with torch.inference_mode():
+                with torch.no_grad():
                     actions = policy(obs)
                     obs, _, _, _ = vec_env.step(actions)
 

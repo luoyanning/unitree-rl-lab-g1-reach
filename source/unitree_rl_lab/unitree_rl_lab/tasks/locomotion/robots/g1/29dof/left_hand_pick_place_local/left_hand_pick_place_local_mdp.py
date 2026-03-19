@@ -453,7 +453,7 @@ def task_success_mask(env) -> torch.Tensor:
     return env._pp_recent_success
 
 
-def target_pos_command_obs(
+def _sync_pick_place_term_state(
     env,
     place_episode_ratio: float = 0.5,
     success_threshold: float = 0.06,
@@ -481,6 +481,36 @@ def target_pos_command_obs(
         x_range=x_range,
         y_range=y_range,
     )
+
+
+def target_pos_command_obs(
+    env,
+    place_episode_ratio: float = 0.5,
+    success_threshold: float = 0.06,
+    success_hold_steps: int = 10,
+    per_target_timeout_s: float = 6.0,
+    pregrasp_height: float = 0.08,
+    preplace_height: float = 0.08,
+    base_speed_threshold: float = 0.10,
+    hand_speed_threshold: float = 0.14,
+    pre_target_switch_radius: float = 0.12,
+    x_range: tuple[float, float] = (0.36, 0.58),
+    y_range: tuple[float, float] = (0.10, 0.26),
+):
+    _sync_pick_place_term_state(
+        env,
+        place_episode_ratio=place_episode_ratio,
+        success_threshold=success_threshold,
+        success_hold_steps=success_hold_steps,
+        per_target_timeout_s=per_target_timeout_s,
+        pregrasp_height=pregrasp_height,
+        preplace_height=preplace_height,
+        base_speed_threshold=base_speed_threshold,
+        hand_speed_threshold=hand_speed_threshold,
+        pre_target_switch_radius=pre_target_switch_radius,
+        x_range=x_range,
+        y_range=y_range,
+    )
     return _active_target_pos_base_yaw(env)
 
 
@@ -490,6 +520,11 @@ def target_relative_base_stance_l2(
     success_threshold: float = 0.06,
     success_hold_steps: int = 10,
     per_target_timeout_s: float = 6.0,
+    pregrasp_height: float = 0.08,
+    preplace_height: float = 0.08,
+    base_speed_threshold: float = 0.10,
+    hand_speed_threshold: float = 0.14,
+    pre_target_switch_radius: float = 0.12,
     x_range: tuple[float, float] = (0.36, 0.58),
     y_range: tuple[float, float] = (0.10, 0.26),
 ):
@@ -499,6 +534,11 @@ def target_relative_base_stance_l2(
         success_threshold=success_threshold,
         success_hold_steps=success_hold_steps,
         per_target_timeout_s=per_target_timeout_s,
+        pregrasp_height=pregrasp_height,
+        preplace_height=preplace_height,
+        base_speed_threshold=base_speed_threshold,
+        hand_speed_threshold=hand_speed_threshold,
+        pre_target_switch_radius=pre_target_switch_radius,
         x_range=x_range,
         y_range=y_range,
     )
@@ -511,6 +551,11 @@ def target_relative_base_stance_ready(
     success_threshold: float = 0.06,
     success_hold_steps: int = 10,
     per_target_timeout_s: float = 6.0,
+    pregrasp_height: float = 0.08,
+    preplace_height: float = 0.08,
+    base_speed_threshold: float = 0.10,
+    hand_speed_threshold: float = 0.14,
+    pre_target_switch_radius: float = 0.12,
     x_range: tuple[float, float] = (0.36, 0.58),
     y_range: tuple[float, float] = (0.10, 0.26),
     gate_std: float = 0.01,
@@ -521,6 +566,11 @@ def target_relative_base_stance_ready(
         success_threshold=success_threshold,
         success_hold_steps=success_hold_steps,
         per_target_timeout_s=per_target_timeout_s,
+        pregrasp_height=pregrasp_height,
+        preplace_height=preplace_height,
+        base_speed_threshold=base_speed_threshold,
+        hand_speed_threshold=hand_speed_threshold,
+        pre_target_switch_radius=pre_target_switch_radius,
         x_range=x_range,
         y_range=y_range,
     )
@@ -533,13 +583,23 @@ def target_relative_base_stance_progress(
     success_threshold: float = 0.06,
     success_hold_steps: int = 10,
     per_target_timeout_s: float = 6.0,
+    pregrasp_height: float = 0.08,
+    preplace_height: float = 0.08,
+    base_speed_threshold: float = 0.10,
+    hand_speed_threshold: float = 0.14,
+    pre_target_switch_radius: float = 0.12,
 ):
-    _sync_pick_place_state(
+    _sync_pick_place_term_state(
         env,
         place_episode_ratio=place_episode_ratio,
         success_threshold=success_threshold,
         success_hold_steps=success_hold_steps,
         per_target_timeout_s=per_target_timeout_s,
+        pregrasp_height=pregrasp_height,
+        preplace_height=preplace_height,
+        base_speed_threshold=base_speed_threshold,
+        hand_speed_threshold=hand_speed_threshold,
+        pre_target_switch_radius=pre_target_switch_radius,
     )
     return env._pp_workspace_progress
 
@@ -551,14 +611,28 @@ def static_target_position_error(
     success_threshold: float = 0.06,
     success_hold_steps: int = 10,
     per_target_timeout_s: float = 6.0,
+    pregrasp_height: float = 0.08,
+    preplace_height: float = 0.08,
+    base_speed_threshold: float = 0.10,
+    hand_speed_threshold: float = 0.14,
+    pre_target_switch_radius: float = 0.12,
+    x_range: tuple[float, float] = (0.36, 0.58),
+    y_range: tuple[float, float] = (0.10, 0.26),
 ):
     del asset_cfg
-    _sync_pick_place_state(
+    _sync_pick_place_term_state(
         env,
         place_episode_ratio=place_episode_ratio,
         success_threshold=success_threshold,
         success_hold_steps=success_hold_steps,
         per_target_timeout_s=per_target_timeout_s,
+        pregrasp_height=pregrasp_height,
+        preplace_height=preplace_height,
+        base_speed_threshold=base_speed_threshold,
+        hand_speed_threshold=hand_speed_threshold,
+        pre_target_switch_radius=pre_target_switch_radius,
+        x_range=x_range,
+        y_range=y_range,
     )
     return env._pp_hand_target_error
 
@@ -570,18 +644,28 @@ def gated_position_command_error_tanh(
     success_threshold: float = 0.06,
     success_hold_steps: int = 10,
     per_target_timeout_s: float = 6.0,
+    pregrasp_height: float = 0.08,
+    preplace_height: float = 0.08,
+    base_speed_threshold: float = 0.10,
+    hand_speed_threshold: float = 0.14,
+    pre_target_switch_radius: float = 0.12,
     x_range: tuple[float, float] = (0.36, 0.58),
     y_range: tuple[float, float] = (0.10, 0.26),
     std: float = 0.14,
     gate_std: float = 0.01,
 ):
     del asset_cfg
-    _sync_pick_place_state(
+    _sync_pick_place_term_state(
         env,
         place_episode_ratio=place_episode_ratio,
         success_threshold=success_threshold,
         success_hold_steps=success_hold_steps,
         per_target_timeout_s=per_target_timeout_s,
+        pregrasp_height=pregrasp_height,
+        preplace_height=preplace_height,
+        base_speed_threshold=base_speed_threshold,
+        hand_speed_threshold=hand_speed_threshold,
+        pre_target_switch_radius=pre_target_switch_radius,
         x_range=x_range,
         y_range=y_range,
     )
@@ -593,11 +677,34 @@ def gated_position_command_error_tanh(
 def target_hold_reward(
     env,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[LEFT_HAND_BODY_NAME]),
+    place_episode_ratio: float = 0.5,
+    success_threshold: float = 0.06,
+    success_hold_steps: int = 10,
+    per_target_timeout_s: float = 6.0,
+    pregrasp_height: float = 0.08,
+    preplace_height: float = 0.08,
+    base_speed_threshold: float = 0.10,
+    hand_speed_threshold: float = 0.14,
+    pre_target_switch_radius: float = 0.12,
+    x_range: tuple[float, float] = (0.36, 0.58),
+    y_range: tuple[float, float] = (0.10, 0.26),
     hold_reward_std: float = 0.02,
-    **kwargs,
 ):
-    del asset_cfg, kwargs
-    _sync_pick_place_state(env)
+    del asset_cfg
+    _sync_pick_place_term_state(
+        env,
+        place_episode_ratio=place_episode_ratio,
+        success_threshold=success_threshold,
+        success_hold_steps=success_hold_steps,
+        per_target_timeout_s=per_target_timeout_s,
+        pregrasp_height=pregrasp_height,
+        preplace_height=preplace_height,
+        base_speed_threshold=base_speed_threshold,
+        hand_speed_threshold=hand_speed_threshold,
+        pre_target_switch_radius=pre_target_switch_radius,
+        x_range=x_range,
+        y_range=y_range,
+    )
     hold_gate = (env._pp_hold_counter > 0).float()
     return hold_gate * torch.exp(-env._pp_hand_target_error / max(hold_reward_std, 1.0e-6))
 
@@ -605,19 +712,67 @@ def target_hold_reward(
 def near_target_left_hand_stillness_reward(
     env,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[LEFT_HAND_BODY_NAME]),
+    place_episode_ratio: float = 0.5,
+    success_threshold: float = 0.06,
+    success_hold_steps: int = 10,
+    per_target_timeout_s: float = 6.0,
+    pregrasp_height: float = 0.08,
+    preplace_height: float = 0.08,
+    base_speed_threshold: float = 0.10,
+    hand_speed_threshold: float = 0.14,
+    pre_target_switch_radius: float = 0.12,
+    x_range: tuple[float, float] = (0.36, 0.58),
+    y_range: tuple[float, float] = (0.10, 0.26),
     near_target_radius: float = 0.12,
     hand_speed_scale: float = 0.08,
-    **kwargs,
 ):
-    del asset_cfg, kwargs
-    _sync_pick_place_state(env)
+    del asset_cfg
+    _sync_pick_place_term_state(
+        env,
+        place_episode_ratio=place_episode_ratio,
+        success_threshold=success_threshold,
+        success_hold_steps=success_hold_steps,
+        per_target_timeout_s=per_target_timeout_s,
+        pregrasp_height=pregrasp_height,
+        preplace_height=preplace_height,
+        base_speed_threshold=base_speed_threshold,
+        hand_speed_threshold=hand_speed_threshold,
+        pre_target_switch_radius=pre_target_switch_radius,
+        x_range=x_range,
+        y_range=y_range,
+    )
     near_target = (env._pp_hand_target_error <= near_target_radius).float()
     return near_target * torch.exp(-env._pp_hand_speed / max(hand_speed_scale, 1.0e-6))
 
 
-def target_completion_bonus(env, **kwargs):
-    del kwargs
-    _sync_pick_place_state(env)
+def target_completion_bonus(
+    env,
+    place_episode_ratio: float = 0.5,
+    success_threshold: float = 0.06,
+    success_hold_steps: int = 10,
+    per_target_timeout_s: float = 6.0,
+    pregrasp_height: float = 0.08,
+    preplace_height: float = 0.08,
+    base_speed_threshold: float = 0.10,
+    hand_speed_threshold: float = 0.14,
+    pre_target_switch_radius: float = 0.12,
+    x_range: tuple[float, float] = (0.36, 0.58),
+    y_range: tuple[float, float] = (0.10, 0.26),
+):
+    _sync_pick_place_term_state(
+        env,
+        place_episode_ratio=place_episode_ratio,
+        success_threshold=success_threshold,
+        success_hold_steps=success_hold_steps,
+        per_target_timeout_s=per_target_timeout_s,
+        pregrasp_height=pregrasp_height,
+        preplace_height=preplace_height,
+        base_speed_threshold=base_speed_threshold,
+        hand_speed_threshold=hand_speed_threshold,
+        pre_target_switch_radius=pre_target_switch_radius,
+        x_range=x_range,
+        y_range=y_range,
+    )
     return env._pp_recent_success.float()
 
 
@@ -625,10 +780,33 @@ def success_posture_bonus(
     env,
     arm_joint_cfg: SceneEntityCfg,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[LEFT_HAND_BODY_NAME]),
-    **kwargs,
+    place_episode_ratio: float = 0.5,
+    success_threshold: float = 0.06,
+    success_hold_steps: int = 10,
+    per_target_timeout_s: float = 6.0,
+    pregrasp_height: float = 0.08,
+    preplace_height: float = 0.08,
+    base_speed_threshold: float = 0.10,
+    hand_speed_threshold: float = 0.14,
+    pre_target_switch_radius: float = 0.12,
+    x_range: tuple[float, float] = (0.36, 0.58),
+    y_range: tuple[float, float] = (0.10, 0.26),
 ):
-    del asset_cfg, kwargs
-    _sync_pick_place_state(env)
+    del asset_cfg
+    _sync_pick_place_term_state(
+        env,
+        place_episode_ratio=place_episode_ratio,
+        success_threshold=success_threshold,
+        success_hold_steps=success_hold_steps,
+        per_target_timeout_s=per_target_timeout_s,
+        pregrasp_height=pregrasp_height,
+        preplace_height=preplace_height,
+        base_speed_threshold=base_speed_threshold,
+        hand_speed_threshold=hand_speed_threshold,
+        pre_target_switch_radius=pre_target_switch_radius,
+        x_range=x_range,
+        y_range=y_range,
+    )
     robot = env.scene[arm_joint_cfg.name]
     deviation = torch.sum(
         torch.abs(robot.data.joint_pos[:, arm_joint_cfg.joint_ids] - robot.data.default_joint_pos[:, arm_joint_cfg.joint_ids]),
@@ -639,13 +817,33 @@ def success_posture_bonus(
 
 def pre_stance_torso_lean_penalty(
     env,
+    place_episode_ratio: float = 0.5,
+    success_threshold: float = 0.06,
+    success_hold_steps: int = 10,
+    per_target_timeout_s: float = 6.0,
+    pregrasp_height: float = 0.08,
+    preplace_height: float = 0.08,
+    base_speed_threshold: float = 0.10,
+    hand_speed_threshold: float = 0.14,
+    pre_target_switch_radius: float = 0.12,
     x_range: tuple[float, float] = (0.36, 0.58),
     y_range: tuple[float, float] = (0.10, 0.26),
     gate_std: float = 0.02,
-    **kwargs,
 ):
-    del kwargs
-    target_pos_base = target_pos_command_obs(env, x_range=x_range, y_range=y_range)
+    target_pos_base = target_pos_command_obs(
+        env,
+        place_episode_ratio=place_episode_ratio,
+        success_threshold=success_threshold,
+        success_hold_steps=success_hold_steps,
+        per_target_timeout_s=per_target_timeout_s,
+        pregrasp_height=pregrasp_height,
+        preplace_height=preplace_height,
+        base_speed_threshold=base_speed_threshold,
+        hand_speed_threshold=hand_speed_threshold,
+        pre_target_switch_radius=pre_target_switch_radius,
+        x_range=x_range,
+        y_range=y_range,
+    )
     gate = _workspace_ready_gate(target_pos_base, x_range=x_range, y_range=y_range, gate_std=gate_std)
     torso_lean = torch.linalg.norm(_robot(env).data.projected_gravity_b[:, :2], dim=-1)
     return (1.0 - gate) * torso_lean
@@ -654,13 +852,33 @@ def pre_stance_torso_lean_penalty(
 def pre_stance_joint_deviation_penalty(
     env,
     asset_cfg: SceneEntityCfg,
+    place_episode_ratio: float = 0.5,
+    success_threshold: float = 0.06,
+    success_hold_steps: int = 10,
+    per_target_timeout_s: float = 6.0,
+    pregrasp_height: float = 0.08,
+    preplace_height: float = 0.08,
+    base_speed_threshold: float = 0.10,
+    hand_speed_threshold: float = 0.14,
+    pre_target_switch_radius: float = 0.12,
     x_range: tuple[float, float] = (0.36, 0.58),
     y_range: tuple[float, float] = (0.10, 0.26),
     gate_std: float = 0.02,
-    **kwargs,
 ):
-    del kwargs
-    target_pos_base = target_pos_command_obs(env, x_range=x_range, y_range=y_range)
+    target_pos_base = target_pos_command_obs(
+        env,
+        place_episode_ratio=place_episode_ratio,
+        success_threshold=success_threshold,
+        success_hold_steps=success_hold_steps,
+        per_target_timeout_s=per_target_timeout_s,
+        pregrasp_height=pregrasp_height,
+        preplace_height=preplace_height,
+        base_speed_threshold=base_speed_threshold,
+        hand_speed_threshold=hand_speed_threshold,
+        pre_target_switch_radius=pre_target_switch_radius,
+        x_range=x_range,
+        y_range=y_range,
+    )
     gate = _workspace_ready_gate(target_pos_base, x_range=x_range, y_range=y_range, gate_std=gate_std)
     robot = env.scene[asset_cfg.name]
     deviation = torch.sum(
@@ -673,14 +891,34 @@ def pre_stance_joint_deviation_penalty(
 def pre_stance_joint_limit_penalty(
     env,
     asset_cfg: SceneEntityCfg,
+    place_episode_ratio: float = 0.5,
+    success_threshold: float = 0.06,
+    success_hold_steps: int = 10,
+    per_target_timeout_s: float = 6.0,
+    pregrasp_height: float = 0.08,
+    preplace_height: float = 0.08,
+    base_speed_threshold: float = 0.10,
+    hand_speed_threshold: float = 0.14,
+    pre_target_switch_radius: float = 0.12,
     margin_threshold: float = 0.18,
     x_range: tuple[float, float] = (0.36, 0.58),
     y_range: tuple[float, float] = (0.10, 0.26),
     gate_std: float = 0.02,
-    **kwargs,
 ):
-    del kwargs
-    target_pos_base = target_pos_command_obs(env, x_range=x_range, y_range=y_range)
+    target_pos_base = target_pos_command_obs(
+        env,
+        place_episode_ratio=place_episode_ratio,
+        success_threshold=success_threshold,
+        success_hold_steps=success_hold_steps,
+        per_target_timeout_s=per_target_timeout_s,
+        pregrasp_height=pregrasp_height,
+        preplace_height=preplace_height,
+        base_speed_threshold=base_speed_threshold,
+        hand_speed_threshold=hand_speed_threshold,
+        pre_target_switch_radius=pre_target_switch_radius,
+        x_range=x_range,
+        y_range=y_range,
+    )
     gate = _workspace_ready_gate(target_pos_base, x_range=x_range, y_range=y_range, gate_std=gate_std)
     robot = env.scene[asset_cfg.name]
     joint_pos = robot.data.joint_pos[:, asset_cfg.joint_ids]
@@ -694,14 +932,34 @@ def pre_stance_joint_limit_penalty(
 def pre_stance_foot_motion_reward(
     env,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["left_ankle_roll_link", "right_ankle_roll_link"]),
+    place_episode_ratio: float = 0.5,
+    success_threshold: float = 0.06,
+    success_hold_steps: int = 10,
+    per_target_timeout_s: float = 6.0,
+    pregrasp_height: float = 0.08,
+    preplace_height: float = 0.08,
+    base_speed_threshold: float = 0.10,
+    hand_speed_threshold: float = 0.14,
+    pre_target_switch_radius: float = 0.12,
     x_range: tuple[float, float] = (0.36, 0.58),
     y_range: tuple[float, float] = (0.10, 0.26),
     gate_std: float = 0.02,
     speed_scale: float = 0.35,
-    **kwargs,
 ):
-    del kwargs
-    target_pos_base = target_pos_command_obs(env, x_range=x_range, y_range=y_range)
+    target_pos_base = target_pos_command_obs(
+        env,
+        place_episode_ratio=place_episode_ratio,
+        success_threshold=success_threshold,
+        success_hold_steps=success_hold_steps,
+        per_target_timeout_s=per_target_timeout_s,
+        pregrasp_height=pregrasp_height,
+        preplace_height=preplace_height,
+        base_speed_threshold=base_speed_threshold,
+        hand_speed_threshold=hand_speed_threshold,
+        pre_target_switch_radius=pre_target_switch_radius,
+        x_range=x_range,
+        y_range=y_range,
+    )
     gate = _workspace_ready_gate(target_pos_base, x_range=x_range, y_range=y_range, gate_std=gate_std)
     robot = env.scene[asset_cfg.name]
     foot_vel_xy = robot.data.body_lin_vel_w[:, asset_cfg.body_ids, :2] - robot.data.root_lin_vel_w[:, None, :2]
@@ -709,13 +967,63 @@ def pre_stance_foot_motion_reward(
     return (1.0 - gate) * torch.tanh(foot_speed / max(speed_scale, 1.0e-6))
 
 
-def target_success_reached(env, **kwargs):
-    del kwargs
-    _sync_pick_place_state(env)
+def target_success_reached(
+    env,
+    place_episode_ratio: float = 0.5,
+    success_threshold: float = 0.06,
+    success_hold_steps: int = 10,
+    per_target_timeout_s: float = 6.0,
+    pregrasp_height: float = 0.08,
+    preplace_height: float = 0.08,
+    base_speed_threshold: float = 0.10,
+    hand_speed_threshold: float = 0.14,
+    pre_target_switch_radius: float = 0.12,
+    x_range: tuple[float, float] = (0.36, 0.58),
+    y_range: tuple[float, float] = (0.10, 0.26),
+):
+    _sync_pick_place_term_state(
+        env,
+        place_episode_ratio=place_episode_ratio,
+        success_threshold=success_threshold,
+        success_hold_steps=success_hold_steps,
+        per_target_timeout_s=per_target_timeout_s,
+        pregrasp_height=pregrasp_height,
+        preplace_height=preplace_height,
+        base_speed_threshold=base_speed_threshold,
+        hand_speed_threshold=hand_speed_threshold,
+        pre_target_switch_radius=pre_target_switch_radius,
+        x_range=x_range,
+        y_range=y_range,
+    )
     return env._pp_recent_success
 
 
-def target_timeout_reached(env, per_target_timeout_s: float = 6.0, **kwargs):
-    del kwargs, per_target_timeout_s
-    _sync_pick_place_state(env)
+def target_timeout_reached(
+    env,
+    place_episode_ratio: float = 0.5,
+    success_threshold: float = 0.06,
+    success_hold_steps: int = 10,
+    per_target_timeout_s: float = 6.0,
+    pregrasp_height: float = 0.08,
+    preplace_height: float = 0.08,
+    base_speed_threshold: float = 0.10,
+    hand_speed_threshold: float = 0.14,
+    pre_target_switch_radius: float = 0.12,
+    x_range: tuple[float, float] = (0.36, 0.58),
+    y_range: tuple[float, float] = (0.10, 0.26),
+):
+    _sync_pick_place_term_state(
+        env,
+        place_episode_ratio=place_episode_ratio,
+        success_threshold=success_threshold,
+        success_hold_steps=success_hold_steps,
+        per_target_timeout_s=per_target_timeout_s,
+        pregrasp_height=pregrasp_height,
+        preplace_height=preplace_height,
+        base_speed_threshold=base_speed_threshold,
+        hand_speed_threshold=hand_speed_threshold,
+        pre_target_switch_radius=pre_target_switch_radius,
+        x_range=x_range,
+        y_range=y_range,
+    )
     return env._pp_timed_out

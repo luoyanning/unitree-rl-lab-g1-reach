@@ -588,6 +588,8 @@ def target_relative_base_stance_progress(
     base_speed_threshold: float = 0.10,
     hand_speed_threshold: float = 0.14,
     pre_target_switch_radius: float = 0.12,
+    x_range: tuple[float, float] = (0.36, 0.58),
+    y_range: tuple[float, float] = (0.10, 0.26),
 ):
     _sync_pick_place_term_state(
         env,
@@ -600,6 +602,8 @@ def target_relative_base_stance_progress(
         base_speed_threshold=base_speed_threshold,
         hand_speed_threshold=hand_speed_threshold,
         pre_target_switch_radius=pre_target_switch_radius,
+        x_range=x_range,
+        y_range=y_range,
     )
     return env._pp_workspace_progress
 

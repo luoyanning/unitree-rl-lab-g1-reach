@@ -42,8 +42,6 @@ LOWER_JOINT_NAMES = [
 
 UPPER_JOINT_NAMES = [
     "waist_yaw_joint",
-    "waist_roll_joint",
-    "waist_pitch_joint",
     "left_shoulder_pitch_joint",
     "left_shoulder_roll_joint",
     "left_shoulder_yaw_joint",
@@ -61,6 +59,7 @@ UPPER_JOINT_NAMES = [
 ]
 
 ALL_JOINT_NAMES = LOWER_JOINT_NAMES + UPPER_JOINT_NAMES
+FIXED_WAIST_JOINT_NAMES = ["waist_roll_joint", "waist_pitch_joint"]
 
 MIRROR_JOINT_PAIRS = [
     ("left_hip_yaw_joint", "right_hip_yaw_joint"),
@@ -86,7 +85,6 @@ MIRROR_NEGATE_JOINT_NAMES = (
     "left_ankle_roll_joint",
     "right_ankle_roll_joint",
     "waist_yaw_joint",
-    "waist_roll_joint",
     "left_shoulder_roll_joint",
     "right_shoulder_roll_joint",
     "left_shoulder_yaw_joint",
@@ -165,6 +163,7 @@ class G1HomieLowerBodyEnvCfg(DirectRLEnvCfg):
     lower_joint_names = LOWER_JOINT_NAMES
     upper_joint_names = UPPER_JOINT_NAMES
     all_joint_names = ALL_JOINT_NAMES
+    fixed_waist_joint_names = FIXED_WAIST_JOINT_NAMES
     mirror_joint_pairs = MIRROR_JOINT_PAIRS
     mirror_negate_joint_names = MIRROR_NEGATE_JOINT_NAMES
     foot_body_names = FOOT_BODY_NAMES
@@ -315,6 +314,7 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         self._lower_joint_ids = self._find_joint_ids(self.cfg.lower_joint_names)
         self._upper_joint_ids = self._find_joint_ids(self.cfg.upper_joint_names)
         self._all_joint_ids = self._find_joint_ids(self.cfg.all_joint_names)
+        self._fixed_waist_joint_ids = self._find_joint_ids(self.cfg.fixed_waist_joint_names)
         self._torso_body_id = int(self.robot.find_bodies([self.cfg.torso_body_name], preserve_order=True)[0][0])
         try:
             self._imu_body_id = int(self.robot.find_bodies([self.cfg.imu_body_name], preserve_order=True)[0][0])
@@ -341,6 +341,7 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         self._default_joint_pos = self.robot.data.default_joint_pos[0, self._all_joint_ids].clone()
         self._default_lower_joint_pos = self.robot.data.default_joint_pos[0, self._lower_joint_ids].clone()
         self._default_upper_joint_pos = self.robot.data.default_joint_pos[0, self._upper_joint_ids].clone()
+        self._default_fixed_waist_joint_pos = self.robot.data.default_joint_pos[0, self._fixed_waist_joint_ids].clone()
         self._homie_joint_pos_limits = self._compute_homie_soft_limits(self._lower_joint_ids)
 
         self._lower_joint_min = self._hard_joint_limits[self._lower_joint_ids, 0]
@@ -538,7 +539,7 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self._origin_actions = actions.clone()
-        self._actions = torch.clamp(actions.clone(), -1.0, 1.0)
+        self._actions = actions.clone()
         if self.cfg.randomize_joint_injection:
             self._joint_injection = sample_uniform(
                 self.cfg.joint_injection_range[0],
@@ -584,6 +585,9 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         # Lower body follows OpenHomie's M-controller: env-computed torques with an explicit effort actuator path.
         self.robot.set_joint_position_target(self._lower_joint_targets, joint_ids=self._lower_joint_ids)
         self.robot.set_joint_effort_target(self._torques, joint_ids=self._lower_joint_ids)
+        if self._fixed_waist_joint_ids.numel() > 0:
+            fixed_waist_targets = self._default_fixed_waist_joint_pos.unsqueeze(0).repeat(self.num_envs, 1)
+            self.robot.set_joint_position_target(fixed_waist_targets, joint_ids=self._fixed_waist_joint_ids)
         self.robot.set_joint_position_target(self._upper_pose_current, joint_ids=self._upper_joint_ids)
 
     def _get_observations(self) -> dict[str, torch.Tensor]:
@@ -658,7 +662,8 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             self.robot.data.body_pos_w[:, self._termination_contact_body_ids, 2] < self.cfg.termination_body_height_threshold,
             dim=1,
         )
-        died = termination_contact
+        gravity_termination = torch.linalg.norm(self._torso_projected_gravity[:, :2], dim=-1) > 0.8
+        died = termination_contact | gravity_termination
         return died, time_out
 
     def _reset_idx(self, env_ids: Sequence[int] | None):
@@ -719,12 +724,16 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             min=self._hard_joint_limits[:, 0].unsqueeze(0),
             max=self._hard_joint_limits[:, 1].unsqueeze(0),
         )
+        if self._fixed_waist_joint_ids.numel() > 0:
+            joint_pos[:, self._fixed_waist_joint_ids] = self.robot.data.default_joint_pos[env_ids][:, self._fixed_waist_joint_ids]
         joint_vel += sample_uniform(
             -self.cfg.reset_joint_velocity_noise,
             self.cfg.reset_joint_velocity_noise,
             (num_resets, joint_vel.shape[1]),
             self.device,
         )
+        if self._fixed_waist_joint_ids.numel() > 0:
+            joint_vel[:, self._fixed_waist_joint_ids] = 0.0
 
         self.robot.write_root_pose_to_sim(root_state[:, :7], env_ids)
         self.robot.write_root_velocity_to_sim(root_state[:, 7:], env_ids)

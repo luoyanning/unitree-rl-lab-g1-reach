@@ -21,7 +21,7 @@ class HomieLowerBodyPPORunnerCfg(BasePPORunnerCfg):
         self.num_steps_per_env = 50
         self.max_iterations = 5000
         self.save_interval = 20
-        self.clip_actions = 1.0
+        self.clip_actions = 100.0
         self.empirical_normalization = False
 
         self.algorithm.learning_rate = 1.0e-3

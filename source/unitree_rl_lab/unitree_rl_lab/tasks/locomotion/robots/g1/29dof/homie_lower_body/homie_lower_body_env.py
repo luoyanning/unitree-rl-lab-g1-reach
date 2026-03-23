@@ -137,8 +137,8 @@ class EventCfg:
     push_robot = EventTerm(
         func=mdp.push_by_setting_velocity,
         mode="interval",
-        interval_range_s=(4.0, 7.0),
-        params={"velocity_range": {"x": (-0.35, 0.35), "y": (-0.18, 0.18)}},
+        interval_range_s=(6.0, 10.0),
+        params={"velocity_range": {"x": (-0.20, 0.20), "y": (-0.10, 0.10)}},
     )
 
 
@@ -184,22 +184,23 @@ class G1HomieLowerBodyEnvCfg(DirectRLEnvCfg):
     command_resample_interval_s = 4.0
     command_transition_duration_s = 0.75
     command_vx_range = (-0.6, 1.0)
-    command_yaw_rate_range = (-0.9, 0.9)
+    command_yaw_rate_range = (-0.75, 0.75)
     stand_height_range = (0.72, 0.82)
     squat_height_range = (0.56, 0.70)
     stationary_command_fraction = 0.10
-    squat_env_fraction = 0.35
-    squat_probability_preferred = 0.70
-    squat_probability_regular = 0.25
+    squat_env_fraction = 0.25
+    squat_probability_preferred = 0.55
+    squat_probability_regular = 0.15
     squat_velocity_scale = 0.35
     squat_yaw_rate_scale = 0.45
 
     upper_body_resample_interval_s = 1.0
     upper_curriculum_init = 0.05
-    upper_curriculum_step = 0.05
-    upper_curriculum_demote_step = 0.02
-    upper_curriculum_promote_threshold = 0.72
-    upper_curriculum_demote_threshold = 0.46
+    upper_curriculum_step = 0.02
+    upper_curriculum_demote_step = 0.04
+    upper_curriculum_promote_threshold = 0.80
+    upper_curriculum_demote_threshold = 0.55
+    upper_curriculum_max_progress = 0.60
     upper_curriculum_eval_fixed = False
 
     reset_xy_noise = 0.15
@@ -218,7 +219,7 @@ class G1HomieLowerBodyEnvCfg(DirectRLEnvCfg):
     obs_gravity_noise = 0.02
 
     lin_vel_tracking_sigma = 0.20
-    yaw_rate_tracking_sigma = 0.25
+    yaw_rate_tracking_sigma = 0.35
     height_tracking_sigma = 0.035
     knee_guidance_sigma = 0.10
     foot_clearance_target = 0.11
@@ -226,7 +227,7 @@ class G1HomieLowerBodyEnvCfg(DirectRLEnvCfg):
     foot_clearance_tanh_mult = 2.0
 
     rew_scale_track_lin_vel = 1.5
-    rew_scale_track_yaw_rate = 1.0
+    rew_scale_track_yaw_rate = 1.4
     rew_scale_track_height = 2.0
     rew_scale_knee_guidance = 0.8
     rew_scale_alive = 0.05
@@ -253,6 +254,7 @@ class G1HomieLowerBodyPlayEnvCfg(G1HomieLowerBodyEnvCfg):
         super().__post_init__()
         self.scene.num_envs = 32
         self.upper_curriculum_init = 1.0
+        self.upper_curriculum_max_progress = 1.0
         self.upper_curriculum_eval_fixed = True
         self.events.push_robot = None
         self.events.physics_material = None
@@ -807,7 +809,9 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
     def _sample_upper_body_pose_targets(self, batch_size: int) -> torch.Tensor:
         lower_delta = self._upper_joint_min - self._default_upper_joint_pos
         upper_delta = self._upper_joint_max - self._default_upper_joint_pos
-        progress = 1.0 if self.cfg.upper_curriculum_eval_fixed else self._upper_curriculum_progress
+        progress = 1.0 if self.cfg.upper_curriculum_eval_fixed else min(
+            self._upper_curriculum_progress, self.cfg.upper_curriculum_max_progress
+        )
         low = (
             self._default_upper_joint_pos.unsqueeze(0)
             + progress * lower_delta.unsqueeze(0)
@@ -824,6 +828,7 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             self._upper_curriculum_progress = 1.0
             return
 
+        self._upper_curriculum_progress = min(self._upper_curriculum_progress, self.cfg.upper_curriculum_max_progress)
         tracking_score = (
             self._metric_episode_sums["lin_vel_tracking_score"][env_ids]
             + self._metric_episode_sums["yaw_tracking_score"][env_ids]
@@ -834,7 +839,10 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         # Corresponds to HOMIE's tracking-driven action curriculum, but the expanded range is the
         # internally generated upper-body target trajectory instead of the policy action envelope.
         if mean_score > self.cfg.upper_curriculum_promote_threshold:
-            self._upper_curriculum_progress = min(1.0, self._upper_curriculum_progress + self.cfg.upper_curriculum_step)
+            self._upper_curriculum_progress = min(
+                self.cfg.upper_curriculum_max_progress,
+                self._upper_curriculum_progress + self.cfg.upper_curriculum_step,
+            )
         elif mean_score < self.cfg.upper_curriculum_demote_threshold:
             self._upper_curriculum_progress = max(
                 self.cfg.upper_curriculum_init,

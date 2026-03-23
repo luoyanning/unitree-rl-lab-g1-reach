@@ -14,7 +14,7 @@ from .homie_lower_body_symmetry import maybe_get_symmetry_cfg_kwargs
 class HomieLowerBodyPPORunnerCfg(BasePPORunnerCfg):
     def __post_init__(self):
         self.obs_groups = {"policy": ["policy"], "critic": ["critic"]}
-        self.policy.init_noise_std = 0.5
+        self.policy.init_noise_std = 0.35
         self.policy.actor_hidden_dims = [512, 256, 128]
         self.policy.critic_hidden_dims = [512, 256, 128]
 
@@ -24,13 +24,13 @@ class HomieLowerBodyPPORunnerCfg(BasePPORunnerCfg):
         self.clip_actions = 1.0
         self.empirical_normalization = False
 
-        self.algorithm.learning_rate = 1.0e-4
-        self.algorithm.entropy_coef = 0.005
+        self.algorithm.learning_rate = 7.5e-5
+        self.algorithm.entropy_coef = 0.002
         self.algorithm.num_learning_epochs = 5
         self.algorithm.num_mini_batches = 4
         self.algorithm.gamma = 0.99
         self.algorithm.lam = 0.95
-        self.algorithm.desired_kl = 0.01
+        self.algorithm.desired_kl = 0.008
 
         if RslRlSymmetryCfg is not None:
             self.algorithm.symmetry_cfg = RslRlSymmetryCfg(**maybe_get_symmetry_cfg_kwargs())

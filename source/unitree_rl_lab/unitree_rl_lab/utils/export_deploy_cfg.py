@@ -70,18 +70,20 @@ def export_deploy_cfg(env, log_dir):
         for item_name in ["lin_vel_x", "lin_vel_y", "ang_vel_z"]:
             ranges[item_name] = list(ranges[item_name])
         cfg["commands"]["base_velocity"]["ranges"] = ranges
-    elif all(hasattr(env.cfg, name) for name in ["command_vx_range", "command_yaw_rate_range", "stand_height_range"]):
+    elif all(hasattr(env.cfg, name) for name in ["command_vx_range", "command_vy_range", "command_yaw_rate_range"]):
         cfg["commands"]["homie"] = {
             "ranges": {
                 "vx": list(env.cfg.command_vx_range),
+                "vy": list(env.cfg.command_vy_range),
                 "yaw_rate": list(env.cfg.command_yaw_rate_range),
-                "target_height_stand": list(env.cfg.stand_height_range),
             },
             "resample_interval_s": getattr(env.cfg, "command_resample_interval_s", None),
             "transition_duration_s": getattr(env.cfg, "command_transition_duration_s", None),
         }
-        if hasattr(env.cfg, "squat_height_range"):
-            cfg["commands"]["homie"]["ranges"]["target_height_squat"] = list(env.cfg.squat_height_range)
+        if hasattr(env.cfg, "base_height_target"):
+            cfg["commands"]["homie"]["base_height_target"] = format_value(env.cfg.base_height_target)
+        if hasattr(env.cfg, "command_height_offset_range"):
+            cfg["commands"]["homie"]["ranges"]["target_height_offset"] = list(env.cfg.command_height_offset_range)
 
     # --- actions ---
     cfg["actions"] = {}

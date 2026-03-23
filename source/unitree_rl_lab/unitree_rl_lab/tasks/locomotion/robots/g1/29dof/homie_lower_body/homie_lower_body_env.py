@@ -100,14 +100,14 @@ MIRROR_NEGATE_JOINT_NAMES = (
 FOOT_BODY_NAMES = ["left_ankle_roll_link", "right_ankle_roll_link"]
 ANKLE_SOLE_DISTANCE = 0.02
 
-COMMAND_DIM = 3
+COMMAND_DIM = 4
 ANG_VEL_DIM = 3
 GRAVITY_DIM = 3
 ALL_JOINT_DIM = len(ALL_JOINT_NAMES)
 LOWER_ACTION_DIM = len(LOWER_JOINT_NAMES)
 UPPER_JOINT_DIM = len(UPPER_JOINT_NAMES)
 POLICY_FRAME_DIM = COMMAND_DIM + ANG_VEL_DIM + GRAVITY_DIM + 2 * ALL_JOINT_DIM + LOWER_ACTION_DIM
-CRITIC_EXTRA_DIM = 3 + UPPER_JOINT_DIM + 2
+CRITIC_EXTRA_DIM = 3 + UPPER_JOINT_DIM + 1
 
 
 @configclass
@@ -119,8 +119,8 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
-            "static_friction_range": (0.4, 1.25),
-            "dynamic_friction_range": (0.4, 1.25),
+            "static_friction_range": (0.1, 3.0),
+            "dynamic_friction_range": (0.1, 3.0),
             "restitution_range": (0.0, 0.0),
             "num_buckets": 32,
         },
@@ -130,15 +130,15 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
-            "mass_distribution_params": (-1.5, 3.0),
+            "mass_distribution_params": (-5.0, 10.0),
             "operation": "add",
         },
     )
     push_robot = EventTerm(
         func=mdp.push_by_setting_velocity,
         mode="interval",
-        interval_range_s=(6.0, 10.0),
-        params={"velocity_range": {"x": (-0.20, 0.20), "y": (-0.10, 0.10)}},
+        interval_range_s=(4.0, 4.0),
+        params={"velocity_range": {"x": (-0.50, 0.50), "y": (-0.50, 0.50)}},
     )
 
 
@@ -170,7 +170,7 @@ class G1HomieLowerBodyEnvCfg(DirectRLEnvCfg):
     mirror_negate_joint_names = MIRROR_NEGATE_JOINT_NAMES
     foot_body_names = FOOT_BODY_NAMES
 
-    history_length = 5
+    history_length = 6
     action_scale = 0.25
     clip_joint_targets_to_soft_limits = True
     upper_soft_limit_factor = 0.9
@@ -183,20 +183,17 @@ class G1HomieLowerBodyEnvCfg(DirectRLEnvCfg):
 
     command_resample_interval_s = 4.0
     command_transition_duration_s = 0.75
-    command_vx_range = (-0.6, 1.0)
-    command_yaw_rate_range = (-0.75, 0.75)
-    stand_height_range = (0.72, 0.82)
-    squat_height_range = (0.56, 0.70)
-    stationary_command_fraction = 0.10
-    squat_env_fraction = 0.25
-    squat_probability_preferred = 0.55
-    squat_probability_regular = 0.15
-    squat_velocity_scale = 0.35
-    squat_yaw_rate_scale = 0.45
+    command_vx_range = (-0.8, 1.2)
+    command_vy_range = (-0.5, 0.5)
+    command_yaw_rate_range = (-0.8, 0.8)
+    base_height_target = 0.74
+    command_height_offset_range = (-0.5, 0.0)
+    height_command_probability = 1.0 / 3.0
+    velocity_command_probability = 0.5
 
     upper_body_resample_interval_s = 1.0
-    upper_curriculum_init = 0.05
-    upper_curriculum_step = 0.02
+    upper_curriculum_init = 0.0
+    upper_curriculum_step = 0.05
     upper_curriculum_demote_step = 0.04
     upper_curriculum_promote_threshold = 0.80
     upper_curriculum_demote_threshold = 0.55
@@ -207,45 +204,49 @@ class G1HomieLowerBodyEnvCfg(DirectRLEnvCfg):
     reset_yaw_noise = math.pi
     reset_root_z_noise = (-0.02, 0.03)
     reset_root_velocity_noise = 0.15
-    reset_joint_position_scale = (0.92, 1.08)
-    reset_joint_position_offset = (-0.06, 0.06)
+    reset_joint_position_scale = (0.8, 1.2)
+    reset_joint_position_offset = (-0.10, 0.10)
     reset_joint_velocity_noise = 0.12
 
-    obs_ang_vel_scale = 0.25
+    obs_command_lin_vel_scale = 2.0
+    obs_command_ang_vel_scale = 0.5
+    obs_base_lin_vel_scale = 2.0
+    obs_ang_vel_scale = 0.5
     obs_joint_vel_scale = 0.05
-    obs_joint_pos_noise = 0.01
-    obs_joint_vel_noise = 0.35
-    obs_ang_vel_noise = 0.08
-    obs_gravity_noise = 0.02
+    obs_joint_pos_noise = 0.02
+    obs_joint_vel_noise = 0.10
+    obs_ang_vel_noise = 0.15
+    obs_gravity_noise = 0.05
 
-    lin_vel_tracking_sigma = 0.20
-    yaw_rate_tracking_sigma = 0.35
-    height_tracking_sigma = 0.035
+    lin_vel_tracking_sigma = 0.25
+    yaw_rate_tracking_sigma = 0.25
+    height_tracking_alpha = 4.0
     knee_guidance_sigma = 0.10
-    foot_clearance_target = 0.11
+    foot_clearance_target = 0.14
     foot_clearance_sigma = 0.05
     foot_clearance_tanh_mult = 2.0
 
     rew_scale_track_lin_vel = 1.5
-    rew_scale_track_yaw_rate = 1.4
+    rew_scale_track_lin_vel_y = 1.0
+    rew_scale_track_yaw_rate = 2.0
     rew_scale_track_height = 2.0
     rew_scale_knee_guidance = 0.8
     rew_scale_alive = 0.05
     rew_scale_foot_clearance = 0.25
-    rew_scale_orientation = -1.0
+    rew_scale_orientation = -1.5
     rew_scale_vertical_vel = -0.5
-    rew_scale_ang_vel_xy = -0.05
+    rew_scale_ang_vel_xy = -0.025
     rew_scale_action_rate = -0.01
     rew_scale_joint_vel = -1.0e-4
     rew_scale_joint_acc = -2.5e-7
     rew_scale_power = -2.0e-5
-    rew_scale_joint_limit = -1.5
-    rew_scale_feet_slip = -0.05
+    rew_scale_joint_limit = -2.0
+    rew_scale_feet_slip = -0.25
     rew_scale_symmetry_joint = -0.05
 
     def __post_init__(self):
         self.observation_space = self.history_length * POLICY_FRAME_DIM
-        self.state_space = self.observation_space + CRITIC_EXTRA_DIM
+        self.state_space = POLICY_FRAME_DIM + CRITIC_EXTRA_DIM
 
 
 @configclass
@@ -311,9 +312,6 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         self._command_start = torch.zeros_like(self._current_command)
         self._command_goal = torch.zeros_like(self._current_command)
         self._command_interp_step = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
-        self._command_is_squat = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-        self._squat_preference = torch.rand(self.num_envs, device=self.device) < self.cfg.squat_env_fraction
-
         self._upper_pose_current = self._default_upper_joint_pos.unsqueeze(0).repeat(self.num_envs, 1)
         self._upper_pose_start = self._upper_pose_current.clone()
         self._upper_pose_goal = self._upper_pose_current.clone()
@@ -326,6 +324,7 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
 
         self._reward_names = [
             "track_lin_vel",
+            "track_lin_vel_y",
             "track_yaw_rate",
             "track_height",
             "knee_guidance",
@@ -347,15 +346,20 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         }
         self._metric_episode_sums = {
             "linear_velocity_tracking_error": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
+            "forward_velocity_tracking_error": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
+            "lateral_velocity_tracking_error": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
             "yaw_tracking_error": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
             "height_tracking_error": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
             "symmetry_joint_error": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
-            "lin_vel_tracking_score": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
+            "lin_vel_x_tracking_score": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
+            "lin_vel_y_tracking_score": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
             "yaw_tracking_score": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
             "height_tracking_score": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
         }
         self._last_episode_metrics = {
             "linear_velocity_tracking_error": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
+            "forward_velocity_tracking_error": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
+            "lateral_velocity_tracking_error": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
             "yaw_tracking_error": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
             "height_tracking_error": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
             "symmetry_joint_error": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
@@ -431,16 +435,16 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
 
     def _get_observations(self) -> dict[str, torch.Tensor]:
         current_frame = self._build_policy_frame(apply_noise=True)
+        critic_frame = self._build_policy_frame(apply_noise=False)
         self._policy_history = torch.roll(self._policy_history, shifts=-1, dims=1)
         self._policy_history[:, -1, :] = current_frame
 
         policy_obs = self._policy_history.reshape(self.num_envs, -1)
         critic_obs = torch.cat(
             (
-                policy_obs,
-                self._base_lin_vel_b,
+                critic_frame,
+                self._base_lin_vel_b * self.cfg.obs_base_lin_vel_scale,
                 self._upper_pose_current - self._default_upper_joint_pos.unsqueeze(0),
-                self._command_is_squat.unsqueeze(-1).float(),
                 torch.full((self.num_envs, 1), self._upper_curriculum_progress, device=self.device),
             ),
             dim=-1,
@@ -448,6 +452,8 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
 
         current_metrics = self.get_current_eval_metrics()
         self.extras["track/linear_velocity_tracking_error"] = current_metrics["linear_velocity_tracking_error"].detach()
+        self.extras["track/forward_velocity_tracking_error"] = current_metrics["forward_velocity_tracking_error"].detach()
+        self.extras["track/lateral_velocity_tracking_error"] = current_metrics["lateral_velocity_tracking_error"].detach()
         self.extras["track/yaw_tracking_error"] = current_metrics["yaw_tracking_error"].detach()
         self.extras["track/height_tracking_error"] = current_metrics["height_tracking_error"].detach()
         self.extras["track/symmetry_joint_error"] = current_metrics["symmetry_joint_error"].detach()
@@ -465,16 +471,26 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             self._reward_episode_sums[name] += term
 
         current_metrics = self.get_current_eval_metrics()
-        for name in ("linear_velocity_tracking_error", "yaw_tracking_error", "height_tracking_error", "symmetry_joint_error"):
+        for name in (
+            "linear_velocity_tracking_error",
+            "forward_velocity_tracking_error",
+            "lateral_velocity_tracking_error",
+            "yaw_tracking_error",
+            "height_tracking_error",
+            "symmetry_joint_error",
+        ):
             self._metric_episode_sums[name] += current_metrics[name]
-        self._metric_episode_sums["lin_vel_tracking_score"] += torch.exp(
+        self._metric_episode_sums["lin_vel_x_tracking_score"] += torch.exp(
             -torch.square(self._current_command[:, 0] - self._base_lin_vel_b[:, 0]) / self.cfg.lin_vel_tracking_sigma
         )
+        self._metric_episode_sums["lin_vel_y_tracking_score"] += torch.exp(
+            -torch.square(self._current_command[:, 1] - self._base_lin_vel_b[:, 1]) / self.cfg.lin_vel_tracking_sigma
+        )
         self._metric_episode_sums["yaw_tracking_score"] += torch.exp(
-            -torch.square(self._current_command[:, 1] - self._base_ang_vel_b[:, 2]) / self.cfg.yaw_rate_tracking_sigma
+            -torch.square(self._current_command[:, 2] - self._base_ang_vel_b[:, 2]) / self.cfg.yaw_rate_tracking_sigma
         )
         self._metric_episode_sums["height_tracking_score"] += torch.exp(
-            -torch.square(self._current_command[:, 2] - self._base_height) / self.cfg.height_tracking_sigma
+            -torch.abs(self._current_command[:, 3] - self._base_height) * self.cfg.height_tracking_alpha
         )
         return reward
 
@@ -580,7 +596,14 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
     def _build_policy_frame(self, apply_noise: bool) -> torch.Tensor:
         frame = torch.cat(
             (
-                self._current_command,
+                torch.cat(
+                    (
+                        self._current_command[:, :2] * self.cfg.obs_command_lin_vel_scale,
+                        self._current_command[:, 2:3] * self.cfg.obs_command_ang_vel_scale,
+                        self._current_command[:, 3:4],
+                    ),
+                    dim=-1,
+                ),
                 self._base_ang_vel_b * self.cfg.obs_ang_vel_scale,
                 self._torso_projected_gravity,
                 self._all_joint_pos - self._default_joint_pos.unsqueeze(0),
@@ -639,29 +662,31 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
 
     def _compute_reward_terms(self) -> dict[str, torch.Tensor]:
         command_vx = self._current_command[:, 0]
-        command_yaw = self._current_command[:, 1]
-        command_height = self._current_command[:, 2]
+        command_vy = self._current_command[:, 1]
+        command_yaw = self._current_command[:, 2]
+        command_height = self._current_command[:, 3]
 
         lin_vel_error = command_vx - self._base_lin_vel_b[:, 0]
+        lin_vel_y_error = command_vy - self._base_lin_vel_b[:, 1]
         yaw_rate_error = command_yaw - self._base_ang_vel_b[:, 2]
         height_error = command_height - self._base_height
 
         track_lin_vel = self.cfg.rew_scale_track_lin_vel * torch.exp(
             -torch.square(lin_vel_error) / self.cfg.lin_vel_tracking_sigma
         )
+        track_lin_vel_y = self.cfg.rew_scale_track_lin_vel_y * torch.exp(
+            -torch.square(lin_vel_y_error) / self.cfg.lin_vel_tracking_sigma
+        )
         track_yaw_rate = self.cfg.rew_scale_track_yaw_rate * torch.exp(
             -torch.square(yaw_rate_error) / self.cfg.yaw_rate_tracking_sigma
         )
-        track_height = self.cfg.rew_scale_track_height * torch.exp(
-            -torch.square(height_error) / self.cfg.height_tracking_sigma
-        )
+        track_height = self.cfg.rew_scale_track_height * torch.exp(-torch.abs(height_error) * self.cfg.height_tracking_alpha)
 
         knee_pos = self._all_joint_pos[:, [3, 9]]
         knee_default = self._default_joint_pos[[3, 9]].unsqueeze(0)
         knee_upper = self._soft_joint_limits[self._lower_joint_ids[[3, 9]], 1].unsqueeze(0)
         desired_squat_ratio = torch.clamp(
-            (self.cfg.stand_height_range[1] - command_height)
-            / max(self.cfg.stand_height_range[1] - self.cfg.squat_height_range[0], 1.0e-6),
+            (self.cfg.base_height_target - command_height) / max(abs(self.cfg.command_height_offset_range[0]), 1.0e-6),
             min=0.0,
             max=1.0,
         )
@@ -679,7 +704,7 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         foot_speed_xy = torch.tanh(
             self.cfg.foot_clearance_tanh_mult * torch.linalg.norm(foot_vel_body[:, :, :2], dim=-1)
         )
-        moving_mask = (torch.abs(command_vx) + torch.abs(command_yaw)) > 0.05
+        moving_mask = (torch.abs(command_vx) + torch.abs(command_vy) + torch.abs(command_yaw)) > 0.05
         foot_clearance = self.cfg.rew_scale_foot_clearance * torch.exp(
             -torch.sum(foot_height_error * foot_speed_xy, dim=-1) / self.cfg.foot_clearance_sigma
         ) * moving_mask.float()
@@ -703,6 +728,7 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
 
         return {
             "track_lin_vel": track_lin_vel,
+            "track_lin_vel_y": track_lin_vel_y,
             "track_yaw_rate": track_yaw_rate,
             "track_height": track_height,
             "knee_guidance": knee_guidance,
@@ -743,33 +769,36 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             return
 
         num_envs = len(env_ids)
-        squat_prob = torch.where(
-            self._squat_preference[env_ids],
-            torch.full((num_envs,), self.cfg.squat_probability_preferred, device=self.device),
-            torch.full((num_envs,), self.cfg.squat_probability_regular, device=self.device),
-        )
-        squat_mode = torch.rand(num_envs, device=self.device) < squat_prob
-        stationary = torch.rand(num_envs, device=self.device) < self.cfg.stationary_command_fraction
+        mode_selector = torch.rand(num_envs, device=self.device)
+        height_mode = mode_selector < self.cfg.height_command_probability
+        velocity_mode = mode_selector > (1.0 - self.cfg.velocity_command_probability)
 
         vx = sample_uniform(
             self.cfg.command_vx_range[0], self.cfg.command_vx_range[1], (num_envs,), self.device
         )
+        vy = sample_uniform(
+            self.cfg.command_vy_range[0], self.cfg.command_vy_range[1], (num_envs,), self.device
+        )
         yaw_rate = sample_uniform(
             self.cfg.command_yaw_rate_range[0], self.cfg.command_yaw_rate_range[1], (num_envs,), self.device
         )
-        vx = torch.where(squat_mode, vx * self.cfg.squat_velocity_scale, vx)
-        yaw_rate = torch.where(squat_mode, yaw_rate * self.cfg.squat_yaw_rate_scale, yaw_rate)
-        vx = torch.where(stationary, torch.zeros_like(vx), vx)
-        yaw_rate = torch.where(stationary, torch.zeros_like(yaw_rate), yaw_rate)
+        vx = torch.where(velocity_mode, vx, torch.zeros_like(vx))
+        vy = torch.where(velocity_mode, vy, torch.zeros_like(vy))
+        yaw_rate = torch.where(velocity_mode, yaw_rate, torch.zeros_like(yaw_rate))
 
         target_height = torch.where(
-            squat_mode,
-            sample_uniform(self.cfg.squat_height_range[0], self.cfg.squat_height_range[1], (num_envs,), self.device),
-            sample_uniform(self.cfg.stand_height_range[0], self.cfg.stand_height_range[1], (num_envs,), self.device),
+            height_mode,
+            self.cfg.base_height_target
+            + sample_uniform(
+                self.cfg.command_height_offset_range[0],
+                self.cfg.command_height_offset_range[1],
+                (num_envs,),
+                self.device,
+            ),
+            torch.full((num_envs,), self.cfg.base_height_target, device=self.device),
         )
 
-        new_goal = torch.stack((vx, yaw_rate, target_height), dim=-1)
-        self._command_is_squat[env_ids] = squat_mode
+        new_goal = torch.stack((vx, vy, yaw_rate, target_height), dim=-1)
 
         if initialize:
             self._current_command[env_ids] = new_goal
@@ -830,10 +859,11 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
 
         self._upper_curriculum_progress = min(self._upper_curriculum_progress, self.cfg.upper_curriculum_max_progress)
         tracking_score = (
-            self._metric_episode_sums["lin_vel_tracking_score"][env_ids]
+            self._metric_episode_sums["lin_vel_x_tracking_score"][env_ids]
+            + self._metric_episode_sums["lin_vel_y_tracking_score"][env_ids]
             + self._metric_episode_sums["yaw_tracking_score"][env_ids]
             + self._metric_episode_sums["height_tracking_score"][env_ids]
-        ) / (3.0 * completed_episode_length)
+        ) / (4.0 * completed_episode_length)
         mean_score = float(tracking_score.mean().item())
 
         # Corresponds to HOMIE's tracking-driven action curriculum, but the expanded range is the
@@ -907,10 +937,13 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         return torch.mean(torch.square(lower_joint_pos - mirrored), dim=-1)
 
     def get_current_eval_metrics(self) -> dict[str, torch.Tensor]:
+        lin_vel_error_xy = self._current_command[:, :2] - self._base_lin_vel_b[:, :2]
         return {
-            "linear_velocity_tracking_error": torch.abs(self._current_command[:, 0] - self._base_lin_vel_b[:, 0]),
-            "yaw_tracking_error": torch.abs(self._current_command[:, 1] - self._base_ang_vel_b[:, 2]),
-            "height_tracking_error": torch.abs(self._current_command[:, 2] - self._base_height),
+            "linear_velocity_tracking_error": torch.linalg.norm(lin_vel_error_xy, dim=-1),
+            "forward_velocity_tracking_error": torch.abs(self._current_command[:, 0] - self._base_lin_vel_b[:, 0]),
+            "lateral_velocity_tracking_error": torch.abs(self._current_command[:, 1] - self._base_lin_vel_b[:, 1]),
+            "yaw_tracking_error": torch.abs(self._current_command[:, 2] - self._base_ang_vel_b[:, 2]),
+            "height_tracking_error": torch.abs(self._current_command[:, 3] - self._base_height),
             "symmetry_joint_error": self._compute_symmetry_joint_error(),
         }
 
@@ -920,49 +953,54 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
     def mirror_lower_actions(self, actions: torch.Tensor) -> torch.Tensor:
         return actions[:, self._lower_joint_mirror_index] * self._lower_joint_mirror_sign.unsqueeze(0)
 
-    def mirror_policy_obs(self, obs: torch.Tensor) -> torch.Tensor:
-        obs = obs.view(-1, self.cfg.history_length, POLICY_FRAME_DIM).clone()
-        obs[:, :, 0] = obs[:, :, 0]
-        obs[:, :, 1] = -obs[:, :, 1]
-        obs[:, :, 2] = obs[:, :, 2]
+    def _mirror_policy_frames(self, frames: torch.Tensor) -> torch.Tensor:
+        mirrored = frames.clone()
+        mirrored[..., 0] = frames[..., 0]
+        mirrored[..., 1] = -frames[..., 1]
+        mirrored[..., 2] = -frames[..., 2]
+        mirrored[..., 3] = frames[..., 3]
 
         ang_start = COMMAND_DIM
-        obs[:, :, ang_start + 0] = -obs[:, :, ang_start + 0]
-        obs[:, :, ang_start + 1] = obs[:, :, ang_start + 1]
-        obs[:, :, ang_start + 2] = -obs[:, :, ang_start + 2]
+        mirrored[..., ang_start + 0] = -frames[..., ang_start + 0]
+        mirrored[..., ang_start + 1] = frames[..., ang_start + 1]
+        mirrored[..., ang_start + 2] = -frames[..., ang_start + 2]
 
         gravity_start = ang_start + ANG_VEL_DIM
-        obs[:, :, gravity_start + 0] = obs[:, :, gravity_start + 0]
-        obs[:, :, gravity_start + 1] = -obs[:, :, gravity_start + 1]
-        obs[:, :, gravity_start + 2] = obs[:, :, gravity_start + 2]
+        mirrored[..., gravity_start + 0] = frames[..., gravity_start + 0]
+        mirrored[..., gravity_start + 1] = -frames[..., gravity_start + 1]
+        mirrored[..., gravity_start + 2] = frames[..., gravity_start + 2]
 
         joint_pos_start = gravity_start + GRAVITY_DIM
         joint_pos_end = joint_pos_start + ALL_JOINT_DIM
-        obs[:, :, joint_pos_start:joint_pos_end] = (
-            obs[:, :, joint_pos_start:joint_pos_end][:, :, self._all_joint_mirror_index]
-            * self._all_joint_mirror_sign.view(1, 1, -1)
+        mirrored[..., joint_pos_start:joint_pos_end] = (
+            frames[..., joint_pos_start:joint_pos_end][..., self._all_joint_mirror_index]
+            * self._all_joint_mirror_sign.view(*([1] * (frames.ndim - 1)), -1)
         )
 
         joint_vel_start = joint_pos_end
         joint_vel_end = joint_vel_start + ALL_JOINT_DIM
-        obs[:, :, joint_vel_start:joint_vel_end] = (
-            obs[:, :, joint_vel_start:joint_vel_end][:, :, self._all_joint_mirror_index]
-            * self._all_joint_mirror_sign.view(1, 1, -1)
+        mirrored[..., joint_vel_start:joint_vel_end] = (
+            frames[..., joint_vel_start:joint_vel_end][..., self._all_joint_mirror_index]
+            * self._all_joint_mirror_sign.view(*([1] * (frames.ndim - 1)), -1)
         )
 
         action_start = joint_vel_end
-        obs[:, :, action_start:] = (
-            obs[:, :, action_start:][:, :, self._lower_joint_mirror_index]
-            * self._lower_joint_mirror_sign.view(1, 1, -1)
+        mirrored[..., action_start:] = (
+            frames[..., action_start:][..., self._lower_joint_mirror_index]
+            * self._lower_joint_mirror_sign.view(*([1] * (frames.ndim - 1)), -1)
         )
-        return obs.view(obs.shape[0], -1)
+        return mirrored
+
+    def mirror_policy_obs(self, obs: torch.Tensor) -> torch.Tensor:
+        obs_frames = obs.view(-1, self.cfg.history_length, POLICY_FRAME_DIM)
+        return self._mirror_policy_frames(obs_frames).view(obs.shape[0], -1)
 
     def mirror_critic_obs(self, obs: torch.Tensor) -> torch.Tensor:
         mirrored = obs.clone()
-        policy_dim = self.cfg.observation_space
-        mirrored[:, :policy_dim] = self.mirror_policy_obs(obs[:, :policy_dim])
+        frame_dim = POLICY_FRAME_DIM
+        mirrored[:, :frame_dim] = self._mirror_policy_frames(obs[:, :frame_dim])
 
-        offset = policy_dim
+        offset = frame_dim
         mirrored[:, offset + 0] = obs[:, offset + 0]
         mirrored[:, offset + 1] = -obs[:, offset + 1]
         mirrored[:, offset + 2] = obs[:, offset + 2]

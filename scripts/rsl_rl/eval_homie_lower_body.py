@@ -114,6 +114,12 @@ def main():
                         "linear_velocity_tracking_error": float(
                             episode_metrics["linear_velocity_tracking_error"][env_id].item()
                         ),
+                        "forward_velocity_tracking_error": float(
+                            episode_metrics["forward_velocity_tracking_error"][env_id].item()
+                        ),
+                        "lateral_velocity_tracking_error": float(
+                            episode_metrics["lateral_velocity_tracking_error"][env_id].item()
+                        ),
                         "yaw_tracking_error": float(episode_metrics["yaw_tracking_error"][env_id].item()),
                         "height_tracking_error": float(episode_metrics["height_tracking_error"][env_id].item()),
                         "symmetry_joint_error": float(episode_metrics["symmetry_joint_error"][env_id].item()),
@@ -128,6 +134,8 @@ def main():
             time.sleep(sleep_time)
 
     lin_err_mean, lin_err_std = _summarize([r["linear_velocity_tracking_error"] for r in records])
+    fwd_err_mean, fwd_err_std = _summarize([r["forward_velocity_tracking_error"] for r in records])
+    lat_err_mean, lat_err_std = _summarize([r["lateral_velocity_tracking_error"] for r in records])
     yaw_err_mean, yaw_err_std = _summarize([r["yaw_tracking_error"] for r in records])
     height_err_mean, height_err_std = _summarize([r["height_tracking_error"] for r in records])
     survival_mean, survival_std = _summarize([r["survival_time"] for r in records])
@@ -137,6 +145,10 @@ def main():
     print(f"  episodes: {len(records)}")
     print(f"  linear_velocity_tracking_error_mean: {lin_err_mean:.6f}")
     print(f"  linear_velocity_tracking_error_std:  {lin_err_std:.6f}")
+    print(f"  forward_velocity_tracking_error_mean:{fwd_err_mean:.6f}")
+    print(f"  forward_velocity_tracking_error_std: {fwd_err_std:.6f}")
+    print(f"  lateral_velocity_tracking_error_mean:{lat_err_mean:.6f}")
+    print(f"  lateral_velocity_tracking_error_std: {lat_err_std:.6f}")
     print(f"  yaw_tracking_error_mean:            {yaw_err_mean:.6f}")
     print(f"  yaw_tracking_error_std:             {yaw_err_std:.6f}")
     print(f"  height_tracking_error_mean:         {height_err_mean:.6f}")

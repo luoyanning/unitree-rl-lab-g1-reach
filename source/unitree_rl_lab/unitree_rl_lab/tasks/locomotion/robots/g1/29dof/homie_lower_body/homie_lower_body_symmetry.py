@@ -5,25 +5,25 @@ from typing import Any
 import torch
 
 
-def homie_lower_body_symmetry_augmentation(env, obs, action, obs_type):
+def homie_lower_body_symmetry_augmentation(env, obs=None, actions=None, obs_type=None, **kwargs):
     """Return original + mirrored batches for Isaac Lab's built-in RSL-RL symmetry support."""
 
     base_env = getattr(env, "unwrapped", env)
 
     obs_aug = None
     if obs is not None:
-        if obs_type == "policy":
+        if obs_type in (None, "policy", "actor", "obs"):
             mirrored_obs = base_env.mirror_policy_obs(obs)
-        elif obs_type == "critic":
+        elif obs_type in ("critic", "critic_obs", "state", "states"):
             mirrored_obs = base_env.mirror_critic_obs(obs)
         else:
             raise ValueError(f"Unsupported symmetry observation type: {obs_type}")
         obs_aug = torch.cat((obs, mirrored_obs), dim=0)
 
     action_aug = None
-    if action is not None:
-        mirrored_action = base_env.mirror_lower_actions(action)
-        action_aug = torch.cat((action, mirrored_action), dim=0)
+    if actions is not None:
+        mirrored_action = base_env.mirror_lower_actions(actions)
+        action_aug = torch.cat((actions, mirrored_action), dim=0)
 
     return obs_aug, action_aug
 

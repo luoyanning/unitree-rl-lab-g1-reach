@@ -33,8 +33,11 @@ def _get_robot_cfg(env):
 def _get_joint_sdk_names(asset: Articulation, robot_cfg) -> tuple[list[str], list[int]]:
     joint_sdk_names = getattr(robot_cfg, "joint_sdk_names", None) if robot_cfg is not None else None
     if joint_sdk_names:
-        joint_ids_map, _ = resolve_matching_names(asset.data.joint_names, joint_sdk_names, preserve_order=True)
-        return list(joint_sdk_names), list(joint_ids_map)
+        try:
+            joint_ids_map, _ = resolve_matching_names(asset.data.joint_names, joint_sdk_names, preserve_order=True)
+            return list(joint_sdk_names), list(joint_ids_map)
+        except ValueError:
+            pass
 
     joint_names = list(asset.data.joint_names)
     return joint_names, list(range(len(joint_names)))

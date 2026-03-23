@@ -21,7 +21,7 @@ try:
 except ImportError:
     from isaaclab.utils.math import quat_rotate_inverse as quat_apply_inverse
 
-from unitree_rl_lab.assets.robots.unitree import UNITREE_G1_29DOF_CFG as ROBOT_CFG
+from unitree_rl_lab.assets.robots.unitree import UNITREE_G1_29DOF_HOMIE_CFG as ROBOT_CFG
 from unitree_rl_lab.tasks.locomotion import mdp
 
 
@@ -105,6 +105,8 @@ TERMINATION_CONTACT_BODY_NAMES = ["torso_link"]
 LEFT_HAND_BODY_NAME = "left_hand_palm_link"
 RIGHT_HAND_BODY_NAME = "right_hand_palm_link"
 ANKLE_SOLE_DISTANCE = 0.02
+LOWER_TORQUE_LIMITS = [88.0, 139.0, 88.0, 139.0, 50.0, 50.0, 88.0, 139.0, 88.0, 139.0, 50.0, 50.0]
+LOWER_VELOCITY_LIMITS = [32.0, 20.0, 32.0, 20.0, 37.0, 37.0, 32.0, 20.0, 32.0, 20.0, 37.0, 37.0]
 
 COMMAND_DIM = 4
 ANG_VEL_DIM = 3
@@ -334,8 +336,8 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
 
         self._hard_joint_limits = self.robot.data.joint_pos_limits[0].clone()
         self._soft_joint_limits = self.robot.data.soft_joint_pos_limits[0].clone()
-        self._joint_vel_limits = self.robot.data.soft_joint_vel_limits[0, self._lower_joint_ids].clone()
-        self._torque_limits = self.robot.data.joint_effort_limits[0, self._lower_joint_ids].clone()
+        self._joint_vel_limits = torch.tensor(LOWER_VELOCITY_LIMITS, device=self.device, dtype=torch.float)
+        self._torque_limits = torch.tensor(LOWER_TORQUE_LIMITS, device=self.device, dtype=torch.float)
         self._default_joint_pos = self.robot.data.default_joint_pos[0, self._all_joint_ids].clone()
         self._default_lower_joint_pos = self.robot.data.default_joint_pos[0, self._lower_joint_ids].clone()
         self._default_upper_joint_pos = self.robot.data.default_joint_pos[0, self._upper_joint_ids].clone()
@@ -516,7 +518,6 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
 
         self._default_body_masses = self.robot.root_physx_view.get_masses().clone().cpu()
         self._default_body_coms = self.robot.root_physx_view.get_coms().clone().cpu()
-        self._disable_lower_position_drives()
         self._randomize_reset_control_props(self.robot._ALL_INDICES)
         self._randomize_reset_rigid_body_props(self.robot._ALL_INDICES)
 
@@ -580,6 +581,8 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         )
         self._torques = self._torques + self._actuation_offset + self._joint_injection
         self._torques = torch.clamp(self._torques, min=-self._torque_limits.unsqueeze(0), max=self._torque_limits.unsqueeze(0))
+        # Lower body follows OpenHomie's M-controller: env-computed torques with an explicit effort actuator path.
+        self.robot.set_joint_position_target(self._lower_joint_targets, joint_ids=self._lower_joint_ids)
         self.robot.set_joint_effort_target(self._torques, joint_ids=self._lower_joint_ids)
         self.robot.set_joint_position_target(self._upper_pose_current, joint_ids=self._upper_joint_ids)
 
@@ -1157,14 +1160,6 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             else:
                 gains.append(100.0 if stiffness else 2.0)
         return torch.tensor(gains, device=self.device, dtype=torch.float)
-
-    def _disable_lower_position_drives(self):
-        zeros = torch.zeros((self.num_envs, self.cfg.action_space), device=self.device)
-        try:
-            self.robot.write_joint_stiffness_to_sim(zeros, joint_ids=self._lower_joint_ids)
-            self.robot.write_joint_damping_to_sim(zeros, joint_ids=self._lower_joint_ids)
-        except AttributeError:
-            pass
 
     def _randomize_reset_control_props(self, env_ids: torch.Tensor):
         num_envs = len(env_ids)

@@ -173,6 +173,13 @@ torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
 
 
+def maybe_export_deploy_cfg(env, log_dir: str):
+    try:
+        export_deploy_cfg(env, log_dir)
+    except Exception as exc:
+        print(f"[INFO]: Skipping deploy.yaml export for this task. Original error: {exc}")
+
+
 def resolve_resume_path(
     log_root_path: str,
     load_run: str | None,
@@ -528,7 +535,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
-    export_deploy_cfg(env.unwrapped, log_dir)
+    maybe_export_deploy_cfg(env.unwrapped, log_dir)
     # copy the environment configuration file to the log directory
     shutil.copy(
         inspect.getfile(env_cfg.__class__),

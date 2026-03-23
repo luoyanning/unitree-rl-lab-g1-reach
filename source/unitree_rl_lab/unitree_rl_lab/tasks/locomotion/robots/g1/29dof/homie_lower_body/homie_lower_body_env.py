@@ -11,7 +11,6 @@ from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import ContactSensor, ContactSensorCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils import configclass
@@ -159,12 +158,6 @@ class G1HomieLowerBodyEnvCfg(DirectRLEnvCfg):
         clone_in_fabric=True,
     )
     robot: ArticulationCfg = ROBOT_CFG.replace(prim_path="/World/envs/env_.*/Robot")
-    contact_sensor: ContactSensorCfg = ContactSensorCfg(
-        prim_path="/World/envs/env_.*/Robot/(torso_link|left_hip_pitch_link|left_hip_roll_link|left_hip_yaw_link|left_knee_link|left_ankle_roll_link|right_hip_pitch_link|right_hip_roll_link|right_hip_yaw_link|right_knee_link|right_ankle_roll_link)",
-        history_length=3,
-        update_period=0.0,
-        track_air_time=True,
-    )
     events: EventCfg = EventCfg()
 
     lower_joint_names = LOWER_JOINT_NAMES
@@ -187,8 +180,8 @@ class G1HomieLowerBodyEnvCfg(DirectRLEnvCfg):
     imu_body_name = "imu_in_pelvis"
     left_hand_body_name = LEFT_HAND_BODY_NAME
     right_hand_body_name = RIGHT_HAND_BODY_NAME
-    termination_contact_force_threshold = 10.0
-    foot_contact_force_threshold = 1.0
+    termination_body_height_threshold = 0.20
+    foot_contact_height_threshold = 0.06
 
     command_resample_interval_s = 4.0
     command_transition_duration_s = 0.0
@@ -326,7 +319,6 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         except Exception:
             self._imu_body_id = self._torso_body_id
         self._foot_body_ids = self._find_body_ids_safe(self.cfg.foot_body_names)
-        self._foot_contact_sensor_ids = self._find_sensor_body_ids_safe(self.cfg.foot_body_names)
         self._left_foot_surface_ids = self._find_body_ids_safe(self.cfg.left_foot_surface_body_names)
         self._right_foot_surface_ids = self._find_body_ids_safe(self.cfg.right_foot_surface_body_names)
         self._knee_body_ids = self._find_body_ids_safe(self.cfg.knee_body_names)
@@ -334,12 +326,11 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             self._left_foot_surface_ids = self._foot_body_ids[:1].repeat(3)
         if self._right_foot_surface_ids.numel() == 0 and self._foot_body_ids.numel() > 1:
             self._right_foot_surface_ids = self._foot_body_ids[1:2].repeat(3)
-        self._termination_contact_body_ids = self._find_sensor_body_ids_safe(self.cfg.termination_contact_body_names)
+        self._termination_contact_body_ids = self._find_body_ids_safe(self.cfg.termination_contact_body_names)
         if self._termination_contact_body_ids.numel() == 0:
-            self._termination_contact_body_ids = self._find_sensor_body_ids_safe([self.cfg.torso_body_name])
+            self._termination_contact_body_ids = self._find_body_ids_safe([self.cfg.torso_body_name])
         self._left_hand_body_id = self._find_body_ids_safe([self.cfg.left_hand_body_name])
         self._right_hand_body_id = self._find_body_ids_safe([self.cfg.right_hand_body_name])
-        self._penalized_contact_body_ids = self._find_sensor_body_ids_by_substring(("hip", "knee"))
 
         self._hard_joint_limits = self.robot.data.joint_pos_limits[0].clone()
         self._soft_joint_limits = self.robot.data.soft_joint_pos_limits[0].clone()
@@ -533,9 +524,7 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
 
     def _setup_scene(self):
         self.robot = Articulation(self.cfg.robot)
-        self.contact_sensor = ContactSensor(self.cfg.contact_sensor)
         self.scene.articulations["robot"] = self.robot
-        self.scene.sensors["contact_forces"] = self.contact_sensor
 
         spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
 
@@ -663,10 +652,7 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
 
         time_out = self.episode_length_buf >= self.max_episode_length - 1
         termination_contact = torch.any(
-            torch.linalg.norm(
-                self.contact_sensor.data.net_forces_w[:, self._termination_contact_body_ids, :], dim=-1
-            )
-            > self.cfg.termination_contact_force_threshold,
+            self.robot.data.body_pos_w[:, self._termination_contact_body_ids, 2] < self.cfg.termination_body_height_threshold,
             dim=1,
         )
         died = termination_contact
@@ -832,10 +818,17 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         self._lower_joint_acc = (lower_joint_vel - self._prev_lower_joint_vel) / self.step_dt
         self._feet_pos_w = self.robot.data.body_pos_w[:, self._foot_body_ids]
         self._feet_vel_w = self.robot.data.body_lin_vel_w[:, self._foot_body_ids]
-        self._foot_contact_forces = self.contact_sensor.data.net_forces_w[:, self._foot_contact_sensor_ids]
         support_height = torch.max(self._feet_pos_w[:, 0, 2], self._feet_pos_w[:, 1, 2])
         self._base_height = self.robot.data.root_pos_w[:, 2] - support_height + ANKLE_SOLE_DISTANCE
-        self._current_contacts = torch.linalg.norm(self._foot_contact_forces, dim=-1) > self.cfg.foot_contact_force_threshold
+        self._current_contacts = self._feet_pos_w[:, :, 2] < self.cfg.foot_contact_height_threshold
+        pseudo_force_z = self._current_contacts.float() * (
+            50.0 + 200.0 * torch.clamp(-self._feet_vel_w[:, :, 2], min=0.0)
+        )
+        pseudo_force_xy = self._current_contacts.float() * 60.0 * torch.linalg.norm(self._feet_vel_w[:, :, :2], dim=-1)
+        self._foot_contact_forces = torch.stack(
+            (pseudo_force_xy, torch.zeros_like(pseudo_force_xy), pseudo_force_z),
+            dim=-1,
+        )
         self._contact_filt = torch.logical_or(self._current_contacts, self._last_contacts)
         self._first_contacts = (self._feet_air_time >= self.step_dt) & self._contact_filt
         self._feet_air_time += self.step_dt
@@ -1141,25 +1134,6 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             )
         except Exception:
             return torch.zeros(0, device=self.device, dtype=torch.long)
-
-    def _find_sensor_body_ids_safe(self, body_names: list[str] | tuple[str, ...]) -> torch.Tensor:
-        try:
-            if hasattr(self.contact_sensor, "find_bodies"):
-                return torch.as_tensor(
-                    self.contact_sensor.find_bodies(list(body_names), preserve_order=True)[0],
-                    device=self.device,
-                    dtype=torch.long,
-                )
-            sensor_names = list(getattr(self.contact_sensor, "body_names", []))
-            indices = [sensor_names.index(name) for name in body_names if name in sensor_names]
-            return torch.as_tensor(indices, device=self.device, dtype=torch.long)
-        except Exception:
-            return torch.zeros(0, device=self.device, dtype=torch.long)
-
-    def _find_sensor_body_ids_by_substring(self, substrings: tuple[str, ...]) -> torch.Tensor:
-        names = getattr(self.contact_sensor, "body_names", [])
-        indices = [idx for idx, name in enumerate(names) if any(sub in name for sub in substrings)]
-        return torch.as_tensor(indices, device=self.device, dtype=torch.long)
 
     def _compute_homie_soft_limits(self, joint_ids: torch.Tensor) -> torch.Tensor:
         joint_limits = self._hard_joint_limits[joint_ids]

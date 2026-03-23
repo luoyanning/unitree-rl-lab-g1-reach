@@ -851,7 +851,8 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             values[env_ids] = 0.0
         for name, values in self._metric_episode_sums.items():
             per_env_metric = values[env_ids] / completed_episode_length
-            self._last_episode_metrics[name][env_ids] = per_env_metric
+            if name in self._last_episode_metrics:
+                self._last_episode_metrics[name][env_ids] = per_env_metric
             self.extras["episode"][name] = torch.mean(per_env_metric)
             values[env_ids] = 0.0
         per_env_survival = completed_episode_length * self.step_dt

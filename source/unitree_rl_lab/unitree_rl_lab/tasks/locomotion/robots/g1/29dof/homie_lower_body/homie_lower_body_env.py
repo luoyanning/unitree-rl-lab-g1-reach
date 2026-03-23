@@ -160,7 +160,7 @@ class G1HomieLowerBodyEnvCfg(DirectRLEnvCfg):
     )
     robot: ArticulationCfg = ROBOT_CFG.replace(prim_path="/World/envs/env_.*/Robot")
     contact_sensor: ContactSensorCfg = ContactSensorCfg(
-        prim_path="/World/envs/env_.*/Robot/.*",
+        prim_path="/World/envs/env_.*/Robot/(torso_link|left_hip_pitch_link|left_hip_roll_link|left_hip_yaw_link|left_knee_link|left_ankle_roll_link|right_hip_pitch_link|right_hip_roll_link|right_hip_yaw_link|right_knee_link|right_ankle_roll_link)",
         history_length=3,
         update_period=0.0,
         track_air_time=True,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from isaaclab.actuators import IdealPDActuatorCfg, ImplicitActuatorCfg
@@ -8,16 +9,43 @@ from isaaclab.assets.articulation import ArticulationCfg
 from unitree_rl_lab.assets.robots.unitree import UnitreeArticulationCfg, UnitreeUrdfFileCfg
 
 
-def _find_repo_root() -> Path:
+def _find_openhomie_g1_dir() -> Path:
     current = Path(__file__).resolve()
+    candidate_roots: list[Path] = []
+
+    env_root = os.environ.get("OPENHOMIE_ROOT")
+    if env_root:
+        candidate_roots.append(Path(env_root).expanduser())
+
     for parent in current.parents:
-        if (parent / "OpenHomie" / "HomieRL" / "legged_gym").exists():
-            return parent
-    raise FileNotFoundError("Could not locate repository root containing OpenHomie/HomieRL.")
+        candidate_roots.extend(
+            [
+                parent,
+                parent / "OpenHomie",
+                parent / "source" / "OpenHomie",
+                parent / "external" / "OpenHomie",
+            ]
+        )
+
+    checked: list[str] = []
+    for root in candidate_roots:
+        candidate = root / "HomieRL" / "legged_gym" / "resources" / "robots" / "g1_description"
+        if candidate.name == "g1_description" and (candidate / "g1.urdf").exists():
+            return candidate
+        checked.append(str(candidate))
+
+        candidate = root / "OpenHomie" / "HomieRL" / "legged_gym" / "resources" / "robots" / "g1_description"
+        if (candidate / "g1.urdf").exists():
+            return candidate
+        checked.append(str(candidate))
+
+    checked_paths = "\n".join(f"  - {path}" for path in checked[:16])
+    raise FileNotFoundError(
+        "Could not locate OpenHomie G1 asset directory containing g1.urdf. Checked:\n" + checked_paths
+    )
 
 
-REPO_ROOT = _find_repo_root()
-OPENHOMIE_G1_DIR = REPO_ROOT / "OpenHomie" / "HomieRL" / "legged_gym" / "resources" / "robots" / "g1_description"
+OPENHOMIE_G1_DIR = _find_openhomie_g1_dir()
 
 
 OPENHOMIE_G1_LOWER_JOINT_NAMES = [

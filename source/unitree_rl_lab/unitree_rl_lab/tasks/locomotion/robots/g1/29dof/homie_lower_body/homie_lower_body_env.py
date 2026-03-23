@@ -78,7 +78,7 @@ MIRROR_JOINT_PAIRS = [
     ("left_wrist_yaw_joint", "right_wrist_yaw_joint"),
 ]
 
-MIRROR_NEGATE_JOINT_NAMES = {
+MIRROR_NEGATE_JOINT_NAMES = (
     "left_hip_yaw_joint",
     "right_hip_yaw_joint",
     "left_hip_roll_joint",
@@ -95,7 +95,7 @@ MIRROR_NEGATE_JOINT_NAMES = {
     "right_wrist_roll_joint",
     "left_wrist_yaw_joint",
     "right_wrist_yaw_joint",
-}
+)
 
 FOOT_BODY_NAMES = ["left_ankle_roll_link", "right_ankle_roll_link"]
 ANKLE_SOLE_DISTANCE = 0.02

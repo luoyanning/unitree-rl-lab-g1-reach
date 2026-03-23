@@ -2,25 +2,30 @@ from __future__ import annotations
 
 from typing import Any
 
+import torch
 
-def homie_lower_body_symmetry_augmentation(env, obs, action):
-    """Mirror policy/state/action tensors for Isaac Lab's built-in RSL-RL symmetry support."""
+
+def homie_lower_body_symmetry_augmentation(env, obs, action, obs_type):
+    """Return original + mirrored batches for Isaac Lab's built-in RSL-RL symmetry support."""
 
     base_env = getattr(env, "unwrapped", env)
 
-    mirrored_obs = None
+    obs_aug = None
     if obs is not None:
-        mirrored_obs = obs.clone()
-        if "policy" in mirrored_obs:
-            mirrored_obs["policy"] = base_env.mirror_policy_obs(obs["policy"])
-        if "critic" in mirrored_obs:
-            mirrored_obs["critic"] = base_env.mirror_critic_obs(obs["critic"])
+        if obs_type == "policy":
+            mirrored_obs = base_env.mirror_policy_obs(obs)
+        elif obs_type == "critic":
+            mirrored_obs = base_env.mirror_critic_obs(obs)
+        else:
+            raise ValueError(f"Unsupported symmetry observation type: {obs_type}")
+        obs_aug = torch.cat((obs, mirrored_obs), dim=0)
 
-    mirrored_action = None
+    action_aug = None
     if action is not None:
         mirrored_action = base_env.mirror_lower_actions(action)
+        action_aug = torch.cat((action, mirrored_action), dim=0)
 
-    return mirrored_obs, mirrored_action
+    return obs_aug, action_aug
 
 
 def maybe_get_symmetry_cfg_kwargs() -> dict[str, Any]:

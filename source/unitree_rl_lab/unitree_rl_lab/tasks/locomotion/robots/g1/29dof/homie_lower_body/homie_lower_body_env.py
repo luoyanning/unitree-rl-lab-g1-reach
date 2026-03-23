@@ -21,8 +21,8 @@ try:
 except ImportError:
     from isaaclab.utils.math import quat_rotate_inverse as quat_apply_inverse
 
-from unitree_rl_lab.assets.robots.unitree import UNITREE_G1_29DOF_HOMIE_CFG as ROBOT_CFG
 from unitree_rl_lab.tasks.locomotion import mdp
+from .homie_robot_cfg import OPENHOMIE_G1_CFG as ROBOT_CFG
 
 
 LOWER_JOINT_NAMES = [
@@ -314,7 +314,7 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         self._lower_joint_ids = self._find_joint_ids(self.cfg.lower_joint_names)
         self._upper_joint_ids = self._find_joint_ids(self.cfg.upper_joint_names)
         self._all_joint_ids = self._find_joint_ids(self.cfg.all_joint_names)
-        self._fixed_waist_joint_ids = self._find_joint_ids(self.cfg.fixed_waist_joint_names)
+        self._fixed_waist_joint_ids = self._find_joint_ids_safe(self.cfg.fixed_waist_joint_names)
         self._torso_body_id = int(self.robot.find_bodies([self.cfg.torso_body_name], preserve_order=True)[0][0])
         try:
             self._imu_body_id = int(self.robot.find_bodies([self.cfg.imu_body_name], preserve_order=True)[0][0])
@@ -341,7 +341,10 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         self._default_joint_pos = self.robot.data.default_joint_pos[0, self._all_joint_ids].clone()
         self._default_lower_joint_pos = self.robot.data.default_joint_pos[0, self._lower_joint_ids].clone()
         self._default_upper_joint_pos = self.robot.data.default_joint_pos[0, self._upper_joint_ids].clone()
-        self._default_fixed_waist_joint_pos = self.robot.data.default_joint_pos[0, self._fixed_waist_joint_ids].clone()
+        if self._fixed_waist_joint_ids.numel() > 0:
+            self._default_fixed_waist_joint_pos = self.robot.data.default_joint_pos[0, self._fixed_waist_joint_ids].clone()
+        else:
+            self._default_fixed_waist_joint_pos = torch.zeros(0, device=self.device, dtype=torch.float)
         self._homie_joint_pos_limits = self._compute_homie_soft_limits(self._lower_joint_ids)
 
         self._lower_joint_min = self._hard_joint_limits[self._lower_joint_ids, 0]
@@ -1136,6 +1139,16 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             device=self.device,
             dtype=torch.long,
         )
+
+    def _find_joint_ids_safe(self, joint_names: list[str] | tuple[str, ...]) -> torch.Tensor:
+        try:
+            return torch.as_tensor(
+                self.robot.find_joints(list(joint_names), preserve_order=True)[0],
+                device=self.device,
+                dtype=torch.long,
+            )
+        except Exception:
+            return torch.zeros(0, device=self.device, dtype=torch.long)
 
     def _find_body_ids_safe(self, body_names: list[str] | tuple[str, ...]) -> torch.Tensor:
         try:

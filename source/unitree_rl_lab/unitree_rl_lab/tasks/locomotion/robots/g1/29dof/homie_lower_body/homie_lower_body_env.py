@@ -11,6 +11,7 @@ from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import ContactSensor, ContactSensorCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils import configclass
@@ -98,6 +99,12 @@ MIRROR_NEGATE_JOINT_NAMES = (
 )
 
 FOOT_BODY_NAMES = ["left_ankle_roll_link", "right_ankle_roll_link"]
+LEFT_FOOT_SURFACE_BODY_NAMES = ["left_foot_front_link", "left_foot_mid_link", "left_foot_hind_link"]
+RIGHT_FOOT_SURFACE_BODY_NAMES = ["right_foot_front_link", "right_foot_mid_link", "right_foot_hind_link"]
+KNEE_BODY_NAMES = ["left_knee_link", "left_hip_yaw_link", "right_knee_link", "right_hip_yaw_link"]
+TERMINATION_CONTACT_BODY_NAMES = ["torso_link"]
+LEFT_HAND_BODY_NAME = "left_hand_palm_link"
+RIGHT_HAND_BODY_NAME = "right_hand_palm_link"
 ANKLE_SOLE_DISTANCE = 0.02
 
 COMMAND_DIM = 4
@@ -107,7 +114,7 @@ ALL_JOINT_DIM = len(ALL_JOINT_NAMES)
 LOWER_ACTION_DIM = len(LOWER_JOINT_NAMES)
 UPPER_JOINT_DIM = len(UPPER_JOINT_NAMES)
 POLICY_FRAME_DIM = COMMAND_DIM + ANG_VEL_DIM + GRAVITY_DIM + 2 * ALL_JOINT_DIM + LOWER_ACTION_DIM
-CRITIC_EXTRA_DIM = 3 + UPPER_JOINT_DIM + 1
+CRITIC_EXTRA_DIM = 3
 
 
 @configclass
@@ -121,17 +128,8 @@ class EventCfg:
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
             "static_friction_range": (0.1, 3.0),
             "dynamic_friction_range": (0.1, 3.0),
-            "restitution_range": (0.0, 0.0),
+            "restitution_range": (0.0, 1.0),
             "num_buckets": 32,
-        },
-    )
-    add_base_mass = EventTerm(
-        func=mdp.randomize_rigid_body_mass,
-        mode="startup",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
-            "mass_distribution_params": (-5.0, 10.0),
-            "operation": "add",
         },
     )
     push_robot = EventTerm(
@@ -161,6 +159,12 @@ class G1HomieLowerBodyEnvCfg(DirectRLEnvCfg):
         clone_in_fabric=True,
     )
     robot: ArticulationCfg = ROBOT_CFG.replace(prim_path="/World/envs/env_.*/Robot")
+    contact_sensor: ContactSensorCfg = ContactSensorCfg(
+        prim_path="/World/envs/env_.*/Robot/.*",
+        history_length=3,
+        update_period=0.0,
+        track_air_time=True,
+    )
     events: EventCfg = EventCfg()
 
     lower_joint_names = LOWER_JOINT_NAMES
@@ -169,20 +173,25 @@ class G1HomieLowerBodyEnvCfg(DirectRLEnvCfg):
     mirror_joint_pairs = MIRROR_JOINT_PAIRS
     mirror_negate_joint_names = MIRROR_NEGATE_JOINT_NAMES
     foot_body_names = FOOT_BODY_NAMES
+    left_foot_surface_body_names = LEFT_FOOT_SURFACE_BODY_NAMES
+    right_foot_surface_body_names = RIGHT_FOOT_SURFACE_BODY_NAMES
+    knee_body_names = KNEE_BODY_NAMES
+    termination_contact_body_names = TERMINATION_CONTACT_BODY_NAMES
 
     history_length = 6
     action_scale = 0.25
-    clip_joint_targets_to_soft_limits = True
+    clip_joint_targets_to_soft_limits = False
     upper_soft_limit_factor = 0.9
 
     torso_body_name = "torso_link"
-    lower_body_height_termination_m = 0.40
-    upper_body_height_termination_m = 1.10
-    undesired_body_height_termination_m = 0.03
-    max_projected_gravity_xy = 0.78
+    imu_body_name = "imu_in_pelvis"
+    left_hand_body_name = LEFT_HAND_BODY_NAME
+    right_hand_body_name = RIGHT_HAND_BODY_NAME
+    termination_contact_force_threshold = 10.0
+    foot_contact_force_threshold = 1.0
 
     command_resample_interval_s = 4.0
-    command_transition_duration_s = 0.75
+    command_transition_duration_s = 0.0
     command_vx_range = (-0.8, 1.2)
     command_vy_range = (-0.5, 0.5)
     command_yaw_rate_range = (-0.8, 0.8)
@@ -194,16 +203,16 @@ class G1HomieLowerBodyEnvCfg(DirectRLEnvCfg):
     upper_body_resample_interval_s = 1.0
     upper_curriculum_init = 0.0
     upper_curriculum_step = 0.05
-    upper_curriculum_demote_step = 0.04
+    upper_curriculum_demote_step = 0.0
     upper_curriculum_promote_threshold = 0.80
-    upper_curriculum_demote_threshold = 0.55
-    upper_curriculum_max_progress = 0.60
+    upper_curriculum_demote_threshold = 0.0
+    upper_curriculum_max_progress = 1.0
     upper_curriculum_eval_fixed = False
 
-    reset_xy_noise = 0.15
+    reset_xy_noise = 1.0
     reset_yaw_noise = math.pi
-    reset_root_z_noise = (-0.02, 0.03)
-    reset_root_velocity_noise = 0.15
+    reset_root_z_noise = (0.0, 0.10)
+    reset_root_velocity_noise = 0.5
     reset_joint_position_scale = (0.8, 1.2)
     reset_joint_position_offset = (-0.10, 0.10)
     reset_joint_velocity_noise = 0.12
@@ -218,31 +227,69 @@ class G1HomieLowerBodyEnvCfg(DirectRLEnvCfg):
     obs_ang_vel_noise = 0.15
     obs_gravity_noise = 0.05
 
-    lin_vel_tracking_sigma = 0.25
-    yaw_rate_tracking_sigma = 0.25
-    height_tracking_alpha = 4.0
-    knee_guidance_sigma = 0.10
-    foot_clearance_target = 0.14
-    foot_clearance_sigma = 0.05
-    foot_clearance_tanh_mult = 2.0
+    tracking_sigma = 0.25
+    soft_dof_pos_limit = 0.975
+    soft_dof_vel_limit = 0.80
+    soft_torque_limit = 0.95
+    max_contact_force = 400.0
+    least_feet_distance_lateral = 0.2
+    most_feet_distance_lateral = 0.35
+    most_knee_distance_lateral = 0.35
+    least_knee_distance_lateral = 0.2
+    clearance_height_target = 0.14
 
-    rew_scale_track_lin_vel = 1.5
-    rew_scale_track_lin_vel_y = 1.0
-    rew_scale_track_yaw_rate = 2.0
-    rew_scale_track_height = 2.0
-    rew_scale_knee_guidance = 0.8
-    rew_scale_alive = 0.05
-    rew_scale_foot_clearance = 0.25
-    rew_scale_orientation = -1.5
-    rew_scale_vertical_vel = -0.5
+    randomize_joint_injection = True
+    joint_injection_range = (-0.05, 0.05)
+    randomize_actuation_offset = True
+    actuation_offset_range = (-0.05, 0.05)
+    randomize_payload_mass = True
+    payload_mass_range = (-5.0, 10.0)
+    hand_payload_mass_range = (-0.1, 0.3)
+    randomize_com_displacement = False
+    com_displacement_range = (-0.1, 0.1)
+    randomize_body_displacement = True
+    body_displacement_range = (-0.1, 0.1)
+    randomize_link_mass = True
+    link_mass_range = (0.8, 1.2)
+    randomize_kp = True
+    kp_range = (0.9, 1.1)
+    randomize_kd = True
+    kd_range = (0.9, 1.1)
+    delay = True
+
+    rew_scale_tracking_x_vel = 1.5
+    rew_scale_tracking_y_vel = 1.0
+    rew_scale_tracking_ang_vel = 2.0
+    rew_scale_lin_vel_z = -0.5
     rew_scale_ang_vel_xy = -0.025
+    rew_scale_orientation = -1.5
     rew_scale_action_rate = -0.01
-    rew_scale_joint_vel = -1.0e-4
-    rew_scale_joint_acc = -2.5e-7
-    rew_scale_power = -2.0e-5
-    rew_scale_joint_limit = -2.0
+    rew_scale_tracking_base_height = 2.0
+    rew_scale_deviation_hip_joint = -0.2
+    rew_scale_deviation_ankle_joint = -0.5
+    rew_scale_deviation_knee_joint = -0.75
+    rew_scale_dof_acc = -2.5e-7
+    rew_scale_dof_pos_limits = -2.0
+    rew_scale_feet_air_time = 0.05
+    rew_scale_feet_clearance = -0.25
+    rew_scale_feet_distance_lateral = 0.5
+    rew_scale_knee_distance_lateral = 1.0
+    rew_scale_feet_ground_parallel = -2.0
+    rew_scale_feet_parallel = -3.0
+    rew_scale_smoothness = -0.05
+    rew_scale_joint_power = -2.0e-5
+    rew_scale_feet_stumble = -1.5
+    rew_scale_torques = -2.5e-6
+    rew_scale_dof_vel = -1.0e-4
+    rew_scale_dof_vel_limits = -2.0e-3
+    rew_scale_torque_limits = -0.1
+    rew_scale_no_fly = 0.75
+    rew_scale_joint_tracking_error = -0.1
     rew_scale_feet_slip = -0.25
-    rew_scale_symmetry_joint = -0.05
+    rew_scale_feet_contact_forces = -2.5e-4
+    rew_scale_contact_momentum = 2.5e-4
+    rew_scale_action_vanish = -1.0
+    rew_scale_stand_still = -0.15
 
     def __post_init__(self):
         self.observation_space = self.history_length * POLICY_FRAME_DIM
@@ -259,7 +306,6 @@ class G1HomieLowerBodyPlayEnvCfg(G1HomieLowerBodyEnvCfg):
         self.upper_curriculum_eval_fixed = True
         self.events.push_robot = None
         self.events.physics_material = None
-        self.events.add_base_mass = None
 
 
 class G1HomieLowerBodyEnv(DirectRLEnv):
@@ -275,25 +321,49 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         self._upper_joint_ids = self._find_joint_ids(self.cfg.upper_joint_names)
         self._all_joint_ids = self._find_joint_ids(self.cfg.all_joint_names)
         self._torso_body_id = int(self.robot.find_bodies([self.cfg.torso_body_name], preserve_order=True)[0][0])
-        self._foot_body_ids = torch.as_tensor(
-            self.robot.find_bodies(self.cfg.foot_body_names, preserve_order=True)[0],
-            device=self.device,
-            dtype=torch.long,
-        )
+        try:
+            self._imu_body_id = int(self.robot.find_bodies([self.cfg.imu_body_name], preserve_order=True)[0][0])
+        except Exception:
+            self._imu_body_id = self._torso_body_id
+        self._foot_body_ids = self._find_body_ids_safe(self.cfg.foot_body_names)
+        self._foot_contact_sensor_ids = self._find_sensor_body_ids_safe(self.cfg.foot_body_names)
+        self._left_foot_surface_ids = self._find_body_ids_safe(self.cfg.left_foot_surface_body_names)
+        self._right_foot_surface_ids = self._find_body_ids_safe(self.cfg.right_foot_surface_body_names)
+        self._knee_body_ids = self._find_body_ids_safe(self.cfg.knee_body_names)
+        if self._left_foot_surface_ids.numel() == 0 and self._foot_body_ids.numel() > 0:
+            self._left_foot_surface_ids = self._foot_body_ids[:1].repeat(3)
+        if self._right_foot_surface_ids.numel() == 0 and self._foot_body_ids.numel() > 1:
+            self._right_foot_surface_ids = self._foot_body_ids[1:2].repeat(3)
+        self._termination_contact_body_ids = self._find_sensor_body_ids_safe(self.cfg.termination_contact_body_names)
+        if self._termination_contact_body_ids.numel() == 0:
+            self._termination_contact_body_ids = self._find_sensor_body_ids_safe([self.cfg.torso_body_name])
+        self._left_hand_body_id = self._find_body_ids_safe([self.cfg.left_hand_body_name])
+        self._right_hand_body_id = self._find_body_ids_safe([self.cfg.right_hand_body_name])
+        self._penalized_contact_body_ids = self._find_sensor_body_ids_by_substring(("hip", "knee"))
 
+        self._hard_joint_limits = self.robot.data.joint_pos_limits[0].clone()
         self._soft_joint_limits = self.robot.data.soft_joint_pos_limits[0].clone()
+        self._joint_vel_limits = self.robot.data.soft_joint_vel_limits[0, self._lower_joint_ids].clone()
+        self._torque_limits = self.robot.data.joint_effort_limits[0, self._lower_joint_ids].clone()
         self._default_joint_pos = self.robot.data.default_joint_pos[0, self._all_joint_ids].clone()
         self._default_lower_joint_pos = self.robot.data.default_joint_pos[0, self._lower_joint_ids].clone()
         self._default_upper_joint_pos = self.robot.data.default_joint_pos[0, self._upper_joint_ids].clone()
+        self._homie_joint_pos_limits = self._compute_homie_soft_limits(self._lower_joint_ids)
 
-        self._lower_joint_min = self._soft_joint_limits[self._lower_joint_ids, 0]
-        self._lower_joint_max = self._soft_joint_limits[self._lower_joint_ids, 1]
+        self._lower_joint_min = self._hard_joint_limits[self._lower_joint_ids, 0]
+        self._lower_joint_max = self._hard_joint_limits[self._lower_joint_ids, 1]
         self._upper_joint_min = self._default_upper_joint_pos + self.cfg.upper_soft_limit_factor * (
             self._soft_joint_limits[self._upper_joint_ids, 0] - self._default_upper_joint_pos
         )
         self._upper_joint_max = self._default_upper_joint_pos + self.cfg.upper_soft_limit_factor * (
             self._soft_joint_limits[self._upper_joint_ids, 1] - self._default_upper_joint_pos
         )
+        self._upper_action_min = (self._upper_joint_min - self._default_upper_joint_pos) / self.cfg.action_scale
+        self._upper_action_max = (self._upper_joint_max - self._default_upper_joint_pos) / self.cfg.action_scale
+        self._lower_action_min = (self._lower_joint_min - self._default_lower_joint_pos) / self.cfg.action_scale
+        self._lower_action_max = (self._lower_joint_max - self._default_lower_joint_pos) / self.cfg.action_scale
+        self._p_gains = self._build_lower_pd_gains(stiffness=True)
+        self._d_gains = self._build_lower_pd_gains(stiffness=False)
 
         self._gravity_vec_w = self._expand_gravity(self.robot.data.GRAVITY_VEC_W)
 
@@ -305,8 +375,15 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
 
         self._actions = torch.zeros(self.num_envs, self.cfg.action_space, device=self.device)
         self._prev_actions = torch.zeros_like(self._actions)
+        self._last_last_actions = torch.zeros_like(self._actions)
+        self._origin_actions = torch.zeros_like(self._actions)
         self._prev_lower_joint_vel = torch.zeros(self.num_envs, self.cfg.action_space, device=self.device)
         self._lower_joint_targets = self._default_lower_joint_pos.unsqueeze(0).repeat(self.num_envs, 1)
+        self._torques = torch.zeros(self.num_envs, self.cfg.action_space, device=self.device)
+        self._kp_factors = torch.ones(self.num_envs, self.cfg.action_space, device=self.device)
+        self._kd_factors = torch.ones(self.num_envs, self.cfg.action_space, device=self.device)
+        self._joint_injection = torch.zeros(self.num_envs, self.cfg.action_space, device=self.device)
+        self._actuation_offset = torch.zeros(self.num_envs, self.cfg.action_space, device=self.device)
 
         self._current_command = torch.zeros(self.num_envs, COMMAND_DIM, device=self.device)
         self._command_start = torch.zeros_like(self._current_command)
@@ -323,27 +400,78 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         )
 
         self._reward_names = [
-            "track_lin_vel",
-            "track_lin_vel_y",
-            "track_yaw_rate",
-            "track_height",
-            "knee_guidance",
-            "alive",
-            "foot_clearance",
-            "orientation",
-            "vertical_vel",
+            "tracking_x_vel",
+            "tracking_y_vel",
+            "tracking_ang_vel",
+            "lin_vel_z",
             "ang_vel_xy",
+            "orientation",
             "action_rate",
-            "joint_vel",
-            "joint_acc",
-            "power",
-            "joint_limit",
+            "tracking_base_height",
+            "deviation_hip_joint",
+            "deviation_ankle_joint",
+            "deviation_knee_joint",
+            "dof_acc",
+            "dof_pos_limits",
+            "feet_air_time",
+            "feet_clearance",
+            "feet_distance_lateral",
+            "knee_distance_lateral",
+            "feet_ground_parallel",
+            "feet_parallel",
+            "smoothness",
+            "joint_power",
+            "feet_stumble",
+            "torques",
+            "dof_vel",
+            "dof_vel_limits",
+            "torque_limits",
+            "no_fly",
+            "joint_tracking_error",
             "feet_slip",
+            "feet_contact_forces",
+            "contact_momentum",
+            "action_vanish",
+            "stand_still",
             "symmetry_joint",
         ]
-        self._reward_episode_sums = {
-            name: torch.zeros(self.num_envs, dtype=torch.float, device=self.device) for name in self._reward_names
+        self._reward_scales = {
+            "tracking_x_vel": self.cfg.rew_scale_tracking_x_vel,
+            "tracking_y_vel": self.cfg.rew_scale_tracking_y_vel,
+            "tracking_ang_vel": self.cfg.rew_scale_tracking_ang_vel,
+            "lin_vel_z": self.cfg.rew_scale_lin_vel_z,
+            "ang_vel_xy": self.cfg.rew_scale_ang_vel_xy,
+            "orientation": self.cfg.rew_scale_orientation,
+            "action_rate": self.cfg.rew_scale_action_rate,
+            "tracking_base_height": self.cfg.rew_scale_tracking_base_height,
+            "deviation_hip_joint": self.cfg.rew_scale_deviation_hip_joint,
+            "deviation_ankle_joint": self.cfg.rew_scale_deviation_ankle_joint,
+            "deviation_knee_joint": self.cfg.rew_scale_deviation_knee_joint,
+            "dof_acc": self.cfg.rew_scale_dof_acc,
+            "dof_pos_limits": self.cfg.rew_scale_dof_pos_limits,
+            "feet_air_time": self.cfg.rew_scale_feet_air_time,
+            "feet_clearance": self.cfg.rew_scale_feet_clearance,
+            "feet_distance_lateral": self.cfg.rew_scale_feet_distance_lateral,
+            "knee_distance_lateral": self.cfg.rew_scale_knee_distance_lateral,
+            "feet_ground_parallel": self.cfg.rew_scale_feet_ground_parallel,
+            "feet_parallel": self.cfg.rew_scale_feet_parallel,
+            "smoothness": self.cfg.rew_scale_smoothness,
+            "joint_power": self.cfg.rew_scale_joint_power,
+            "feet_stumble": self.cfg.rew_scale_feet_stumble,
+            "torques": self.cfg.rew_scale_torques,
+            "dof_vel": self.cfg.rew_scale_dof_vel,
+            "dof_vel_limits": self.cfg.rew_scale_dof_vel_limits,
+            "torque_limits": self.cfg.rew_scale_torque_limits,
+            "no_fly": self.cfg.rew_scale_no_fly,
+            "joint_tracking_error": self.cfg.rew_scale_joint_tracking_error,
+            "feet_slip": self.cfg.rew_scale_feet_slip,
+            "feet_contact_forces": self.cfg.rew_scale_feet_contact_forces,
+            "contact_momentum": self.cfg.rew_scale_contact_momentum,
+            "action_vanish": self.cfg.rew_scale_action_vanish,
+            "stand_still": self.cfg.rew_scale_stand_still,
+            "symmetry_joint": 0.0,
         }
+        self._reward_scales = {name: scale * self.step_dt for name, scale in self._reward_scales.items()}
         self._metric_episode_sums = {
             "linear_velocity_tracking_error": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
             "forward_velocity_tracking_error": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
@@ -355,6 +483,9 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             "lin_vel_y_tracking_score": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
             "yaw_tracking_score": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
             "height_tracking_score": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
+        }
+        self._reward_episode_sums = {
+            name: torch.zeros(self.num_envs, dtype=torch.float, device=self.device) for name in self._reward_names
         }
         self._last_episode_metrics = {
             "linear_velocity_tracking_error": torch.zeros(self.num_envs, dtype=torch.float, device=self.device),
@@ -376,6 +507,13 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         self._base_height = torch.zeros(self.num_envs, device=self.device)
         self._feet_pos_w = torch.zeros(self.num_envs, len(self.cfg.foot_body_names), 3, device=self.device)
         self._feet_vel_w = torch.zeros_like(self._feet_pos_w)
+        self._foot_contact_forces = torch.zeros_like(self._feet_pos_w)
+        self._contact_filt = torch.zeros(self.num_envs, len(self.cfg.foot_body_names), dtype=torch.bool, device=self.device)
+        self._current_contacts = torch.zeros_like(self._contact_filt)
+        self._last_contacts = torch.zeros_like(self._contact_filt)
+        self._first_contacts = torch.zeros_like(self._contact_filt)
+        self._feet_air_time = torch.zeros(self.num_envs, len(self.cfg.foot_body_names), device=self.device)
+        self._feet_max_height = torch.zeros(self.num_envs, len(self.cfg.foot_body_names), device=self.device)
 
         self._all_joint_mirror_index, self._all_joint_mirror_sign = self._build_joint_mirror(self.cfg.all_joint_names)
         self._lower_joint_mirror_index, self._lower_joint_mirror_sign = self._build_joint_mirror(
@@ -385,10 +523,17 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             self.cfg.upper_joint_names
         )
 
+        self._default_body_masses = self.robot.root_physx_view.get_masses().clone().cpu()
+        self._default_body_coms = self.robot.root_physx_view.get_coms().clone().cpu()
+        self._disable_lower_position_drives()
+        self._randomize_reset_control_props(self.robot._ALL_INDICES)
+        self._randomize_reset_rigid_body_props(self.robot._ALL_INDICES)
+
         self._compute_intermediate_values()
 
     def _setup_scene(self):
         self.robot = Articulation(self.cfg.robot)
+        self.contact_sensor = ContactSensor(self.cfg.contact_sensor)
 
         spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
 
@@ -397,12 +542,21 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             self.scene.filter_collisions(global_prim_paths=["/World/ground"])
 
         self.scene.articulations["robot"] = self.robot
+        self.scene.sensors["contact_forces"] = self.contact_sensor
 
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
+        self._origin_actions = actions.clone()
         self._actions = torch.clamp(actions.clone(), -1.0, 1.0)
+        if self.cfg.randomize_joint_injection:
+            self._joint_injection = sample_uniform(
+                self.cfg.joint_injection_range[0],
+                self.cfg.joint_injection_range[1],
+                (self.num_envs, self.cfg.action_space),
+                self.device,
+            ) * self._torque_limits.unsqueeze(0)
 
         resample_command_env_ids = torch.nonzero(
             (self.episode_length_buf > 0) & (self.episode_length_buf % self._command_resample_interval_steps == 0),
@@ -430,7 +584,15 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             )
 
     def _apply_action(self) -> None:
-        self.robot.set_joint_position_target(self._lower_joint_targets, joint_ids=self._lower_joint_ids)
+        lower_joint_pos = self._all_joint_pos[:, : self.cfg.action_space]
+        lower_joint_vel = self._all_joint_vel[:, : self.cfg.action_space]
+        self._torques = (
+            self._p_gains.unsqueeze(0) * self._kp_factors * (self._lower_joint_targets - lower_joint_pos)
+            - self._d_gains.unsqueeze(0) * self._kd_factors * lower_joint_vel
+        )
+        self._torques = self._torques + self._actuation_offset + self._joint_injection
+        self._torques = torch.clamp(self._torques, min=-self._torque_limits.unsqueeze(0), max=self._torque_limits.unsqueeze(0))
+        self.robot.set_joint_effort_target(self._torques, joint_ids=self._lower_joint_ids)
         self.robot.set_joint_position_target(self._upper_pose_current, joint_ids=self._upper_joint_ids)
 
     def _get_observations(self) -> dict[str, torch.Tensor]:
@@ -444,8 +606,6 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             (
                 critic_frame,
                 self._base_lin_vel_b * self.cfg.obs_base_lin_vel_scale,
-                self._upper_pose_current - self._default_upper_joint_pos.unsqueeze(0),
-                torch.full((self.num_envs, 1), self._upper_curriculum_progress, device=self.device),
             ),
             dim=-1,
         )
@@ -458,8 +618,12 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         self.extras["track/height_tracking_error"] = current_metrics["height_tracking_error"].detach()
         self.extras["track/symmetry_joint_error"] = current_metrics["symmetry_joint_error"].detach()
 
+        self._last_last_actions.copy_(self._prev_actions)
         self._prev_actions.copy_(self._actions)
         self._prev_lower_joint_vel.copy_(self._all_joint_vel[:, : self.cfg.action_space])
+        self._last_contacts.copy_(self._current_contacts)
+        self._feet_air_time *= (~self._contact_filt).float()
+        self._feet_max_height *= (~self._contact_filt).float()
 
         return {"policy": policy_obs, "critic": critic_obs}
 
@@ -481,16 +645,16 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         ):
             self._metric_episode_sums[name] += current_metrics[name]
         self._metric_episode_sums["lin_vel_x_tracking_score"] += torch.exp(
-            -torch.square(self._current_command[:, 0] - self._base_lin_vel_b[:, 0]) / self.cfg.lin_vel_tracking_sigma
+            -torch.square(self._current_command[:, 0] - self._base_lin_vel_b[:, 0]) / self.cfg.tracking_sigma
         )
         self._metric_episode_sums["lin_vel_y_tracking_score"] += torch.exp(
-            -torch.square(self._current_command[:, 1] - self._base_lin_vel_b[:, 1]) / self.cfg.lin_vel_tracking_sigma
+            -torch.square(self._current_command[:, 1] - self._base_lin_vel_b[:, 1]) / self.cfg.tracking_sigma
         )
         self._metric_episode_sums["yaw_tracking_score"] += torch.exp(
-            -torch.square(self._current_command[:, 2] - self._base_ang_vel_b[:, 2]) / self.cfg.yaw_rate_tracking_sigma
+            -torch.square(self._current_command[:, 2] - self._base_ang_vel_b[:, 2]) / self.cfg.tracking_sigma
         )
         self._metric_episode_sums["height_tracking_score"] += torch.exp(
-            -torch.abs(self._current_command[:, 3] - self._base_height) * self.cfg.height_tracking_alpha
+            -torch.abs(self._current_command[:, 3] - self._base_height) * 4.0
         )
         return reward
 
@@ -499,12 +663,14 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         self._compute_intermediate_values()
 
         time_out = self.episode_length_buf >= self.max_episode_length - 1
-        root_too_low = self._base_height < self.cfg.lower_body_height_termination_m
-        root_too_high = self._base_height > self.cfg.upper_body_height_termination_m
-        bad_orientation = torch.linalg.norm(self._torso_projected_gravity[:, :2], dim=-1) > self.cfg.max_projected_gravity_xy
-        undesired_body_low = self._min_non_foot_body_height() < self.cfg.undesired_body_height_termination_m
-
-        died = root_too_low | root_too_high | bad_orientation | undesired_body_low
+        termination_contact = torch.any(
+            torch.linalg.norm(
+                self.contact_sensor.data.net_forces_w[:, self._termination_contact_body_ids, :], dim=-1
+            )
+            > self.cfg.termination_contact_force_threshold,
+            dim=1,
+        )
+        died = termination_contact
         return died, time_out
 
     def _reset_idx(self, env_ids: Sequence[int] | None):
@@ -524,12 +690,7 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         num_resets = len(env_ids)
         root_state = self.robot.data.default_root_state[env_ids].clone()
         root_state[:, :3] += self.scene.env_origins[env_ids]
-        root_state[:, :2] += sample_uniform(
-            -self.cfg.reset_xy_noise,
-            self.cfg.reset_xy_noise,
-            (num_resets, 2),
-            self.device,
-        )
+        root_state[:, :2] += sample_uniform(-self.cfg.reset_xy_noise, self.cfg.reset_xy_noise, (num_resets, 2), self.device)
 
         yaw = sample_uniform(-self.cfg.reset_yaw_noise, self.cfg.reset_yaw_noise, (num_resets,), self.device)
         # Isaac Lab / Isaac Sim quaternions are wxyz.
@@ -567,8 +728,8 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         )
         joint_pos = torch.clamp(
             joint_pos * joint_scale + joint_offset,
-            min=self._soft_joint_limits[:, 0].unsqueeze(0),
-            max=self._soft_joint_limits[:, 1].unsqueeze(0),
+            min=self._hard_joint_limits[:, 0].unsqueeze(0),
+            max=self._hard_joint_limits[:, 1].unsqueeze(0),
         )
         joint_vel += sample_uniform(
             -self.cfg.reset_joint_velocity_noise,
@@ -582,9 +743,23 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
 
         self._actions[env_ids] = 0.0
+        self._origin_actions[env_ids] = 0.0
         self._prev_actions[env_ids] = 0.0
+        self._last_last_actions[env_ids] = 0.0
         self._prev_lower_joint_vel[env_ids] = 0.0
         self._lower_joint_targets[env_ids] = self._default_lower_joint_pos
+        self._torques[env_ids] = 0.0
+        self._joint_injection[env_ids] = 0.0
+        self._actuation_offset[env_ids] = 0.0
+        self._current_contacts[env_ids] = False
+        self._last_contacts[env_ids] = False
+        self._contact_filt[env_ids] = False
+        self._first_contacts[env_ids] = False
+        self._feet_air_time[env_ids] = 0.0
+        self._feet_max_height[env_ids] = 0.0
+
+        self._randomize_reset_control_props(env_ids)
+        self._randomize_reset_rigid_body_props(env_ids)
 
         self._resample_commands(env_ids, initialize=True)
         self._resample_upper_body_targets(env_ids, initialize=True)
@@ -648,121 +823,179 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
 
     def _compute_intermediate_values(self):
         self._base_lin_vel_b = self.robot.data.root_lin_vel_b
-        self._base_ang_vel_b = self.robot.data.root_ang_vel_b
-        torso_quat_w = self.robot.data.body_quat_w[:, self._torso_body_id]
-        self._torso_projected_gravity = quat_apply_inverse(torso_quat_w, self._gravity_vec_w)
+        imu_quat_w = self.robot.data.body_quat_w[:, self._imu_body_id]
+        imu_ang_vel_w = self.robot.data.body_ang_vel_w[:, self._imu_body_id]
+        self._base_ang_vel_b = quat_apply_inverse(imu_quat_w, imu_ang_vel_w)
+        self._torso_projected_gravity = quat_apply_inverse(imu_quat_w, self._gravity_vec_w)
         self._all_joint_pos = self.robot.data.joint_pos[:, self._all_joint_ids]
         self._all_joint_vel = self.robot.data.joint_vel[:, self._all_joint_ids]
         lower_joint_vel = self._all_joint_vel[:, : self.cfg.action_space]
         self._lower_joint_acc = (lower_joint_vel - self._prev_lower_joint_vel) / self.step_dt
         self._feet_pos_w = self.robot.data.body_pos_w[:, self._foot_body_ids]
         self._feet_vel_w = self.robot.data.body_lin_vel_w[:, self._foot_body_ids]
+        self._foot_contact_forces = self.contact_sensor.data.net_forces_w[:, self._foot_contact_sensor_ids]
         support_height = torch.max(self._feet_pos_w[:, 0, 2], self._feet_pos_w[:, 1, 2])
         self._base_height = self.robot.data.root_pos_w[:, 2] - support_height + ANKLE_SOLE_DISTANCE
+        self._current_contacts = torch.linalg.norm(self._foot_contact_forces, dim=-1) > self.cfg.foot_contact_force_threshold
+        self._contact_filt = torch.logical_or(self._current_contacts, self._last_contacts)
+        self._first_contacts = (self._feet_air_time >= self.step_dt) & self._contact_filt
+        self._feet_air_time += self.step_dt
+        feet_height, _ = self._get_feet_heights()
+        self._feet_max_height = torch.maximum(self._feet_max_height, feet_height)
 
     def _compute_reward_terms(self) -> dict[str, torch.Tensor]:
-        command_vx = self._current_command[:, 0]
-        command_vy = self._current_command[:, 1]
-        command_yaw = self._current_command[:, 2]
         command_height = self._current_command[:, 3]
+        standing_mask = (command_height >= 0.735).float()
 
-        lin_vel_error = command_vx - self._base_lin_vel_b[:, 0]
-        lin_vel_y_error = command_vy - self._base_lin_vel_b[:, 1]
-        yaw_rate_error = command_yaw - self._base_ang_vel_b[:, 2]
-        height_error = command_height - self._base_height
+        lin_vel_error_x = torch.square(self._current_command[:, 0] - self._base_lin_vel_b[:, 0])
+        lin_vel_error_y = torch.square(self._current_command[:, 1] - self._base_lin_vel_b[:, 1])
+        ang_vel_error = torch.square(self._current_command[:, 2] - self._base_ang_vel_b[:, 2])
+        tracking_x_vel = torch.exp(-lin_vel_error_x / self.cfg.tracking_sigma)
+        tracking_y_vel = torch.exp(-lin_vel_error_y / self.cfg.tracking_sigma)
+        tracking_ang_vel = torch.exp(-ang_vel_error / self.cfg.tracking_sigma)
 
-        track_lin_vel = self.cfg.rew_scale_track_lin_vel * torch.exp(
-            -torch.square(lin_vel_error) / self.cfg.lin_vel_tracking_sigma
-        )
-        track_lin_vel_y = self.cfg.rew_scale_track_lin_vel_y * torch.exp(
-            -torch.square(lin_vel_y_error) / self.cfg.lin_vel_tracking_sigma
-        )
-        track_yaw_rate = self.cfg.rew_scale_track_yaw_rate * torch.exp(
-            -torch.square(yaw_rate_error) / self.cfg.yaw_rate_tracking_sigma
-        )
-        track_height = self.cfg.rew_scale_track_height * torch.exp(-torch.abs(height_error) * self.cfg.height_tracking_alpha)
+        base_height_error = torch.abs(self._base_height - command_height)
+        tracking_base_height = torch.exp(-base_height_error * 4.0)
 
-        knee_pos = self._all_joint_pos[:, [3, 9]]
-        knee_default = self._default_joint_pos[[3, 9]].unsqueeze(0)
-        knee_upper = self._soft_joint_limits[self._lower_joint_ids[[3, 9]], 1].unsqueeze(0)
-        desired_squat_ratio = torch.clamp(
-            (self.cfg.base_height_target - command_height) / max(abs(self.cfg.command_height_offset_range[0]), 1.0e-6),
-            min=0.0,
-            max=1.0,
+        lower_joint_pos = self._all_joint_pos[:, : self.cfg.action_space]
+        lower_joint_vel = self._all_joint_vel[:, : self.cfg.action_space]
+        lower_joint_delta = lower_joint_pos - self._default_lower_joint_pos.unsqueeze(0)
+        hip_indices = torch.tensor([0, 1, 2, 6, 7, 8], device=self.device, dtype=torch.long)
+        ankle_indices = torch.tensor([5, 11], device=self.device, dtype=torch.long)
+        knee_indices = torch.tensor([3, 9], device=self.device, dtype=torch.long)
+        deviation_hip_joint = torch.sum(torch.square(lower_joint_delta[:, hip_indices]), dim=-1) * standing_mask
+        deviation_ankle_joint = torch.sum(torch.square(lower_joint_delta[:, ankle_indices]), dim=-1) * standing_mask
+        knee_action_min = self._default_lower_joint_pos[knee_indices].unsqueeze(0) + self.cfg.action_scale * self._lower_action_min[knee_indices].unsqueeze(0)
+        knee_action_max = self._default_lower_joint_pos[knee_indices].unsqueeze(0) + self.cfg.action_scale * self._lower_action_max[knee_indices].unsqueeze(0)
+        knee_joint_deviation = (lower_joint_pos[:, knee_indices] - knee_action_min) / torch.clamp(
+            knee_action_max - knee_action_min, min=1.0e-6
         )
-        actual_squat_ratio = torch.clamp((knee_pos - knee_default) / torch.clamp(knee_upper - knee_default, min=1.0e-6), 0.0, 1.0)
-        knee_guidance = self.cfg.rew_scale_knee_guidance * torch.exp(
-            -torch.square(actual_squat_ratio.mean(dim=-1) - desired_squat_ratio) / self.cfg.knee_guidance_sigma
-        )
-
-        foot_pos_body = self._feet_pos_w - self.robot.data.root_pos_w.unsqueeze(1)
-        foot_vel_body = self._feet_vel_w - self.robot.data.root_lin_vel_w.unsqueeze(1)
-        root_quat_repeat = self.robot.data.root_quat_w.unsqueeze(1).repeat(1, foot_pos_body.shape[1], 1).reshape(-1, 4)
-        foot_pos_body = quat_apply_inverse(root_quat_repeat, foot_pos_body.reshape(-1, 3)).view_as(foot_pos_body)
-        foot_vel_body = quat_apply_inverse(root_quat_repeat, foot_vel_body.reshape(-1, 3)).view_as(foot_vel_body)
-        foot_height_error = torch.square(foot_pos_body[:, :, 2] - self.cfg.foot_clearance_target)
-        foot_speed_xy = torch.tanh(
-            self.cfg.foot_clearance_tanh_mult * torch.linalg.norm(foot_vel_body[:, :, :2], dim=-1)
-        )
-        moving_mask = (torch.abs(command_vx) + torch.abs(command_vy) + torch.abs(command_yaw)) > 0.05
-        foot_clearance = self.cfg.rew_scale_foot_clearance * torch.exp(
-            -torch.sum(foot_height_error * foot_speed_xy, dim=-1) / self.cfg.foot_clearance_sigma
-        ) * moving_mask.float()
-
-        orientation = self.cfg.rew_scale_orientation * torch.sum(torch.square(self._torso_projected_gravity[:, :2]), dim=-1)
-        vertical_vel = self.cfg.rew_scale_vertical_vel * torch.square(self._base_lin_vel_b[:, 2])
-        ang_vel_xy = self.cfg.rew_scale_ang_vel_xy * torch.sum(torch.square(self._base_ang_vel_b[:, :2]), dim=-1)
-        action_rate = self.cfg.rew_scale_action_rate * torch.sum(torch.square(self._actions - self._prev_actions), dim=-1)
-        joint_vel = self.cfg.rew_scale_joint_vel * torch.sum(
-            torch.square(self._all_joint_vel[:, : self.cfg.action_space]), dim=-1
-        )
-        joint_acc = self.cfg.rew_scale_joint_acc * torch.sum(torch.square(self._lower_joint_acc), dim=-1)
-        power = self.cfg.rew_scale_power * torch.sum(
-            torch.abs(self.robot.data.applied_torque[:, self._lower_joint_ids] * self._all_joint_vel[:, : self.cfg.action_space]),
+        deviation_knee_joint = torch.sum(
+            torch.abs((knee_joint_deviation - 0.5) * (self.robot.data.root_pos_w[:, 2] - command_height).unsqueeze(-1)),
             dim=-1,
         )
-        joint_limit = self.cfg.rew_scale_joint_limit * self._joint_limit_penalty()
-        feet_slip = self.cfg.rew_scale_feet_slip * self._feet_slip_penalty()
-        symmetry_joint = self.cfg.rew_scale_symmetry_joint * self._compute_symmetry_joint_error()
-        alive = torch.full((self.num_envs,), self.cfg.rew_scale_alive, device=self.device)
 
-        return {
-            "track_lin_vel": track_lin_vel,
-            "track_lin_vel_y": track_lin_vel_y,
-            "track_yaw_rate": track_yaw_rate,
-            "track_height": track_height,
-            "knee_guidance": knee_guidance,
-            "alive": alive,
-            "foot_clearance": foot_clearance,
-            "orientation": orientation,
-            "vertical_vel": vertical_vel,
-            "ang_vel_xy": ang_vel_xy,
-            "action_rate": action_rate,
-            "joint_vel": joint_vel,
-            "joint_acc": joint_acc,
-            "power": power,
-            "joint_limit": joint_limit,
+        feet_height, feet_height_var = self._get_feet_heights()
+        cur_footvel_translated = self._feet_vel_w - self.robot.data.root_lin_vel_w.unsqueeze(1)
+        feetvel_in_body = quat_apply_inverse(
+            self.robot.data.root_quat_w.unsqueeze(1).repeat(1, cur_footvel_translated.shape[1], 1).reshape(-1, 4),
+            cur_footvel_translated.reshape(-1, 3),
+        ).view_as(cur_footvel_translated)
+        feet_clearance = torch.sum(
+            torch.square(feet_height - self.cfg.clearance_height_target)
+            * torch.sqrt(torch.sum(torch.square(feetvel_in_body[:, :, :2]), dim=2)),
+            dim=1,
+        ) * (command_height >= 0.71).float()
+
+        foot_pos_body = quat_apply_inverse(
+            self.robot.data.root_quat_w.unsqueeze(1).repeat(1, self._feet_pos_w.shape[1], 1).reshape(-1, 4),
+            (self._feet_pos_w - self.robot.data.root_pos_w.unsqueeze(1)).reshape(-1, 3),
+        ).view_as(self._feet_pos_w)
+        foot_lateral_dis = torch.abs(foot_pos_body[:, 0, 1] - foot_pos_body[:, 1, 1])
+        feet_distance_lateral = (
+            torch.clamp(foot_lateral_dis - self.cfg.least_feet_distance_lateral, max=0.0)
+            + torch.clamp(-foot_lateral_dis + self.cfg.most_feet_distance_lateral, max=0.0)
+        ) * standing_mask
+
+        knee_pos_body = quat_apply_inverse(
+            self.robot.data.root_quat_w.unsqueeze(1).repeat(1, self._knee_body_ids.numel(), 1).reshape(-1, 4),
+            (self.robot.data.body_pos_w[:, self._knee_body_ids, :] - self.robot.data.root_pos_w.unsqueeze(1)).reshape(-1, 3),
+        ).view(self.num_envs, self._knee_body_ids.numel(), 3)
+        knee_lateral_dis = torch.abs(knee_pos_body[:, 0, 1] - knee_pos_body[:, 2, 1]) + torch.abs(
+            knee_pos_body[:, 1, 1] - knee_pos_body[:, 3, 1]
+        )
+        knee_distance_lateral = (
+            torch.clamp(knee_lateral_dis - self.cfg.least_knee_distance_lateral * 2.0, max=0.0)
+            + torch.clamp(-knee_lateral_dis + self.cfg.most_knee_distance_lateral * 2.0, max=0.0)
+        ) * standing_mask
+
+        continue_contact = (self._feet_air_time >= 3.0 * self.step_dt) & self._contact_filt
+        feet_ground_parallel = torch.sum(feet_height_var * continue_contact.float(), dim=1)
+        left_foot_pos = self.robot.data.body_pos_w[:, self._left_foot_surface_ids]
+        right_foot_pos = self.robot.data.body_pos_w[:, self._right_foot_surface_ids]
+        feet_parallel = torch.var(torch.norm(left_foot_pos - right_foot_pos, dim=2), dim=1) * standing_mask
+
+        lower_contact_forces = self._foot_contact_forces
+        feet_stumble = torch.any(
+            torch.linalg.norm(lower_contact_forces[:, :, :2], dim=2) > 3.0 * torch.abs(lower_contact_forces[:, :, 2]),
+            dim=1,
+        ).float()
+        dof_pos_limits = torch.sum(
+            torch.clamp(self._homie_joint_pos_limits[:, 0].unsqueeze(0) - lower_joint_pos, max=0.0).abs()
+            + torch.clamp(lower_joint_pos - self._homie_joint_pos_limits[:, 1].unsqueeze(0), min=0.0),
+            dim=1,
+        )
+        dof_vel_limits = torch.sum(
+            (torch.abs(lower_joint_vel) - self._joint_vel_limits.unsqueeze(0) * self.cfg.soft_dof_vel_limit).clamp(min=0.0),
+            dim=1,
+        )
+        torque_limits = torch.sum(
+            (torch.abs(self._torques) - self._torque_limits.unsqueeze(0) * self.cfg.soft_torque_limit).clamp(min=0.0),
+            dim=1,
+        )
+        no_fly = (torch.sum(lower_contact_forces[:, :, 2] > 0.5, dim=1) == 1).float()
+        no_fly = torch.maximum(no_fly, (torch.linalg.norm(self._current_command[:, :3], dim=1) < 0.1).float())
+        feet_slip = torch.sum(torch.linalg.norm(self._feet_vel_w[:, :, :2], dim=2) * (lower_contact_forces[:, :, 2] > 1.0), dim=1)
+        feet_contact_forces = torch.sum(
+            (torch.linalg.norm(lower_contact_forces, dim=-1) - self.cfg.max_contact_force).clamp(min=0.0), dim=1
+        )
+        contact_momentum = torch.sum(
+            torch.clamp(self._feet_vel_w[:, :, 2], max=0.0) * torch.clamp(lower_contact_forces[:, :, 2] - 50.0, min=0.0),
+            dim=1,
+        )
+        action_vanish = torch.sum(
+            torch.clamp(self._origin_actions - self._lower_action_max.unsqueeze(0), min=0.0)
+            + torch.clamp(self._lower_action_min.unsqueeze(0) - self._origin_actions, min=0.0),
+            dim=1,
+        )
+        stand_still = (
+            torch.sum(lower_contact_forces[:, :, 2] < 0.1, dim=-1).float()
+            * standing_mask
+            * (torch.linalg.norm(self._current_command[:, :3], dim=1) < 0.1).float()
+        )
+
+        raw_terms = {
+            "tracking_x_vel": tracking_x_vel,
+            "tracking_y_vel": tracking_y_vel,
+            "tracking_ang_vel": tracking_ang_vel,
+            "lin_vel_z": torch.square(self._base_lin_vel_b[:, 2]) * standing_mask,
+            "ang_vel_xy": torch.sum(torch.square(self._base_ang_vel_b[:, :2]), dim=1),
+            "orientation": torch.sum(torch.square(self._torso_projected_gravity[:, :2]), dim=1),
+            "action_rate": torch.sum(torch.square(self._prev_actions - self._actions), dim=1),
+            "tracking_base_height": tracking_base_height,
+            "deviation_hip_joint": deviation_hip_joint,
+            "deviation_ankle_joint": deviation_ankle_joint,
+            "deviation_knee_joint": deviation_knee_joint,
+            "dof_acc": torch.sum(torch.square(self._lower_joint_acc), dim=1),
+            "dof_pos_limits": dof_pos_limits,
+            "feet_air_time": torch.sum((self._feet_air_time - 0.5) * self._first_contacts.float(), dim=1)
+            * (torch.linalg.norm(self._current_command[:, :3], dim=1) > 0.1).float(),
+            "feet_clearance": feet_clearance,
+            "feet_distance_lateral": feet_distance_lateral,
+            "knee_distance_lateral": knee_distance_lateral,
+            "feet_ground_parallel": feet_ground_parallel,
+            "feet_parallel": feet_parallel,
+            "smoothness": torch.sum(torch.square(self._actions - 2.0 * self._prev_actions + self._last_last_actions), dim=1),
+            "joint_power": torch.sum(torch.abs(lower_joint_vel) * torch.abs(self._torques), dim=1)
+            / torch.clamp(
+                torch.sum(torch.square(self._current_command[:, 0:2]), dim=-1) + 0.2 * torch.square(self._current_command[:, 2]),
+                min=0.1,
+            ),
+            "feet_stumble": feet_stumble,
+            "torques": torch.sum(torch.square(self._torques / torch.clamp(self._p_gains.unsqueeze(0), min=1.0e-6)), dim=1),
+            "dof_vel": torch.sum(torch.square(lower_joint_vel), dim=1),
+            "dof_vel_limits": dof_vel_limits,
+            "torque_limits": torque_limits,
+            "no_fly": no_fly,
+            "joint_tracking_error": torch.sum(torch.square(self._lower_joint_targets - lower_joint_pos), dim=-1),
             "feet_slip": feet_slip,
-            "symmetry_joint": symmetry_joint,
+            "feet_contact_forces": feet_contact_forces,
+            "contact_momentum": contact_momentum,
+            "action_vanish": action_vanish,
+            "stand_still": stand_still,
+            "symmetry_joint": self._compute_symmetry_joint_error(),
         }
-
-    def _joint_limit_penalty(self) -> torch.Tensor:
-        lower_joint_pos = self._all_joint_pos[:, : self.cfg.action_space]
-        lower_soft_limits = self._soft_joint_limits[self._lower_joint_ids]
-        lower_violation = torch.clamp(lower_soft_limits[:, 0].unsqueeze(0) - lower_joint_pos, min=0.0)
-        upper_violation = torch.clamp(lower_joint_pos - lower_soft_limits[:, 1].unsqueeze(0), min=0.0)
-        return torch.sum(lower_violation + upper_violation, dim=-1)
-
-    def _feet_slip_penalty(self) -> torch.Tensor:
-        near_ground = self._feet_pos_w[:, :, 2] < 0.05
-        feet_speed_xy = torch.linalg.norm(self._feet_vel_w[:, :, :2], dim=-1)
-        return torch.sum(feet_speed_xy * near_ground.float(), dim=-1)
-
-    def _min_non_foot_body_height(self) -> torch.Tensor:
-        body_pos_w = self.robot.data.body_pos_w
-        keep_mask = torch.ones(body_pos_w.shape[1], dtype=torch.bool, device=self.device)
-        keep_mask[self._foot_body_ids] = False
-        return body_pos_w[:, keep_mask, 2].amin(dim=-1)
+        return {name: raw_terms[name] * self._reward_scales[name] for name in self._reward_names}
 
     def _resample_commands(self, env_ids: torch.Tensor, initialize: bool = False):
         if len(env_ids) == 0:
@@ -821,10 +1054,11 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
 
         goal = self._sample_upper_body_pose_targets(len(env_ids))
         if initialize:
-            self._upper_pose_current[env_ids] = goal
-            self._upper_pose_start[env_ids] = goal
+            default_upper = self._default_upper_joint_pos.unsqueeze(0).repeat(len(env_ids), 1)
+            self._upper_pose_current[env_ids] = default_upper
+            self._upper_pose_start[env_ids] = default_upper
             self._upper_pose_goal[env_ids] = goal
-            self._upper_interp_step[env_ids] = self._upper_resample_interval_steps
+            self._upper_interp_step[env_ids] = 0
         else:
             self._upper_pose_start[env_ids] = self._upper_pose_current[env_ids]
             self._upper_pose_goal[env_ids] = goal
@@ -836,47 +1070,37 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         self._upper_pose_current = self._upper_pose_start + alpha * (self._upper_pose_goal - self._upper_pose_start)
 
     def _sample_upper_body_pose_targets(self, batch_size: int) -> torch.Tensor:
-        lower_delta = self._upper_joint_min - self._default_upper_joint_pos
-        upper_delta = self._upper_joint_max - self._default_upper_joint_pos
         progress = 1.0 if self.cfg.upper_curriculum_eval_fixed else min(
             self._upper_curriculum_progress, self.cfg.upper_curriculum_max_progress
         )
-        low = (
-            self._default_upper_joint_pos.unsqueeze(0)
-            + progress * lower_delta.unsqueeze(0)
-        ).repeat(batch_size, 1)
-        high = (
-            self._default_upper_joint_pos.unsqueeze(0)
-            + progress * upper_delta.unsqueeze(0)
-        ).repeat(batch_size, 1)
-        rand = torch.rand(batch_size, UPPER_JOINT_DIM, device=self.device)
-        return low + rand * (high - low)
+        uu = torch.rand(batch_size, UPPER_JOINT_DIM, device=self.device)
+        progress_tensor = torch.full_like(uu, progress)
+        scaled_ratio = -1.0 / (20.0 * (1.0 - progress_tensor * 0.99)) * torch.log(
+            1.0 - uu + uu * math.exp(-20.0 * (1.0 - progress * 0.99))
+        )
+        random_joint_ratio = scaled_ratio * torch.rand(batch_size, UPPER_JOINT_DIM, device=self.device)
+        rand_pos = torch.rand(batch_size, UPPER_JOINT_DIM, device=self.device) - 0.5
+        sampled_upper_actions = torch.where(
+            rand_pos >= 0.0,
+            self._upper_action_min.unsqueeze(0),
+            self._upper_action_max.unsqueeze(0),
+        ) * random_joint_ratio
+        return self._default_upper_joint_pos.unsqueeze(0) + self.cfg.action_scale * sampled_upper_actions
 
     def _update_upper_body_curriculum(self, env_ids: torch.Tensor, completed_episode_length: torch.Tensor):
         if self.cfg.upper_curriculum_eval_fixed:
             self._upper_curriculum_progress = 1.0
             return
 
-        self._upper_curriculum_progress = min(self._upper_curriculum_progress, self.cfg.upper_curriculum_max_progress)
-        tracking_score = (
-            self._metric_episode_sums["lin_vel_x_tracking_score"][env_ids]
-            + self._metric_episode_sums["lin_vel_y_tracking_score"][env_ids]
-            + self._metric_episode_sums["yaw_tracking_score"][env_ids]
-            + self._metric_episode_sums["height_tracking_score"][env_ids]
-        ) / (4.0 * completed_episode_length)
-        mean_score = float(tracking_score.mean().item())
-
-        # Corresponds to HOMIE's tracking-driven action curriculum, but the expanded range is the
-        # internally generated upper-body target trajectory instead of the policy action envelope.
-        if mean_score > self.cfg.upper_curriculum_promote_threshold:
+        mean_tracking_x_reward = float(
+            (self._reward_episode_sums["tracking_x_vel"][env_ids] / completed_episode_length).mean().item()
+        )
+        # Corresponds to HOMIE's tracking-driven action curriculum: expand upper-body disturbance
+        # only when forward velocity tracking stays above 80% of its maximum scale.
+        if mean_tracking_x_reward > self.cfg.upper_curriculum_promote_threshold * self._reward_scales["tracking_x_vel"]:
             self._upper_curriculum_progress = min(
                 self.cfg.upper_curriculum_max_progress,
                 self._upper_curriculum_progress + self.cfg.upper_curriculum_step,
-            )
-        elif mean_score < self.cfg.upper_curriculum_demote_threshold:
-            self._upper_curriculum_progress = max(
-                self.cfg.upper_curriculum_init,
-                self._upper_curriculum_progress - self.cfg.upper_curriculum_demote_step,
             )
 
     def _log_and_reset_episode_summaries(self, env_ids: torch.Tensor, completed_episode_length: torch.Tensor):
@@ -898,9 +1122,9 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         self._last_episode_metrics["survival_time"][env_ids] = per_env_survival
         self.extras["episode"]["episode_length"] = torch.mean(completed_episode_length)
         self.extras["episode"]["survival_time"] = torch.mean(per_env_survival)
-        self.extras["episode"]["upper_curriculum_progress"] = torch.tensor(
-            self._upper_curriculum_progress, device=self.device
-        )
+        curriculum_value = torch.tensor(self._upper_curriculum_progress, device=self.device)
+        self.extras["episode"]["upper_curriculum_progress"] = curriculum_value
+        self.extras["episode"]["action_curriculum_ratio"] = curriculum_value
 
     def _find_joint_ids(self, joint_names: list[str]) -> torch.Tensor:
         return torch.as_tensor(
@@ -908,6 +1132,147 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             device=self.device,
             dtype=torch.long,
         )
+
+    def _find_body_ids_safe(self, body_names: list[str] | tuple[str, ...]) -> torch.Tensor:
+        try:
+            return torch.as_tensor(
+                self.robot.find_bodies(list(body_names), preserve_order=True)[0],
+                device=self.device,
+                dtype=torch.long,
+            )
+        except Exception:
+            return torch.zeros(0, device=self.device, dtype=torch.long)
+
+    def _find_sensor_body_ids_safe(self, body_names: list[str] | tuple[str, ...]) -> torch.Tensor:
+        try:
+            if hasattr(self.contact_sensor, "find_bodies"):
+                return torch.as_tensor(
+                    self.contact_sensor.find_bodies(list(body_names), preserve_order=True)[0],
+                    device=self.device,
+                    dtype=torch.long,
+                )
+            sensor_names = list(getattr(self.contact_sensor, "body_names", []))
+            indices = [sensor_names.index(name) for name in body_names if name in sensor_names]
+            return torch.as_tensor(indices, device=self.device, dtype=torch.long)
+        except Exception:
+            return torch.zeros(0, device=self.device, dtype=torch.long)
+
+    def _find_sensor_body_ids_by_substring(self, substrings: tuple[str, ...]) -> torch.Tensor:
+        names = getattr(self.contact_sensor, "body_names", [])
+        indices = [idx for idx, name in enumerate(names) if any(sub in name for sub in substrings)]
+        return torch.as_tensor(indices, device=self.device, dtype=torch.long)
+
+    def _compute_homie_soft_limits(self, joint_ids: torch.Tensor) -> torch.Tensor:
+        joint_limits = self._hard_joint_limits[joint_ids]
+        center = 0.5 * (joint_limits[:, 0] + joint_limits[:, 1])
+        width = joint_limits[:, 1] - joint_limits[:, 0]
+        return torch.stack(
+            (
+                center - 0.5 * width * self.cfg.soft_dof_pos_limit,
+                center + 0.5 * width * self.cfg.soft_dof_pos_limit,
+            ),
+            dim=-1,
+        )
+
+    def _build_lower_pd_gains(self, stiffness: bool) -> torch.Tensor:
+        gains = []
+        for name in self.cfg.lower_joint_names:
+            if "knee" in name:
+                gains.append(150.0 if stiffness else 4.0)
+            elif "ankle" in name:
+                gains.append(40.0 if stiffness else 2.0)
+            else:
+                gains.append(100.0 if stiffness else 2.0)
+        return torch.tensor(gains, device=self.device, dtype=torch.float)
+
+    def _disable_lower_position_drives(self):
+        zeros = torch.zeros((self.num_envs, self.cfg.action_space), device=self.device)
+        try:
+            self.robot.write_joint_stiffness_to_sim(zeros, joint_ids=self._lower_joint_ids)
+            self.robot.write_joint_damping_to_sim(zeros, joint_ids=self._lower_joint_ids)
+        except AttributeError:
+            pass
+
+    def _randomize_reset_control_props(self, env_ids: torch.Tensor):
+        num_envs = len(env_ids)
+        if self.cfg.randomize_kp:
+            self._kp_factors[env_ids] = sample_uniform(
+                self.cfg.kp_range[0], self.cfg.kp_range[1], (num_envs, self.cfg.action_space), self.device
+            )
+        else:
+            self._kp_factors[env_ids] = 1.0
+        if self.cfg.randomize_kd:
+            self._kd_factors[env_ids] = sample_uniform(
+                self.cfg.kd_range[0], self.cfg.kd_range[1], (num_envs, self.cfg.action_space), self.device
+            )
+        else:
+            self._kd_factors[env_ids] = 1.0
+        if self.cfg.randomize_actuation_offset:
+            self._actuation_offset[env_ids] = sample_uniform(
+                self.cfg.actuation_offset_range[0],
+                self.cfg.actuation_offset_range[1],
+                (num_envs, self.cfg.action_space),
+                self.device,
+            ) * self._torque_limits.unsqueeze(0)
+        else:
+            self._actuation_offset[env_ids] = 0.0
+
+    def _randomize_reset_rigid_body_props(self, env_ids: torch.Tensor):
+        env_ids_cpu = env_ids.detach().to(device="cpu", dtype=torch.long)
+        masses = self._default_body_masses.clone()
+        coms = self._default_body_coms.clone()
+        if self.cfg.randomize_link_mass:
+            scale = sample_uniform(
+                self.cfg.link_mass_range[0],
+                self.cfg.link_mass_range[1],
+                (len(env_ids), masses.shape[1]),
+                self.device,
+            ).cpu()
+            masses[env_ids_cpu] = masses[env_ids_cpu] * scale
+            masses[env_ids_cpu, 0] = self._default_body_masses[env_ids_cpu, 0]
+        if self.cfg.randomize_payload_mass:
+            torso_mass_delta = sample_uniform(
+                self.cfg.payload_mass_range[0], self.cfg.payload_mass_range[1], (len(env_ids),), self.device
+            ).cpu()
+            masses[env_ids_cpu, self._torso_body_id] = self._default_body_masses[env_ids_cpu, self._torso_body_id] + torso_mass_delta
+            if self._left_hand_body_id.numel() > 0:
+                left_hand_delta = sample_uniform(
+                    self.cfg.hand_payload_mass_range[0], self.cfg.hand_payload_mass_range[1], (len(env_ids),), self.device
+                ).cpu()
+                masses[env_ids_cpu, int(self._left_hand_body_id[0])] = (
+                    self._default_body_masses[env_ids_cpu, int(self._left_hand_body_id[0])] + left_hand_delta
+                )
+            if self._right_hand_body_id.numel() > 0:
+                right_hand_delta = sample_uniform(
+                    self.cfg.hand_payload_mass_range[0], self.cfg.hand_payload_mass_range[1], (len(env_ids),), self.device
+                ).cpu()
+                masses[env_ids_cpu, int(self._right_hand_body_id[0])] = (
+                    self._default_body_masses[env_ids_cpu, int(self._right_hand_body_id[0])] + right_hand_delta
+                )
+        if self.cfg.randomize_com_displacement:
+            delta = sample_uniform(
+                self.cfg.com_displacement_range[0], self.cfg.com_displacement_range[1], (len(env_ids), 3), self.device
+            ).cpu()
+            coms[env_ids_cpu, 0, :3] = self._default_body_coms[env_ids_cpu, 0, :3] + delta
+        if self.cfg.randomize_body_displacement:
+            delta = sample_uniform(
+                self.cfg.body_displacement_range[0], self.cfg.body_displacement_range[1], (len(env_ids), 3), self.device
+            ).cpu()
+            coms[env_ids_cpu, self._torso_body_id, :3] = self._default_body_coms[env_ids_cpu, self._torso_body_id, :3] + delta
+        try:
+            self.robot.root_physx_view.set_masses(masses, env_ids_cpu)
+            self.robot.root_physx_view.set_coms(coms, env_ids_cpu)
+        except AttributeError:
+            pass
+
+    def _get_feet_heights(self) -> tuple[torch.Tensor, torch.Tensor]:
+        left_foot_pos = self.robot.data.body_pos_w[:, self._left_foot_surface_ids, :3]
+        right_foot_pos = self.robot.data.body_pos_w[:, self._right_foot_surface_ids, :3]
+        left_height = torch.mean(left_foot_pos[:, :, 2], dim=-1, keepdim=True)
+        left_var = torch.var(left_foot_pos[:, :, 2], dim=-1, keepdim=True)
+        right_height = torch.mean(right_foot_pos[:, :, 2], dim=-1, keepdim=True)
+        right_var = torch.var(right_foot_pos[:, :, 2], dim=-1, keepdim=True)
+        return torch.cat((left_height, right_height), dim=-1), torch.cat((left_var, right_var), dim=-1)
 
     def _build_joint_mirror(self, joint_names: list[str]) -> tuple[torch.Tensor, torch.Tensor]:
         paired = {left: right for left, right in self.cfg.mirror_joint_pairs}
@@ -1004,10 +1369,4 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         mirrored[:, offset + 0] = obs[:, offset + 0]
         mirrored[:, offset + 1] = -obs[:, offset + 1]
         mirrored[:, offset + 2] = obs[:, offset + 2]
-        offset += 3
-
-        mirrored[:, offset : offset + UPPER_JOINT_DIM] = (
-            obs[:, offset : offset + UPPER_JOINT_DIM][:, self._upper_joint_mirror_index]
-            * self._upper_joint_mirror_sign.unsqueeze(0)
-        )
         return mirrored

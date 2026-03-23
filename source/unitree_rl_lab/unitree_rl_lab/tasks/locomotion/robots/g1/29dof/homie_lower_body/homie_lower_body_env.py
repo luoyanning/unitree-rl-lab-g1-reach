@@ -497,7 +497,9 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
 
         self._base_lin_vel_b = torch.zeros(self.num_envs, 3, device=self.device)
         self._base_ang_vel_b = torch.zeros(self.num_envs, 3, device=self.device)
-        self._torso_projected_gravity = torch.zeros(self.num_envs, 3, device=self.device)
+        self._base_projected_gravity = torch.zeros(self.num_envs, 3, device=self.device)
+        self._imu_ang_vel_b = torch.zeros(self.num_envs, 3, device=self.device)
+        self._imu_projected_gravity = torch.zeros(self.num_envs, 3, device=self.device)
         self._all_joint_pos = torch.zeros(self.num_envs, ALL_JOINT_DIM, device=self.device)
         self._all_joint_vel = torch.zeros(self.num_envs, ALL_JOINT_DIM, device=self.device)
         self._lower_joint_acc = torch.zeros(self.num_envs, self.cfg.action_space, device=self.device)
@@ -665,7 +667,7 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             self.robot.data.body_pos_w[:, self._termination_contact_body_ids, 2] < self.cfg.termination_body_height_threshold,
             dim=1,
         )
-        gravity_termination = torch.linalg.norm(self._torso_projected_gravity[:, :2], dim=-1) > 0.8
+        gravity_termination = torch.linalg.norm(self._base_projected_gravity[:, :2], dim=-1) > 0.8
         died = termination_contact | gravity_termination
         return died, time_out
 
@@ -779,8 +781,8 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
                     ),
                     dim=-1,
                 ),
-                self._base_ang_vel_b * self.cfg.obs_ang_vel_scale,
-                self._torso_projected_gravity,
+                self._imu_ang_vel_b * self.cfg.obs_ang_vel_scale,
+                self._imu_projected_gravity,
                 self._all_joint_pos - self._default_joint_pos.unsqueeze(0),
                 self._all_joint_vel * self.cfg.obs_joint_vel_scale,
                 self._prev_actions,
@@ -823,10 +825,12 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
 
     def _compute_intermediate_values(self):
         self._base_lin_vel_b = self.robot.data.root_lin_vel_b
+        self._base_ang_vel_b = self.robot.data.root_ang_vel_b
+        self._base_projected_gravity = quat_apply_inverse(self.robot.data.root_quat_w, self._gravity_vec_w)
         imu_quat_w = self.robot.data.body_quat_w[:, self._imu_body_id]
         imu_ang_vel_w = self.robot.data.body_ang_vel_w[:, self._imu_body_id]
-        self._base_ang_vel_b = quat_apply_inverse(imu_quat_w, imu_ang_vel_w)
-        self._torso_projected_gravity = quat_apply_inverse(imu_quat_w, self._gravity_vec_w)
+        self._imu_ang_vel_b = quat_apply_inverse(imu_quat_w, imu_ang_vel_w)
+        self._imu_projected_gravity = quat_apply_inverse(imu_quat_w, self._gravity_vec_w)
         self._all_joint_pos = self.robot.data.joint_pos[:, self._all_joint_ids]
         self._all_joint_vel = self.robot.data.joint_vel[:, self._all_joint_ids]
         lower_joint_vel = self._all_joint_vel[:, : self.cfg.action_space]
@@ -967,7 +971,7 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
             "tracking_ang_vel": tracking_ang_vel,
             "lin_vel_z": torch.square(self._base_lin_vel_b[:, 2]) * standing_mask,
             "ang_vel_xy": torch.sum(torch.square(self._base_ang_vel_b[:, :2]), dim=1),
-            "orientation": torch.sum(torch.square(self._torso_projected_gravity[:, :2]), dim=1),
+            "orientation": torch.sum(torch.square(self._base_projected_gravity[:, :2]), dim=1),
             "action_rate": torch.sum(torch.square(self._prev_actions - self._actions), dim=1),
             "tracking_base_height": tracking_base_height,
             "deviation_hip_joint": deviation_hip_joint,

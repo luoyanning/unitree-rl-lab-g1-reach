@@ -8,7 +8,15 @@ from isaaclab.assets.articulation import ArticulationCfg
 from unitree_rl_lab.assets.robots.unitree import UnitreeArticulationCfg, UnitreeUrdfFileCfg
 
 
-REPO_ROOT = Path(__file__).resolve().parents[8]
+def _find_repo_root() -> Path:
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / "OpenHomie" / "HomieRL" / "legged_gym").exists():
+            return parent
+    raise FileNotFoundError("Could not locate repository root containing OpenHomie/HomieRL.")
+
+
+REPO_ROOT = _find_repo_root()
 OPENHOMIE_G1_DIR = REPO_ROOT / "OpenHomie" / "HomieRL" / "legged_gym" / "resources" / "robots" / "g1_description"
 
 

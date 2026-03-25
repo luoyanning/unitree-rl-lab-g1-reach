@@ -11,7 +11,6 @@ from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import ContactSensor, ContactSensorCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils import configclass
@@ -184,16 +183,6 @@ class G1HomieLowerBodyEnvCfg(DirectRLEnvCfg):
     right_hand_body_name = RIGHT_HAND_BODY_NAME
     termination_body_height_threshold = 0.20
     foot_contact_height_threshold = 0.06
-    feet_contact_sensor: ContactSensorCfg = ContactSensorCfg(
-        prim_path="/World/envs/env_.*/Robot/(left_ankle_roll_link|right_ankle_roll_link)",
-        history_length=3,
-        track_air_time=True,
-    )
-    torso_contact_sensor: ContactSensorCfg = ContactSensorCfg(
-        prim_path="/World/envs/env_.*/Robot/torso_link",
-        history_length=3,
-        track_air_time=False,
-    )
 
     command_resample_interval_s = 4.0
     command_transition_duration_s = 0.0
@@ -542,11 +531,7 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
 
     def _setup_scene(self):
         self.robot = Articulation(self.cfg.robot)
-        self.feet_contact_sensor = ContactSensor(self.cfg.feet_contact_sensor)
-        self.torso_contact_sensor = ContactSensor(self.cfg.torso_contact_sensor)
         self.scene.articulations["robot"] = self.robot
-        self.scene.sensors["feet_contact_sensor"] = self.feet_contact_sensor
-        self.scene.sensors["torso_contact_sensor"] = self.torso_contact_sensor
 
         spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
 
@@ -678,8 +663,10 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         self._compute_intermediate_values()
 
         time_out = self.episode_length_buf >= self.max_episode_length - 1
-        torso_contact_forces = self.torso_contact_sensor.data.net_forces_w
-        termination_contact = torch.any(torch.linalg.norm(torso_contact_forces, dim=-1) > 10.0, dim=1)
+        termination_contact = torch.any(
+            self.robot.data.body_pos_w[:, self._termination_contact_body_ids, 2] < self.cfg.termination_body_height_threshold,
+            dim=1,
+        )
         gravity_termination = torch.linalg.norm(self._base_projected_gravity[:, :2], dim=-1) > 0.8
         died = termination_contact | gravity_termination
         return died, time_out
@@ -852,13 +839,18 @@ class G1HomieLowerBodyEnv(DirectRLEnv):
         self._feet_vel_w = self.robot.data.body_lin_vel_w[:, self._foot_body_ids]
         support_height = torch.max(self._feet_pos_w[:, 0, 2], self._feet_pos_w[:, 1, 2])
         self._base_height = self.robot.data.root_pos_w[:, 2] - support_height + ANKLE_SOLE_DISTANCE
-        self._foot_contact_forces = self.feet_contact_sensor.data.net_forces_w
-        self._current_contacts = torch.linalg.norm(self._foot_contact_forces, dim=-1) > 1.0
+        self._current_contacts = self._feet_pos_w[:, :, 2] < self.cfg.foot_contact_height_threshold
         self._contact_filt = torch.logical_or(self._current_contacts, self._last_contacts)
         self._first_contacts = (self._feet_air_time >= self.step_dt) & self._contact_filt
         self._feet_air_time += self.step_dt
         feet_height, _ = self._get_feet_heights()
         self._feet_max_height = torch.maximum(self._feet_max_height, feet_height)
+
+        contact_mask = self._current_contacts.float()
+        pseudo_force_z = (50.0 + 200.0 * torch.clamp(-self._feet_vel_w[:, :, 2], min=0.0)) * contact_mask
+        pseudo_force_x = -25.0 * self._feet_vel_w[:, :, 0] * contact_mask
+        pseudo_force_y = -25.0 * self._feet_vel_w[:, :, 1] * contact_mask
+        self._foot_contact_forces = torch.stack((pseudo_force_x, pseudo_force_y, pseudo_force_z), dim=-1)
 
     def _compute_reward_terms(self) -> dict[str, torch.Tensor]:
         command_height = self._current_command[:, 3]

@@ -46,6 +46,11 @@ def _find_openhomie_g1_dir() -> Path:
 
 
 OPENHOMIE_G1_DIR = _find_openhomie_g1_dir()
+OPENHOMIE_G1_URDF = OPENHOMIE_G1_DIR / "g1.urdf"
+OPENHOMIE_G1_MESHES = OPENHOMIE_G1_DIR / "meshes"
+
+OPENHOMIE_G1_SPAWN_CFG = UnitreeUrdfFileCfg(asset_path=str(OPENHOMIE_G1_URDF))
+OPENHOMIE_G1_SPAWN_CFG.replace_asset(str(OPENHOMIE_G1_MESHES), str(OPENHOMIE_G1_URDF))
 
 
 OPENHOMIE_G1_LOWER_JOINT_NAMES = [
@@ -95,9 +100,7 @@ OPENHOMIE_G1_SDK_JOINT_NAMES = [
 
 
 OPENHOMIE_G1_CFG = UnitreeArticulationCfg(
-    spawn=UnitreeUrdfFileCfg(
-        asset_path=str(OPENHOMIE_G1_DIR / "g1.urdf"),
-    ),
+    spawn=OPENHOMIE_G1_SPAWN_CFG,
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 0.75),
         joint_pos={

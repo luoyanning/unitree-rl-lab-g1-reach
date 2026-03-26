@@ -765,12 +765,20 @@ def main():
                 vec_env.close()
             except Exception as exc:
                 print(f"[REACH_BENCH] Warning: vec env close failed: {exc}")
-        elif env is not None:
+        if env is not None:
             try:
                 print("[REACH_BENCH] Closing env...")
                 env.close()
             except Exception as exc:
                 print(f"[REACH_BENCH] Warning: env close failed: {exc}")
+        if args_cli.video:
+            video_dir = os.path.join(output_dir if 'output_dir' in locals() else "", "videos")
+            print(f"[REACH_BENCH] Video directory: {video_dir}")
+            latest_video_path = _latest_video_path(output_dir) if 'output_dir' in locals() else None
+            if latest_video_path is not None:
+                print(f"[REACH_BENCH] Latest video after close: {latest_video_path}")
+            else:
+                print("[REACH_BENCH] Latest video after close: not found")
 
 
 if __name__ == "__main__":

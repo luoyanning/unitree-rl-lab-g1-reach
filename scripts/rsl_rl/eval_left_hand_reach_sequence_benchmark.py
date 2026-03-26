@@ -431,9 +431,10 @@ def main():
                 active_mask[:batch_size] = True
 
                 base_env._reach_benchmark_sequence_w = _sequence_tensor(base_env, difficulty)
-                obs = _maybe_tuple_obs(vec_env.reset())
-                _place_benchmark_blocks(base_env, base_env._reach_benchmark_sequence_w)
-                fixed_target_mdp._update_target_debug_visualization(base_env)
+                with torch.inference_mode():
+                    obs = _maybe_tuple_obs(vec_env.reset())
+                    _place_benchmark_blocks(base_env, base_env._reach_benchmark_sequence_w)
+                    fixed_target_mdp._update_target_debug_visualization(base_env)
 
                 completed_prev = base_env._left_hand_completed_targets.clone()
                 block_start_time_s = torch.zeros(num_envs, device=base_env.device)

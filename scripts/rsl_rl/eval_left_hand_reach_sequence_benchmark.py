@@ -54,6 +54,12 @@ BENCHMARK_BLOCK_COLORS = (
     (0.66, 0.34, 0.90),
 )
 
+DEFAULT_BENCHMARK_PER_TARGET_TIMEOUT_S = {
+    "easy": 4.0,
+    "medium": 6.0,
+    "hard": 8.0,
+}
+
 parser = argparse.ArgumentParser(description="Benchmark a left-hand loco-reach checkpoint on fixed block sequences.")
 parser.add_argument("--video", action="store_true", default=False, help="Record a benchmark video.")
 parser.add_argument("--video_length", type=int, default=2400, help="Recorded video length in simulation steps.")
@@ -119,6 +125,12 @@ parser.add_argument(
     help="Hard guard timeout for one full benchmark sequence.",
 )
 parser.add_argument(
+    "--benchmark_per_target_timeout_s",
+    type=float,
+    default=None,
+    help="Optional benchmark-only per-target timeout override in seconds. Default uses difficulty-specific values.",
+)
+parser.add_argument(
     "--output_dir",
     type=str,
     default=None,
@@ -163,7 +175,7 @@ fixed_target_mdp = importlib.import_module(
 )
 
 SETTLE_GRACE_S = float(freeze_base_reach_mdp.SETTLE_GRACE_S)
-PER_TARGET_TIMEOUT_S = float(freeze_base_reach_env_cfg.PER_TARGET_TIMEOUT_S)
+TRAINING_PER_TARGET_TIMEOUT_S = float(freeze_base_reach_env_cfg.PER_TARGET_TIMEOUT_S)
 MAX_TARGETS_PER_EPISODE = int(freeze_base_reach_env_cfg.MAX_TARGETS_PER_EPISODE)
 
 _ORIGINAL_SPAWN_NEW_FIXED_TARGETS = fixed_target_mdp._spawn_new_fixed_targets
@@ -245,6 +257,12 @@ def _num_repeats() -> int:
     if args_cli.repeats is not None:
         return int(args_cli.repeats)
     return int(args_cli.main_repeats if args_cli.mode == "main" else args_cli.stability_repeats)
+
+
+def _benchmark_per_target_timeout_s(difficulty: str) -> float:
+    if args_cli.benchmark_per_target_timeout_s is not None:
+        return float(args_cli.benchmark_per_target_timeout_s)
+    return float(DEFAULT_BENCHMARK_PER_TARGET_TIMEOUT_S[difficulty])
 
 
 def _mode_pose_range() -> dict[str, tuple[float, float]]:
@@ -403,6 +421,7 @@ def _build_summary(
         "difficulty": difficulty,
         "episodes": len(records),
         "sequence_length": MAX_TARGETS_PER_EPISODE,
+        "benchmark_per_target_timeout_s": _benchmark_per_target_timeout_s(difficulty),
         "sequence_completion_rate": _safe_mean([float(record["sequence_completed"]) for record in records]),
         "mean_blocks_completed": _safe_mean([record["blocks_completed"] for record in records]),
         "target_timeout_rate": _safe_mean([float(record["failure_reason"] == "target_timeout") for record in records]),
@@ -479,7 +498,6 @@ def main():
         step_dt = float(base_env.step_dt)
         num_envs = base_env.num_envs
         max_steps_per_sequence = max(1, int(round(args_cli.sequence_timeout_s / step_dt)))
-        per_target_timeout_steps = max(1, int(round(PER_TARGET_TIMEOUT_S / step_dt)))
         settle_grace_steps = max(0, int(round(SETTLE_GRACE_S / step_dt)))
 
         hand_body_id = robot.find_bodies([freeze_base_reach_env_cfg.LEFT_HAND_BODY_NAME], preserve_order=True)[0][0]
@@ -518,7 +536,10 @@ def main():
         print(f"  repeats_per_difficulty: {_num_repeats()}")
         print(f"  reset_pose_range: {_mode_pose_range()}")
         print(f"  sequence_timeout_s: {args_cli.sequence_timeout_s:.2f}")
-        print(f"  per_target_timeout_s: {PER_TARGET_TIMEOUT_S:.2f}")
+        print(f"  training_per_target_timeout_s: {TRAINING_PER_TARGET_TIMEOUT_S:.2f}")
+        print(f"  benchmark_per_target_timeouts_s: {DEFAULT_BENCHMARK_PER_TARGET_TIMEOUT_S}")
+        if args_cli.benchmark_per_target_timeout_s is not None:
+            print(f"  benchmark_per_target_timeout_override_s: {args_cli.benchmark_per_target_timeout_s:.2f}")
         print(f"  settle_grace_s: {SETTLE_GRACE_S:.2f}")
         print(f"  near_target_radius: {args_cli.near_target_radius:.3f}")
 
@@ -530,6 +551,8 @@ def main():
         for difficulty in difficulty_names:
             difficulty_records: list[dict] = []
             sequence_world_xyz_env0: list[list[float]] | None = None
+            benchmark_per_target_timeout_s = _benchmark_per_target_timeout_s(difficulty)
+            per_target_timeout_steps = max(1, int(round(benchmark_per_target_timeout_s / step_dt)))
             remaining = repeats
             batch_index = 0
             while remaining > 0:
@@ -549,6 +572,11 @@ def main():
                     "[REACH_BENCH] "
                     f"difficulty={difficulty} "
                     f"sequence_pairwise_distances_m={sequence_pairwise_distances}"
+                )
+                print(
+                    "[REACH_BENCH] "
+                    f"difficulty={difficulty} "
+                    f"benchmark_per_target_timeout_s={benchmark_per_target_timeout_s:.2f}"
                 )
                 with torch.inference_mode():
                     obs = _maybe_tuple_obs(vec_env.reset())
@@ -755,7 +783,9 @@ def main():
             "repeats_per_difficulty": repeats,
             "num_envs": args_cli.num_envs,
             "reset_pose_range": _mode_pose_range(),
-            "per_target_timeout_s": PER_TARGET_TIMEOUT_S,
+            "training_per_target_timeout_s": TRAINING_PER_TARGET_TIMEOUT_S,
+            "benchmark_per_target_timeouts_s": DEFAULT_BENCHMARK_PER_TARGET_TIMEOUT_S,
+            "benchmark_per_target_timeout_override_s": args_cli.benchmark_per_target_timeout_s,
             "settle_grace_s": SETTLE_GRACE_S,
             "near_target_radius": args_cli.near_target_radius,
             "summaries": summaries,

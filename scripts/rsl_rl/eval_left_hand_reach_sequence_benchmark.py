@@ -403,6 +403,8 @@ def _build_summary(
 
 def main():
     fixed_target_mdp._spawn_new_fixed_targets = _benchmark_spawn_new_fixed_targets
+    env = None
+    vec_env = None
     try:
         env_cfg = parse_env_cfg(
             args_cli.task,
@@ -540,6 +542,14 @@ def main():
 
                 for step in range(max_steps_per_sequence):
                     start_time = time.time()
+                    if step > 0 and step % 100 == 0:
+                        print(
+                            "[REACH_BENCH] "
+                            f"difficulty={difficulty} batch={batch_index + 1} "
+                            f"step={step}/{max_steps_per_sequence} "
+                            f"active={int((active_mask & (~done_mask)).sum().item())}/{batch_size} "
+                            f"completed={sum(int(record['sequence_completed']) for record in difficulty_records)}/{len(difficulty_records)}"
+                        )
                     with torch.inference_mode():
                         actions = policy(obs)
                         actions = actions.clone()
@@ -632,15 +642,24 @@ def main():
                     if not math.isfinite(float(final_position_error[env_id].item())):
                         final_position_error[env_id] = position_error[env_id]
                         total_time_s[env_id] = max(float(total_time_s[env_id].item()), (step + 1) * step_dt)
+                    completed_blocks = int(completed_prev[env_id].item())
+                    failed_block_index = int(failure_block_index[env_id].item())
+                    failure_reason_env = failure_reason[env_id]
+                    failed_block_elapsed_s = float("nan")
+                    if failure_reason_env and 0 <= failed_block_index < MAX_TARGETS_PER_EPISODE:
+                        failed_block_elapsed_s = max(
+                            0.0,
+                            float(total_time_s[env_id].item() - block_start_time_s[env_id].item()),
+                        )
                     near_count = max(int(near_target_count[env_id].item()), 1)
                     record = {
                         "difficulty": difficulty,
                         "mode": args_cli.mode,
                         "repeat_index": len(difficulty_records),
                         "sequence_completed": bool(sequence_completed[env_id].item()),
-                        "blocks_completed": int(completed_prev[env_id].item()),
-                        "failure_reason": failure_reason[env_id],
-                        "failure_block_index": int(failure_block_index[env_id].item()),
+                        "blocks_completed": completed_blocks,
+                        "failure_reason": failure_reason_env,
+                        "failure_block_index": failed_block_index,
                         "total_time_s": float(total_time_s[env_id].item()),
                         "final_position_error_m": float(final_position_error[env_id].item()),
                         "mean_near_target_hand_speed_mps": float(near_target_hand_speed_sum[env_id].item() / near_count),
@@ -651,8 +670,20 @@ def main():
                         "mean_near_target_waist_deviation": float(near_target_waist_dev_sum[env_id].item() / near_count),
                     }
                     for block_index in range(MAX_TARGETS_PER_EPISODE):
-                        record[f"block_{block_index}_success"] = bool(block_success[env_id, block_index].item())
+                        block_completed = bool(block_success[env_id, block_index].item())
+                        if block_completed:
+                            block_status = "completed"
+                            block_elapsed_until_failure_s = float("nan")
+                        elif failure_reason_env and block_index == failed_block_index:
+                            block_status = failure_reason_env
+                            block_elapsed_until_failure_s = failed_block_elapsed_s
+                        else:
+                            block_status = "not_reached"
+                            block_elapsed_until_failure_s = float("nan")
+                        record[f"block_{block_index}_success"] = block_completed
                         record[f"block_{block_index}_time_s"] = float(block_time_s[env_id, block_index].item())
+                        record[f"block_{block_index}_status"] = block_status
+                        record[f"block_{block_index}_elapsed_until_failure_s"] = block_elapsed_until_failure_s
                     difficulty_records.append(record)
 
                 remaining -= batch_size
@@ -708,8 +739,24 @@ def main():
         print(f"[REACH_BENCH] Episode records written to: {csv_path}")
     finally:
         fixed_target_mdp._spawn_new_fixed_targets = _ORIGINAL_SPAWN_NEW_FIXED_TARGETS
+        if vec_env is not None:
+            try:
+                print("[REACH_BENCH] Closing vec env...")
+                vec_env.close()
+            except Exception as exc:
+                print(f"[REACH_BENCH] Warning: vec env close failed: {exc}")
+        elif env is not None:
+            try:
+                print("[REACH_BENCH] Closing env...")
+                env.close()
+            except Exception as exc:
+                print(f"[REACH_BENCH] Warning: env close failed: {exc}")
 
 
 if __name__ == "__main__":
-    main()
-    simulation_app.close()
+    try:
+        main()
+    finally:
+        print("[REACH_BENCH] Closing simulation app...")
+        simulation_app.close()
+        print("[REACH_BENCH] Shutdown complete.")

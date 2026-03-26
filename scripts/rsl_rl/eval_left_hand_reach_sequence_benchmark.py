@@ -183,6 +183,7 @@ MAX_TARGETS_PER_EPISODE = int(freeze_base_reach_env_cfg.MAX_TARGETS_PER_EPISODE)
 
 _ORIGINAL_SPAWN_NEW_FIXED_TARGETS = fixed_target_mdp._spawn_new_fixed_targets
 _ORIGINAL_SYNC_LONG_HORIZON_STATE = fixed_target_mdp._sync_long_horizon_state
+_ORIGINAL_FREEZE_SYNC_ADAPTER_HOLD_STAY_STATE = freeze_base_reach_mdp._sync_adapter_hold_stay_state
 
 
 def _pairwise_distances(points_xyz: list[list[float]]) -> list[float]:
@@ -226,28 +227,29 @@ def _update_sequence_block_visualization(base_env, sequence_w_env0: torch.Tensor
 def _activate_benchmark_block(base_env, env_ids: torch.Tensor, block_indices: torch.Tensor):
     if len(env_ids) == 0:
         return
-    valid_mask = block_indices < MAX_TARGETS_PER_EPISODE
-    if torch.any(valid_mask):
-        valid_env_ids = env_ids[valid_mask]
-        valid_block_indices = block_indices[valid_mask]
-        base_env._left_hand_has_active_target[valid_env_ids] = True
-        base_env._left_hand_active_target_w[valid_env_ids] = base_env._reach_benchmark_sequence_w[
-            valid_env_ids, valid_block_indices
-        ]
-        base_env._left_hand_prev_target_w[valid_env_ids] = base_env._left_hand_active_target_w[valid_env_ids]
-        base_env._left_hand_target_age_steps[valid_env_ids] = 0
-        base_env._left_hand_post_switch_steps[valid_env_ids] = 0
-        base_env._left_hand_prev_success[valid_env_ids] = False
-        base_env._left_hand_recent_success[valid_env_ids] = False
-        base_env._left_hand_in_success_zone[valid_env_ids] = False
-        base_env._left_hand_success_hold_counter[valid_env_ids] = 0
-        base_env._left_hand_success_zone_time[valid_env_ids] = 0
-        base_env._left_hand_held_success_count[valid_env_ids] = 0
-        base_env._left_hand_completion_after_hold[valid_env_ids] = 0
-        base_env._left_hand_target_switched_this_step[valid_env_ids] = True
-    if torch.any(~valid_mask):
-        done_env_ids = env_ids[~valid_mask]
-        base_env._left_hand_has_active_target[done_env_ids] = False
+    with torch.inference_mode():
+        valid_mask = block_indices < MAX_TARGETS_PER_EPISODE
+        if torch.any(valid_mask):
+            valid_env_ids = env_ids[valid_mask]
+            valid_block_indices = block_indices[valid_mask]
+            base_env._left_hand_has_active_target[valid_env_ids] = True
+            base_env._left_hand_active_target_w[valid_env_ids] = base_env._reach_benchmark_sequence_w[
+                valid_env_ids, valid_block_indices
+            ]
+            base_env._left_hand_prev_target_w[valid_env_ids] = base_env._left_hand_active_target_w[valid_env_ids]
+            base_env._left_hand_target_age_steps[valid_env_ids] = 0
+            base_env._left_hand_post_switch_steps[valid_env_ids] = 0
+            base_env._left_hand_prev_success[valid_env_ids] = False
+            base_env._left_hand_recent_success[valid_env_ids] = False
+            base_env._left_hand_in_success_zone[valid_env_ids] = False
+            base_env._left_hand_success_hold_counter[valid_env_ids] = 0
+            base_env._left_hand_success_zone_time[valid_env_ids] = 0
+            base_env._left_hand_held_success_count[valid_env_ids] = 0
+            base_env._left_hand_completion_after_hold[valid_env_ids] = 0
+            base_env._left_hand_target_switched_this_step[valid_env_ids] = True
+        if torch.any(~valid_mask):
+            done_env_ids = env_ids[~valid_mask]
+            base_env._left_hand_has_active_target[done_env_ids] = False
 
 
 def _benchmark_sync_long_horizon_state(
@@ -322,6 +324,36 @@ def _benchmark_sync_long_horizon_state(
     env._left_hand_prev_target_w = env._left_hand_active_target_w.clone()
     env._left_hand_prev_success.zero_()
     env._left_hand_state_synced_step = env.common_step_counter
+
+
+def _benchmark_sync_adapter_hold_stay_state(
+    env,
+    command_name: str,
+    success_threshold: float,
+    max_targets_per_episode: int,
+    switch_phase_steps: int,
+    static_target_hold_s: float,
+    per_target_timeout_s: float,
+    x_range: tuple[float, float],
+    y_range: tuple[float, float],
+    sample_regimes,
+    sample_weights,
+    **kwargs,
+):
+    del kwargs
+    _benchmark_sync_long_horizon_state(
+        env=env,
+        command_name=command_name,
+        success_threshold=success_threshold,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+        static_target_hold_s=static_target_hold_s,
+        per_target_timeout_s=per_target_timeout_s,
+        x_range=x_range,
+        y_range=y_range,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+    )
 
 
 def _prime_benchmark_target_state(base_env):
@@ -605,6 +637,7 @@ def _build_summary(
 def main():
     fixed_target_mdp._spawn_new_fixed_targets = _benchmark_spawn_new_fixed_targets
     fixed_target_mdp._sync_long_horizon_state = _benchmark_sync_long_horizon_state
+    freeze_base_reach_mdp._sync_adapter_hold_stay_state = _benchmark_sync_adapter_hold_stay_state
     env = None
     vec_env = None
     video_writer = None
@@ -725,12 +758,12 @@ def main():
                     obs = _maybe_tuple_obs(vec_env.reset())
                     _prime_benchmark_target_state(base_env)
                     _update_sequence_block_visualization(base_env, base_env._reach_benchmark_sequence_w[0])
-                active_env_ids = torch.nonzero(active_mask, as_tuple=False).squeeze(-1)
-                _activate_benchmark_block(
-                    base_env,
-                    active_env_ids,
-                    torch.zeros(batch_size, dtype=torch.long, device=base_env.device),
-                )
+                    active_env_ids = torch.nonzero(active_mask, as_tuple=False).squeeze(-1)
+                    _activate_benchmark_block(
+                        base_env,
+                        active_env_ids,
+                        torch.zeros(batch_size, dtype=torch.long, device=base_env.device),
+                    )
                 robot_root_env0 = robot.data.root_pos_w[0].detach().cpu().tolist()
                 print(
                     "[REACH_BENCH] "
@@ -847,7 +880,8 @@ def main():
                                 )
                         blocks_touched[env_ids] += 1
                         current_block_index[env_ids] += 1
-                        base_env._left_hand_completed_targets[env_ids] = current_block_index[env_ids]
+                        with torch.inference_mode():
+                            base_env._left_hand_completed_targets[env_ids] = current_block_index[env_ids]
                         current_block_elapsed_steps[env_ids] = 0
                         total_time_s[env_ids] = (step + 1) * step_dt
                         reached_end_mask = current_block_index[env_ids] >= MAX_TARGETS_PER_EPISODE
@@ -857,6 +891,8 @@ def main():
                             final_position_error[done_env_ids] = position_error[done_env_ids]
                             done_mask[done_env_ids] = True
                             active_mask[done_env_ids] = False
+                            with torch.inference_mode():
+                                base_env._left_hand_has_active_target[done_env_ids] = False
                             for env_id in done_env_ids.tolist():
                                 if env_id == 0:
                                     print(
@@ -866,7 +902,8 @@ def main():
                                     )
                         if torch.any(~reached_end_mask):
                             next_env_ids = env_ids[~reached_end_mask]
-                            _activate_benchmark_block(base_env, next_env_ids, current_block_index[next_env_ids])
+                            with torch.inference_mode():
+                                _activate_benchmark_block(base_env, next_env_ids, current_block_index[next_env_ids])
 
                     unresolved_fall = fall_mask & (~done_mask) & (~touch_mask)
                     if torch.any(unresolved_fall):
@@ -907,7 +944,8 @@ def main():
                                         f"event=timeout elapsed_s={float(elapsed_s[local_idx]):.2f}"
                                     )
                         current_block_index[env_ids] += 1
-                        base_env._left_hand_completed_targets[env_ids] = current_block_index[env_ids]
+                        with torch.inference_mode():
+                            base_env._left_hand_completed_targets[env_ids] = current_block_index[env_ids]
                         current_block_elapsed_steps[env_ids] = 0
                         total_time_s[env_ids] = (step + 1) * step_dt
                         reached_end_mask = current_block_index[env_ids] >= MAX_TARGETS_PER_EPISODE
@@ -917,11 +955,14 @@ def main():
                             done_mask[done_env_ids] = True
                             active_mask[done_env_ids] = False
                             failure_block_index[done_env_ids] = timed_out_block_indices[reached_end_mask]
+                            with torch.inference_mode():
+                                base_env._left_hand_has_active_target[done_env_ids] = False
                             for env_id in done_env_ids.tolist():
                                 failure_reason[env_id] = "sequence_end"
                         if torch.any(~reached_end_mask):
                             next_env_ids = env_ids[~reached_end_mask]
-                            _activate_benchmark_block(base_env, next_env_ids, current_block_index[next_env_ids])
+                            with torch.inference_mode():
+                                _activate_benchmark_block(base_env, next_env_ids, current_block_index[next_env_ids])
 
                     if torch.all(done_mask[:batch_size]):
                         print(
@@ -1068,9 +1109,13 @@ def main():
                 print(f"[REACH_BENCH] Latest video: {latest_video_path}")
             else:
                 print("[REACH_BENCH] Latest video: not found under output_dir/videos")
+    except BaseException as exc:
+        print(f"[REACH_BENCH] ERROR: {type(exc).__name__}: {exc}")
+        raise
     finally:
         fixed_target_mdp._spawn_new_fixed_targets = _ORIGINAL_SPAWN_NEW_FIXED_TARGETS
         fixed_target_mdp._sync_long_horizon_state = _ORIGINAL_SYNC_LONG_HORIZON_STATE
+        freeze_base_reach_mdp._sync_adapter_hold_stay_state = _ORIGINAL_FREEZE_SYNC_ADAPTER_HOLD_STAY_STATE
         if video_writer is not None:
             try:
                 print("[REACH_BENCH] Closing manual video writer...")

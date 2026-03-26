@@ -61,6 +61,7 @@ DEFAULT_BENCHMARK_PER_TARGET_TIMEOUT_S = 10.0
 parser = argparse.ArgumentParser(description="Benchmark a left-hand loco-reach checkpoint on fixed block sequences.")
 parser.add_argument("--video", action="store_true", default=False, help="Record a benchmark video.")
 parser.add_argument("--video_length", type=int, default=2400, help="Recorded video length in simulation steps.")
+parser.add_argument("--video_fps", type=int, default=20, help="Encoded benchmark video FPS.")
 parser.add_argument(
     "--task",
     type=str,
@@ -595,6 +596,9 @@ def main():
         if isinstance(env.unwrapped, DirectMARLEnv):
             env = multi_agent_to_single_agent(env)
         if args_cli.video:
+            if not hasattr(env, "metadata") or env.metadata is None:
+                env.metadata = {}
+            env.metadata["render_fps"] = int(args_cli.video_fps)
             video_kwargs = {
                 "video_folder": os.path.join(output_dir, "videos"),
                 "step_trigger": lambda step: step == 0,
@@ -652,6 +656,8 @@ def main():
         print(f"  repeats_per_difficulty: {_num_repeats()}")
         print(f"  reset_pose_range: {_mode_pose_range()}")
         print(f"  sequence_timeout_s: {args_cli.sequence_timeout_s:.2f}")
+        if args_cli.video:
+            print(f"  video_fps: {args_cli.video_fps}")
         print(f"  training_per_target_timeout_s: {TRAINING_PER_TARGET_TIMEOUT_S:.2f}")
         print(f"  benchmark_per_target_timeout_default_s: {DEFAULT_BENCHMARK_PER_TARGET_TIMEOUT_S:.2f}")
         if args_cli.benchmark_per_target_timeout_s is not None:
@@ -800,6 +806,12 @@ def main():
                             block_time_s[env_id, block_index] = elapsed_s[local_idx]
                             block_elapsed_s[env_id, block_index] = elapsed_s[local_idx]
                             block_statuses[env_id][block_index] = "touched"
+                            if env_id == 0:
+                                print(
+                                    "[REACH_BENCH] "
+                                    f"difficulty={difficulty} env=0 block={block_index} "
+                                    f"event=touched elapsed_s={float(elapsed_s[local_idx]):.2f}"
+                                )
                         blocks_touched[env_ids] += 1
                         current_block_index[env_ids] += 1
                         base_env._left_hand_completed_targets[env_ids] = current_block_index[env_ids]
@@ -812,6 +824,13 @@ def main():
                             final_position_error[done_env_ids] = position_error[done_env_ids]
                             done_mask[done_env_ids] = True
                             active_mask[done_env_ids] = False
+                            for env_id in done_env_ids.tolist():
+                                if env_id == 0:
+                                    print(
+                                        "[REACH_BENCH] "
+                                        f"difficulty={difficulty} env=0 event=sequence_completed "
+                                        f"blocks_touched={int(blocks_touched[env_id].item())}"
+                                    )
                         if torch.any(~reached_end_mask):
                             next_env_ids = env_ids[~reached_end_mask]
                             _activate_benchmark_block(base_env, next_env_ids, current_block_index[next_env_ids])
@@ -831,6 +850,12 @@ def main():
                             if 0 <= block_index < MAX_TARGETS_PER_EPISODE and block_statuses[env_id][block_index] == "not_reached":
                                 block_statuses[env_id][block_index] = "fall"
                                 block_elapsed_s[env_id, block_index] = elapsed_s[local_idx]
+                                if env_id == 0:
+                                    print(
+                                        "[REACH_BENCH] "
+                                        f"difficulty={difficulty} env=0 block={block_index} "
+                                        f"event=fall elapsed_s={float(elapsed_s[local_idx]):.2f}"
+                                    )
 
                     unresolved_timeout = timeout_mask & (~done_mask) & (~touch_mask)
                     if torch.any(unresolved_timeout):
@@ -842,6 +867,12 @@ def main():
                             if 0 <= block_index < MAX_TARGETS_PER_EPISODE:
                                 block_statuses[env_id][block_index] = "timeout"
                                 block_elapsed_s[env_id, block_index] = elapsed_s[local_idx]
+                                if env_id == 0:
+                                    print(
+                                        "[REACH_BENCH] "
+                                        f"difficulty={difficulty} env=0 block={block_index} "
+                                        f"event=timeout elapsed_s={float(elapsed_s[local_idx]):.2f}"
+                                    )
                         current_block_index[env_ids] += 1
                         base_env._left_hand_completed_targets[env_ids] = current_block_index[env_ids]
                         current_block_elapsed_steps[env_ids] = 0

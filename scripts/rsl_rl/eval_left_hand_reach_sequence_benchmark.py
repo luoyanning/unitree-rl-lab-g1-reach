@@ -14,6 +14,8 @@ import gymnasium as gym
 import torch
 
 from isaaclab.app import AppLauncher
+from isaaclab.markers import VisualizationMarkers
+from isaaclab.markers.config import FRAME_MARKER_CFG
 
 import cli_args  # isort: skip
 
@@ -51,7 +53,7 @@ parser.add_argument("--video_length", type=int, default=2400, help="Recorded vid
 parser.add_argument(
     "--task",
     type=str,
-    default="Unitree-G1-29dof-LeftHand-LocoReach-FreezeBaseReach-Benchmark-v0",
+    default="Unitree-G1-29dof-LeftHand-LocoReach-AdapterAcquireTightStay-NaturalReachSettleShort-FreezeBaseReach-v0",
     help="Benchmark task name.",
 )
 parser.add_argument("--disable_fabric", action="store_true", default=False, help="Disable fabric.")
@@ -136,9 +138,10 @@ from isaaclab_tasks.utils import get_checkpoint_path
 import unitree_rl_lab.tasks  # noqa: F401
 from unitree_rl_lab.utils.parser_cfg import parse_env_cfg
 
-benchmark_env_cfg = importlib.import_module(
-    "unitree_rl_lab.tasks.locomotion.robots.g1.29dof.left_hand_loco_reach_freeze_base_reach_benchmark"
-    ".left_hand_loco_reach_freeze_base_reach_benchmark_env_cfg"
+freeze_base_reach_env_cfg = importlib.import_module(
+    "unitree_rl_lab.tasks.locomotion.robots.g1.29dof"
+    ".left_hand_loco_reach_adapter_acquire_tight_stay_natural_reach_settle_short_freeze_base_reach"
+    ".left_hand_loco_reach_adapter_acquire_tight_stay_natural_reach_settle_short_freeze_base_reach_env_cfg"
 )
 freeze_base_reach_mdp = importlib.import_module(
     "unitree_rl_lab.tasks.locomotion.robots.g1.29dof"
@@ -149,12 +152,35 @@ fixed_target_mdp = importlib.import_module(
     "unitree_rl_lab.tasks.locomotion.robots.g1.29dof.left_hand_loco_reach.left_hand_loco_reach_mdp"
 )
 
-BENCHMARK_BLOCK_NAMES = benchmark_env_cfg.BENCHMARK_BLOCK_NAMES
 SETTLE_GRACE_S = float(freeze_base_reach_mdp.SETTLE_GRACE_S)
-PER_TARGET_TIMEOUT_S = float(benchmark_env_cfg.PER_TARGET_TIMEOUT_S)
-MAX_TARGETS_PER_EPISODE = int(benchmark_env_cfg.MAX_TARGETS_PER_EPISODE)
+PER_TARGET_TIMEOUT_S = float(freeze_base_reach_env_cfg.PER_TARGET_TIMEOUT_S)
+MAX_TARGETS_PER_EPISODE = int(freeze_base_reach_env_cfg.MAX_TARGETS_PER_EPISODE)
 
 _ORIGINAL_SPAWN_NEW_FIXED_TARGETS = fixed_target_mdp._spawn_new_fixed_targets
+
+
+SEQUENCE_MARKER_CFG = FRAME_MARKER_CFG.replace(prim_path="/Visuals/Command/left_hand_loco_reach_benchmark_sequence")
+SEQUENCE_MARKER_CFG.markers["frame"].scale = (0.10, 0.10, 0.10)
+
+
+def _sequence_marker_quat(base_env, count: int) -> torch.Tensor:
+    cache_key = "_reach_benchmark_marker_quat"
+    quat = getattr(base_env, cache_key, None)
+    if quat is None or quat.shape[0] != count:
+        quat = torch.zeros(count, 4, device=base_env.device)
+        quat[:, 0] = 1.0
+        setattr(base_env, cache_key, quat)
+    return quat
+
+
+def _update_sequence_debug_visualization(base_env, sequence_w_env0: torch.Tensor):
+    if not hasattr(base_env, "_reach_benchmark_sequence_visualizer"):
+        base_env._reach_benchmark_sequence_visualizer = VisualizationMarkers(SEQUENCE_MARKER_CFG)
+    base_env._reach_benchmark_sequence_visualizer.visualize(
+        sequence_w_env0, _sequence_marker_quat(base_env, sequence_w_env0.shape[0])
+    )
+
+
 
 
 def _maybe_tuple_obs(reset_result):
@@ -207,29 +233,6 @@ def _safe_mean(values: list[float]) -> float:
     return sum(finite) / float(len(finite))
 
 
-def _call_first_available(obj, names: tuple[str, ...], *args, **kwargs):
-    for name in names:
-        if hasattr(obj, name):
-            return getattr(obj, name)(*args, **kwargs)
-    raise AttributeError(f"{type(obj).__name__} does not expose any of {names}.")
-
-
-def _set_rigid_object_state(asset, env_ids: torch.Tensor, pos_w: torch.Tensor):
-    if len(env_ids) == 0:
-        return
-    quat_w = torch.zeros(len(env_ids), 4, device=pos_w.device)
-    quat_w[:, 0] = 1.0
-    lin_vel_w = torch.zeros(len(env_ids), 3, device=pos_w.device)
-    ang_vel_w = torch.zeros(len(env_ids), 3, device=pos_w.device)
-    root_pose = torch.cat((pos_w, quat_w), dim=-1)
-    root_vel = torch.cat((lin_vel_w, ang_vel_w), dim=-1)
-    if hasattr(asset, "write_root_state_to_sim"):
-        asset.write_root_state_to_sim(torch.cat((root_pose, root_vel), dim=-1), env_ids=env_ids)
-    else:
-        _call_first_available(asset, ("write_root_pose_to_sim",), root_pose, env_ids=env_ids)
-        _call_first_available(asset, ("write_root_velocity_to_sim",), root_vel, env_ids=env_ids)
-
-
 def _benchmark_spawn_new_fixed_targets(env, env_ids, sample_regimes=None, sample_weights=None):
     del sample_regimes, sample_weights
     if len(env_ids) == 0:
@@ -250,13 +253,6 @@ def _sequence_tensor(base_env, difficulty: str) -> torch.Tensor:
     sequence_local = torch.tensor(FIXED_WORLD_SEQUENCES[difficulty], dtype=torch.float32, device=base_env.device)
     env_origins = base_env.scene.env_origins[:, :3]
     return env_origins.unsqueeze(1) + sequence_local.unsqueeze(0)
-
-
-def _place_benchmark_blocks(base_env, sequence_w: torch.Tensor):
-    env_ids = torch.arange(base_env.num_envs, dtype=torch.long, device=base_env.device)
-    for block_index, block_name in enumerate(BENCHMARK_BLOCK_NAMES):
-        asset = base_env.scene[block_name]
-        _set_rigid_object_state(asset, env_ids, sequence_w[:, block_index])
 
 
 def _hand_pos_w(robot, hand_body_id: int) -> torch.Tensor:
@@ -376,7 +372,7 @@ def main():
         per_target_timeout_steps = max(1, int(round(PER_TARGET_TIMEOUT_S / step_dt)))
         settle_grace_steps = max(0, int(round(SETTLE_GRACE_S / step_dt)))
 
-        hand_body_id = robot.find_bodies([benchmark_env_cfg.LEFT_HAND_BODY_NAME], preserve_order=True)[0][0]
+        hand_body_id = robot.find_bodies([freeze_base_reach_env_cfg.LEFT_HAND_BODY_NAME], preserve_order=True)[0][0]
         foot_body_ids = torch.tensor(
             robot.find_bodies(["left_ankle_roll_link", "right_ankle_roll_link"], preserve_order=True)[0],
             dtype=torch.long,
@@ -433,7 +429,7 @@ def main():
                 base_env._reach_benchmark_sequence_w = _sequence_tensor(base_env, difficulty)
                 with torch.inference_mode():
                     obs = _maybe_tuple_obs(vec_env.reset())
-                    _place_benchmark_blocks(base_env, base_env._reach_benchmark_sequence_w)
+                    _update_sequence_debug_visualization(base_env, base_env._reach_benchmark_sequence_w[0])
                     fixed_target_mdp._update_target_debug_visualization(base_env)
 
                 completed_prev = base_env._left_hand_completed_targets.clone()

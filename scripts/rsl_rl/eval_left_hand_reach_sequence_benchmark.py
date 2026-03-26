@@ -18,7 +18,7 @@ from isaaclab.app import AppLauncher
 import cli_args  # isort: skip
 
 
-FIXED_WORLD_SEQUENCES = {
+FIXED_LOCAL_SEQUENCES = {
     "easy": (
         (0.36, 0.14, 0.26),
         (0.42, 0.20, 0.28),
@@ -281,10 +281,16 @@ def _benchmark_spawn_new_fixed_targets(env, env_ids, sample_regimes=None, sample
     env._left_hand_has_active_target[env_ids] = True
 
 
+def _nominal_root_pos_w(base_env) -> torch.Tensor:
+    root_init_pos = getattr(base_env.scene["robot"].cfg.init_state, "pos", (0.0, 0.0, 0.8))
+    root_init_pos = torch.tensor(root_init_pos, dtype=torch.float32, device=base_env.device)
+    return base_env.scene.env_origins[:, :3] + root_init_pos.unsqueeze(0)
+
+
 def _sequence_tensor(base_env, difficulty: str) -> torch.Tensor:
-    sequence_local = torch.tensor(FIXED_WORLD_SEQUENCES[difficulty], dtype=torch.float32, device=base_env.device)
-    env_origins = base_env.scene.env_origins[:, :3]
-    return env_origins.unsqueeze(1) + sequence_local.unsqueeze(0)
+    sequence_local = torch.tensor(FIXED_LOCAL_SEQUENCES[difficulty], dtype=torch.float32, device=base_env.device)
+    nominal_root_pos_w = _nominal_root_pos_w(base_env)
+    return nominal_root_pos_w.unsqueeze(1) + sequence_local.unsqueeze(0)
 
 
 def _hand_pos_w(robot, hand_body_id: int) -> torch.Tensor:
@@ -314,7 +320,11 @@ def _waist_deviation(robot, waist_joint_ids: torch.Tensor) -> torch.Tensor:
     )
 
 
-def _build_summary(records: list[dict], difficulty: str) -> dict[str, float | list[float] | str]:
+def _build_summary(
+    records: list[dict],
+    difficulty: str,
+    sequence_world_xyz_env0: list[list[float]],
+) -> dict[str, float | list[float] | str]:
     summary: dict[str, float | list[float] | str] = {
         "difficulty": difficulty,
         "episodes": len(records),
@@ -331,7 +341,8 @@ def _build_summary(records: list[dict], difficulty: str) -> dict[str, float | li
         "mean_near_target_foot_shuffle_mps": _safe_mean([record["mean_near_target_foot_shuffle_mps"] for record in records]),
         "mean_near_target_right_arm_deviation": _safe_mean([record["mean_near_target_right_arm_deviation"] for record in records]),
         "mean_near_target_waist_deviation": _safe_mean([record["mean_near_target_waist_deviation"] for record in records]),
-        "sequence_world_xyz_env0": [list(point) for point in FIXED_WORLD_SEQUENCES[difficulty]],
+        "sequence_local_xyz": [list(point) for point in FIXED_LOCAL_SEQUENCES[difficulty]],
+        "sequence_world_xyz_env0": sequence_world_xyz_env0,
     }
     for block_index in range(MAX_TARGETS_PER_EPISODE):
         summary[f"block_{block_index}_success_rate"] = _safe_mean(
@@ -442,6 +453,7 @@ def main():
 
         for difficulty in difficulty_names:
             difficulty_records: list[dict] = []
+            sequence_world_xyz_env0: list[list[float]] | None = None
             remaining = repeats
             batch_index = 0
             while remaining > 0:
@@ -450,6 +462,13 @@ def main():
                 active_mask[:batch_size] = True
 
                 base_env._reach_benchmark_sequence_w = _sequence_tensor(base_env, difficulty)
+                sequence_world_xyz_env0 = base_env._reach_benchmark_sequence_w[0].detach().cpu().tolist()
+                print(
+                    "[REACH_BENCH] "
+                    f"difficulty={difficulty} "
+                    f"sequence_local_first={list(FIXED_LOCAL_SEQUENCES[difficulty][0])} "
+                    f"sequence_world_env0_first={sequence_world_xyz_env0[0]}"
+                )
                 with torch.inference_mode():
                     obs = _maybe_tuple_obs(vec_env.reset())
                     _update_sequence_debug_visualization(base_env, base_env._reach_benchmark_sequence_w[0])
@@ -605,7 +624,11 @@ def main():
                     f"completed={sum(int(record['sequence_completed']) for record in difficulty_records)}/{len(difficulty_records)}"
                 )
 
-            summaries[difficulty] = _build_summary(difficulty_records, difficulty)
+            summaries[difficulty] = _build_summary(
+                difficulty_records,
+                difficulty,
+                sequence_world_xyz_env0 if sequence_world_xyz_env0 is not None else [],
+            )
             all_records.extend(difficulty_records)
 
         overall_summary = {

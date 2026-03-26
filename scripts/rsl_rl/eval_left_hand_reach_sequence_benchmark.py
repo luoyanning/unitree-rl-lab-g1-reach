@@ -265,6 +265,20 @@ def _get_output_dir(resume_path: str) -> str:
     return os.path.join(os.path.dirname(resume_path), "reach_benchmark", timestamp)
 
 
+def _latest_video_path(output_dir: str) -> str | None:
+    video_dir = os.path.join(output_dir, "videos")
+    if not os.path.isdir(video_dir):
+        return None
+    video_paths: list[str] = []
+    for root, _, files in os.walk(video_dir):
+        for file_name in files:
+            if file_name.endswith(".mp4"):
+                video_paths.append(os.path.join(root, file_name))
+    if not video_paths:
+        return None
+    return sorted(video_paths)[-1]
+
+
 def _configure_benchmark_env(env_cfg):
     env_cfg.episode_length_s = max(float(env_cfg.episode_length_s), float(args_cli.sequence_timeout_s))
     if hasattr(env_cfg, "curriculum") and env_cfg.curriculum is not None:
@@ -737,6 +751,12 @@ def main():
 
         print(f"[REACH_BENCH] Summary written to: {summary_path}")
         print(f"[REACH_BENCH] Episode records written to: {csv_path}")
+        if args_cli.video:
+            latest_video_path = _latest_video_path(output_dir)
+            if latest_video_path is not None:
+                print(f"[REACH_BENCH] Latest video: {latest_video_path}")
+            else:
+                print("[REACH_BENCH] Latest video: not found under output_dir/videos")
     finally:
         fixed_target_mdp._spawn_new_fixed_targets = _ORIGINAL_SPAWN_NEW_FIXED_TARGETS
         if vec_env is not None:

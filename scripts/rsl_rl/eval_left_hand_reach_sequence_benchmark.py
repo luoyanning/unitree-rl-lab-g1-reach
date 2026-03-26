@@ -14,8 +14,6 @@ import gymnasium as gym
 import torch
 
 from isaaclab.app import AppLauncher
-from isaaclab.markers import VisualizationMarkers
-from isaaclab.markers.config import FRAME_MARKER_CFG
 
 import cli_args  # isort: skip
 
@@ -126,6 +124,9 @@ if args_cli.video:
 
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
+
+from isaaclab.markers import VisualizationMarkers
+from isaaclab.markers.config import FRAME_MARKER_CFG
 
 from rsl_rl.runners import OnPolicyRunner
 

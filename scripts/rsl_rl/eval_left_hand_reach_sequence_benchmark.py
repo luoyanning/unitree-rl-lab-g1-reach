@@ -247,8 +247,15 @@ def _resolve_checkpoint_path(agent_cfg: RslRlOnPolicyRunnerCfg) -> str:
     log_root_path = os.path.abspath(log_root_path)
     print(f"[INFO] Loading experiment from directory: {log_root_path}")
     if args_cli.checkpoint:
-        return retrieve_file_path(args_cli.checkpoint)
-    return get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+        resume_path = retrieve_file_path(args_cli.checkpoint)
+    else:
+        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+    if os.path.isdir(resume_path):
+        raise ValueError(
+            f"--checkpoint resolved to a directory, not a model file: {resume_path}. "
+            "Pass an explicit model_XXXX.pt path."
+        )
+    return resume_path
 
 
 def _get_output_dir(resume_path: str) -> str:

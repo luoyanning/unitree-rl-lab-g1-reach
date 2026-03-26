@@ -18,32 +18,41 @@ from isaaclab.app import AppLauncher
 import cli_args  # isort: skip
 
 
-FIXED_LOCAL_SEQUENCES = {
+FIXED_ENV0_WORLD_SEQUENCES = {
     "easy": (
-        (0.36, 0.14, 0.26),
-        (0.42, 0.20, 0.28),
-        (0.46, 0.16, 0.24),
-        (0.40, 0.24, 0.22),
-        (0.34, 0.18, 0.20),
-        (0.44, 0.12, 0.26),
+        (0.45, 0.00, 1.02),
+        (0.95, 0.00, 1.02),
+        (1.45, 0.00, 1.02),
+        (1.95, 0.00, 1.02),
+        (2.45, 0.00, 1.02),
+        (2.95, 0.00, 1.02),
     ),
     "medium": (
-        (0.48, 0.10, 0.18),
-        (0.58, 0.18, 0.16),
-        (0.66, 0.26, 0.14),
-        (0.62, 0.08, 0.20),
-        (0.54, 0.30, 0.12),
-        (0.70, 0.16, 0.18),
+        (0.45, 0.00, 0.96),
+        (1.015685, 0.00, 1.16),
+        (1.581370, 0.00, 0.96),
+        (2.147055, 0.00, 1.16),
+        (2.712740, 0.00, 0.96),
+        (3.278425, 0.00, 1.16),
     ),
     "hard": (
-        (0.62, 0.06, 0.16),
-        (0.78, 0.18, 0.14),
-        (0.90, 0.30, 0.16),
-        (0.72, 0.40, 0.12),
-        (0.96, 0.12, 0.20),
-        (0.82, 0.34, 0.10),
+        (0.45, 0.00, 0.90),
+        (1.113325, 0.00, 1.25),
+        (1.776650, 0.00, 0.90),
+        (2.439975, 0.00, 1.25),
+        (3.103300, 0.00, 0.90),
+        (3.766625, 0.00, 1.25),
     ),
 }
+
+BENCHMARK_BLOCK_COLORS = (
+    (0.92, 0.30, 0.24),
+    (0.95, 0.56, 0.20),
+    (0.92, 0.80, 0.22),
+    (0.30, 0.76, 0.36),
+    (0.24, 0.56, 0.92),
+    (0.66, 0.34, 0.90),
+)
 
 parser = argparse.ArgumentParser(description="Benchmark a left-hand loco-reach checkpoint on fixed block sequences.")
 parser.add_argument("--video", action="store_true", default=False, help="Record a benchmark video.")
@@ -125,8 +134,8 @@ if args_cli.video:
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
-from isaaclab.markers import VisualizationMarkers
-from isaaclab.markers.config import FRAME_MARKER_CFG
+import omni.usd
+from pxr import Gf, UsdGeom
 
 from rsl_rl.runners import OnPolicyRunner
 
@@ -160,26 +169,33 @@ MAX_TARGETS_PER_EPISODE = int(freeze_base_reach_env_cfg.MAX_TARGETS_PER_EPISODE)
 _ORIGINAL_SPAWN_NEW_FIXED_TARGETS = fixed_target_mdp._spawn_new_fixed_targets
 
 
-SEQUENCE_MARKER_CFG = FRAME_MARKER_CFG.replace(prim_path="/Visuals/Command/left_hand_loco_reach_benchmark_sequence")
-SEQUENCE_MARKER_CFG.markers["frame"].scale = (0.10, 0.10, 0.10)
+def _pairwise_distances(points_xyz: list[list[float]]) -> list[float]:
+    distances: list[float] = []
+    for index in range(len(points_xyz) - 1):
+        distances.append(math.dist(points_xyz[index], points_xyz[index + 1]))
+    return distances
 
 
-def _sequence_marker_quat(base_env, count: int) -> torch.Tensor:
-    cache_key = "_reach_benchmark_marker_quat"
-    quat = getattr(base_env, cache_key, None)
-    if quat is None or quat.shape[0] != count:
-        quat = torch.zeros(count, 4, device=base_env.device)
-        quat[:, 0] = 1.0
-        setattr(base_env, cache_key, quat)
-    return quat
-
-
-def _update_sequence_debug_visualization(base_env, sequence_w_env0: torch.Tensor):
-    if not hasattr(base_env, "_reach_benchmark_sequence_visualizer"):
-        base_env._reach_benchmark_sequence_visualizer = VisualizationMarkers(SEQUENCE_MARKER_CFG)
-    base_env._reach_benchmark_sequence_visualizer.visualize(
-        sequence_w_env0, _sequence_marker_quat(base_env, sequence_w_env0.shape[0])
-    )
+def _update_sequence_block_visualization(base_env, sequence_w_env0: torch.Tensor):
+    stage = omni.usd.get_context().get_stage()
+    block_prims = getattr(base_env, "_reach_benchmark_block_prims", None)
+    if block_prims is None:
+        block_prims = []
+        for block_index, color in enumerate(BENCHMARK_BLOCK_COLORS):
+            prim_path = f"/Visuals/Command/left_hand_loco_reach_benchmark_blocks/block_{block_index}"
+            cube = UsdGeom.Cube.Define(stage, prim_path)
+            cube.CreateSizeAttr(0.14)
+            cube_prim = cube.GetPrim()
+            cube_xform = UsdGeom.XformCommonAPI(cube_prim)
+            cube_xform.SetScale(Gf.Vec3f(1.0, 1.0, 1.0))
+            UsdGeom.Gprim(cube_prim).CreateDisplayColorPrimvar(UsdGeom.Tokens.constant).Set(
+                [Gf.Vec3f(*color)]
+            )
+            block_prims.append(cube_prim)
+        base_env._reach_benchmark_block_prims = block_prims
+    for block_prim, position in zip(block_prims, sequence_w_env0.tolist(), strict=True):
+        cube_xform = UsdGeom.XformCommonAPI(block_prim)
+        cube_xform.SetTranslate(Gf.Vec3d(float(position[0]), float(position[1]), float(position[2])))
 
 
 def _prime_benchmark_target_state(base_env):
@@ -281,6 +297,16 @@ def _latest_video_path(output_dir: str) -> str | None:
 
 def _configure_benchmark_env(env_cfg):
     env_cfg.episode_length_s = max(float(env_cfg.episode_length_s), float(args_cli.sequence_timeout_s))
+    if hasattr(env_cfg, "scene") and hasattr(env_cfg.scene, "terrain"):
+        env_cfg.scene.terrain.terrain_type = "plane"
+        env_cfg.scene.terrain.terrain_generator = None
+        if hasattr(env_cfg.scene, "env_spacing"):
+            env_cfg.scene.env_spacing = 12.0
+    if hasattr(env_cfg, "viewer"):
+        env_cfg.viewer.origin_type = "asset_root"
+        env_cfg.viewer.asset_name = "robot"
+        env_cfg.viewer.eye = (8.5, -4.8, 2.8)
+        env_cfg.viewer.lookat = (1.8, 0.0, 1.0)
     if hasattr(env_cfg, "curriculum") and env_cfg.curriculum is not None:
         if hasattr(env_cfg.curriculum, "left_hand_target_levels"):
             env_cfg.curriculum.left_hand_target_levels = None
@@ -333,16 +359,12 @@ def _benchmark_spawn_new_fixed_targets(env, env_ids, sample_regimes=None, sample
     env._left_hand_has_active_target[env_ids] = True
 
 
-def _nominal_root_pos_w(base_env) -> torch.Tensor:
-    root_init_pos = getattr(base_env.scene["robot"].cfg.init_state, "pos", (0.0, 0.0, 0.8))
-    root_init_pos = torch.tensor(root_init_pos, dtype=torch.float32, device=base_env.device)
-    return base_env.scene.env_origins[:, :3] + root_init_pos.unsqueeze(0)
-
-
 def _sequence_tensor(base_env, difficulty: str) -> torch.Tensor:
-    sequence_local = torch.tensor(FIXED_LOCAL_SEQUENCES[difficulty], dtype=torch.float32, device=base_env.device)
-    nominal_root_pos_w = _nominal_root_pos_w(base_env)
-    return nominal_root_pos_w.unsqueeze(1) + sequence_local.unsqueeze(0)
+    sequence_env0_world = torch.tensor(
+        FIXED_ENV0_WORLD_SEQUENCES[difficulty], dtype=torch.float32, device=base_env.device
+    )
+    env_origin_offsets = base_env.scene.env_origins[:, :3] - base_env.scene.env_origins[0:1, :3]
+    return sequence_env0_world.unsqueeze(0) + env_origin_offsets.unsqueeze(1)
 
 
 def _hand_pos_w(robot, hand_body_id: int) -> torch.Tensor:
@@ -393,8 +415,8 @@ def _build_summary(
         "mean_near_target_foot_shuffle_mps": _safe_mean([record["mean_near_target_foot_shuffle_mps"] for record in records]),
         "mean_near_target_right_arm_deviation": _safe_mean([record["mean_near_target_right_arm_deviation"] for record in records]),
         "mean_near_target_waist_deviation": _safe_mean([record["mean_near_target_waist_deviation"] for record in records]),
-        "sequence_local_xyz": [list(point) for point in FIXED_LOCAL_SEQUENCES[difficulty]],
         "sequence_world_xyz_env0": sequence_world_xyz_env0,
+        "sequence_pairwise_distances_m": _pairwise_distances(sequence_world_xyz_env0),
     }
     for block_index in range(MAX_TARGETS_PER_EPISODE):
         summary[f"block_{block_index}_success_rate"] = _safe_mean(
@@ -517,17 +539,27 @@ def main():
 
                 base_env._reach_benchmark_sequence_w = _sequence_tensor(base_env, difficulty)
                 sequence_world_xyz_env0 = base_env._reach_benchmark_sequence_w[0].detach().cpu().tolist()
+                sequence_pairwise_distances = _pairwise_distances(sequence_world_xyz_env0)
                 print(
                     "[REACH_BENCH] "
                     f"difficulty={difficulty} "
-                    f"sequence_local_first={list(FIXED_LOCAL_SEQUENCES[difficulty][0])} "
-                    f"sequence_world_env0_first={sequence_world_xyz_env0[0]}"
+                    f"sequence_world_env0={sequence_world_xyz_env0}"
+                )
+                print(
+                    "[REACH_BENCH] "
+                    f"difficulty={difficulty} "
+                    f"sequence_pairwise_distances_m={sequence_pairwise_distances}"
                 )
                 with torch.inference_mode():
                     obs = _maybe_tuple_obs(vec_env.reset())
                     _prime_benchmark_target_state(base_env)
-                    _update_sequence_debug_visualization(base_env, base_env._reach_benchmark_sequence_w[0])
-                    fixed_target_mdp._update_target_debug_visualization(base_env)
+                    _update_sequence_block_visualization(base_env, base_env._reach_benchmark_sequence_w[0])
+                robot_root_env0 = robot.data.root_pos_w[0].detach().cpu().tolist()
+                print(
+                    "[REACH_BENCH] "
+                    f"difficulty={difficulty} "
+                    f"robot_root_env0={robot_root_env0}"
+                )
 
                 completed_prev = base_env._left_hand_completed_targets.clone()
                 block_start_time_s = torch.zeros(num_envs, device=base_env.device)

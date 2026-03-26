@@ -227,6 +227,37 @@ def _get_output_dir(resume_path: str) -> str:
     return os.path.join(os.path.dirname(resume_path), "reach_benchmark", timestamp)
 
 
+def _configure_benchmark_env(env_cfg):
+    env_cfg.episode_length_s = max(float(env_cfg.episode_length_s), float(args_cli.sequence_timeout_s))
+    if hasattr(env_cfg, "curriculum") and env_cfg.curriculum is not None:
+        if hasattr(env_cfg.curriculum, "left_hand_target_levels"):
+            env_cfg.curriculum.left_hand_target_levels = None
+    if hasattr(env_cfg, "observations") and hasattr(env_cfg.observations, "policy"):
+        env_cfg.observations.policy.enable_corruption = False
+
+    if hasattr(env_cfg, "events"):
+        for attr_name in ("physics_material", "add_base_mass", "push_robot", "base_external_force_torque"):
+            if hasattr(env_cfg.events, attr_name):
+                setattr(env_cfg.events, attr_name, None)
+        if hasattr(env_cfg.events, "reset_base"):
+            env_cfg.events.reset_base.params["pose_range"] = _mode_pose_range()
+            env_cfg.events.reset_base.params["velocity_range"] = {
+                "x": (0.0, 0.0),
+                "y": (0.0, 0.0),
+                "z": (0.0, 0.0),
+                "roll": (0.0, 0.0),
+                "pitch": (0.0, 0.0),
+                "yaw": (0.0, 0.0),
+            }
+        if hasattr(env_cfg.events, "reset_robot_joints"):
+            env_cfg.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
+
+    if hasattr(env_cfg, "terminations"):
+        for attr_name in ("target_quota", "target_timeout", "time_out", "base_height", "bad_orientation"):
+            if hasattr(env_cfg.terminations, attr_name):
+                setattr(env_cfg.terminations, attr_name, None)
+
+
 def _safe_mean(values: list[float]) -> float:
     finite = [float(value) for value in values if math.isfinite(float(value))]
     if not finite:
@@ -331,16 +362,7 @@ def main():
             use_fabric=not args_cli.disable_fabric,
             entry_point_key="play_env_cfg_entry_point",
         )
-        env_cfg.events.reset_base.params["pose_range"] = _mode_pose_range()
-        env_cfg.events.reset_base.params["velocity_range"] = {
-            "x": (0.0, 0.0),
-            "y": (0.0, 0.0),
-            "z": (0.0, 0.0),
-            "roll": (0.0, 0.0),
-            "pitch": (0.0, 0.0),
-            "yaw": (0.0, 0.0),
-        }
-        env_cfg.episode_length_s = max(float(env_cfg.episode_length_s), float(args_cli.sequence_timeout_s))
+        _configure_benchmark_env(env_cfg)
 
         agent_cfg: RslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
         resume_path = _resolve_checkpoint_path(agent_cfg)

@@ -177,6 +177,7 @@ TRAINING_PER_TARGET_TIMEOUT_S = float(freeze_base_reach_env_cfg.PER_TARGET_TIMEO
 MAX_TARGETS_PER_EPISODE = int(freeze_base_reach_env_cfg.MAX_TARGETS_PER_EPISODE)
 
 _ORIGINAL_SPAWN_NEW_FIXED_TARGETS = fixed_target_mdp._spawn_new_fixed_targets
+_ORIGINAL_SYNC_LONG_HORIZON_STATE = fixed_target_mdp._sync_long_horizon_state
 
 
 def _pairwise_distances(points_xyz: list[list[float]]) -> list[float]:
@@ -242,6 +243,80 @@ def _activate_benchmark_block(base_env, env_ids: torch.Tensor, block_indices: to
     if torch.any(~valid_mask):
         done_env_ids = env_ids[~valid_mask]
         base_env._left_hand_has_active_target[done_env_ids] = False
+
+
+def _benchmark_sync_long_horizon_state(
+    env,
+    command_name: str,
+    success_threshold: float,
+    max_targets_per_episode: int,
+    switch_phase_steps: int,
+    static_target_hold_s: float,
+    per_target_timeout_s: float,
+    x_range: tuple[float, float],
+    y_range: tuple[float, float],
+    sample_regimes,
+    sample_weights,
+    success_exit_radius: float = 0.09,
+    success_hold_steps: int = 8,
+):
+    del success_threshold, static_target_hold_s, per_target_timeout_s, sample_regimes, sample_weights, success_exit_radius, success_hold_steps
+    fixed_target_mdp._ensure_long_horizon_state(
+        env,
+        command_name=command_name,
+        max_targets_per_episode=max_targets_per_episode,
+        switch_phase_steps=switch_phase_steps,
+    )
+    if env._left_hand_state_synced_step == env.common_step_counter:
+        return
+
+    reset_ids, current_episode_length, prev_episode_length = fixed_target_mdp._compute_just_reset_mask(env)
+    env._left_hand_prev_episode_length_buf = current_episode_length.clone()
+    env._left_hand_just_reset_this_step[:] = reset_ids
+    env._left_hand_recent_success.zero_()
+    env._left_hand_completion_after_hold.zero_()
+    env._left_hand_target_switched_this_step.zero_()
+
+    if torch.any(reset_ids):
+        env._left_hand_completed_targets[reset_ids] = 0
+        env._left_hand_held_success_count[reset_ids] = 0
+        env._left_hand_target_index[reset_ids] = 0
+        env._left_hand_post_switch_steps[reset_ids] = switch_phase_steps
+        env._left_hand_target_age_steps[reset_ids] = 0
+        env._left_hand_prev_success[reset_ids] = False
+        env._left_hand_recent_success[reset_ids] = False
+        env._left_hand_in_success_zone[reset_ids] = False
+        env._left_hand_success_hold_counter[reset_ids] = 0
+        env._left_hand_success_zone_time[reset_ids] = 0
+        env._left_hand_completion_after_hold[reset_ids] = False
+        env._left_hand_has_active_target[reset_ids] = False
+
+    switch_detected = torch.norm(env._left_hand_active_target_w - env._left_hand_prev_target_w, dim=-1) > 1.0e-5
+    switch_detected |= reset_ids
+    env._left_hand_post_switch_steps = torch.clamp(env._left_hand_post_switch_steps - 1, min=0)
+    env._left_hand_target_age_steps += env._left_hand_has_active_target.long()
+    env._left_hand_target_index[:] = torch.clamp(env._left_hand_completed_targets, max=max_targets_per_episode - 1)
+    env._left_hand_post_switch_steps[switch_detected] = switch_phase_steps
+    env._left_hand_target_age_steps[switch_detected] = 0
+    env._left_hand_in_success_zone[switch_detected] = False
+    env._left_hand_success_hold_counter[switch_detected] = 0
+    env._left_hand_success_zone_time[switch_detected] = 0
+    env._left_hand_target_switched_this_step[:] = switch_detected
+
+    fixed_target_mdp._set_base_velocity_guidance_command(env, x_range=x_range, y_range=y_range)
+
+    command_term = env.command_manager.get_term(command_name)
+    if hasattr(command_term, "metrics"):
+        command_term.metrics["success_zone_flag"][:] = env._left_hand_in_success_zone.float()
+        command_term.metrics["success_hold_counter"][:] = env._left_hand_success_hold_counter.float()
+        command_term.metrics["success_zone_time"][:] = env._left_hand_success_zone_time.float()
+        command_term.metrics["held_success_count"][:] = env._left_hand_held_success_count.float()
+        command_term.metrics["completion_distance"][:] = 0.0
+        command_term.metrics["completion_after_hold"][:] = env._left_hand_completion_after_hold.float()
+
+    env._left_hand_prev_target_w = env._left_hand_active_target_w.clone()
+    env._left_hand_prev_success.zero_()
+    env._left_hand_state_synced_step = env.common_step_counter
 
 
 def _prime_benchmark_target_state(base_env):
@@ -498,6 +573,7 @@ def _build_summary(
 
 def main():
     fixed_target_mdp._spawn_new_fixed_targets = _benchmark_spawn_new_fixed_targets
+    fixed_target_mdp._sync_long_horizon_state = _benchmark_sync_long_horizon_state
     env = None
     vec_env = None
     try:
@@ -918,6 +994,7 @@ def main():
                 print("[REACH_BENCH] Latest video: not found under output_dir/videos")
     finally:
         fixed_target_mdp._spawn_new_fixed_targets = _ORIGINAL_SPAWN_NEW_FIXED_TARGETS
+        fixed_target_mdp._sync_long_horizon_state = _ORIGINAL_SYNC_LONG_HORIZON_STATE
         if vec_env is not None:
             try:
                 print("[REACH_BENCH] Closing vec env...")

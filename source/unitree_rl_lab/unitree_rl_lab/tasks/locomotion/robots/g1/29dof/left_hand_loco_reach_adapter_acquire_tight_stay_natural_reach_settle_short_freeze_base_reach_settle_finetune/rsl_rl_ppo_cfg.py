@@ -11,8 +11,8 @@ class LeftHandLocoReachAdapterAcquireTightStayNaturalReachSettleShortFreezeBaseR
 ):
     def __post_init__(self):
         super().__post_init__()
-        self.policy.init_noise_std = 0.35
+        self.policy.init_noise_std = 0.15
         self.algorithm.learning_rate = 5.0e-5
-        self.algorithm.desired_kl = 0.005
-        self.algorithm.entropy_coef = 0.005
+        self.algorithm.desired_kl = 0.003
+        self.algorithm.entropy_coef = 0.002
         self.save_interval = 50

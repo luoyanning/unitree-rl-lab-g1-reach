@@ -1,0 +1,12 @@
+from isaaclab.utils import configclass
+
+from ..left_hand_loco_reach_adapter_acquire_tight_stay_natural_reach_settle_short_freeze_base_reach.rsl_rl_ppo_cfg import (
+    LeftHandLocoReachAdapterAcquireTightStayNaturalReachSettleShortFreezeBaseReachPPORunnerCfg,
+)
+
+
+@configclass
+class LeftHandLocoReachFreezeBaseReachBenchmarkPPORunnerCfg(
+    LeftHandLocoReachAdapterAcquireTightStayNaturalReachSettleShortFreezeBaseReachPPORunnerCfg
+):
+    pass

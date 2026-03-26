@@ -54,11 +54,9 @@ BENCHMARK_BLOCK_COLORS = (
     (0.66, 0.34, 0.90),
 )
 
-DEFAULT_BENCHMARK_PER_TARGET_TIMEOUT_S = {
-    "easy": 4.0,
-    "medium": 6.0,
-    "hard": 8.0,
-}
+BENCHMARK_BLOCK_VISUAL_SIZE_M = 0.14
+BENCHMARK_BLOCK_TOUCH_MARGIN_M = 0.02
+DEFAULT_BENCHMARK_PER_TARGET_TIMEOUT_S = 10.0
 
 parser = argparse.ArgumentParser(description="Benchmark a left-hand loco-reach checkpoint on fixed block sequences.")
 parser.add_argument("--video", action="store_true", default=False, help="Record a benchmark video.")
@@ -188,6 +186,15 @@ def _pairwise_distances(points_xyz: list[list[float]]) -> list[float]:
     return distances
 
 
+def _touch_half_extent_m() -> float:
+    return 0.5 * BENCHMARK_BLOCK_VISUAL_SIZE_M + BENCHMARK_BLOCK_TOUCH_MARGIN_M
+
+
+def _hand_touches_block(hand_pos_w: torch.Tensor, block_pos_w: torch.Tensor) -> torch.Tensor:
+    half_extent = _touch_half_extent_m()
+    return torch.all(torch.abs(hand_pos_w - block_pos_w) <= half_extent, dim=-1)
+
+
 def _update_sequence_block_visualization(base_env, sequence_w_env0: torch.Tensor):
     stage = omni.usd.get_context().get_stage()
     block_prims = getattr(base_env, "_reach_benchmark_block_prims", None)
@@ -196,7 +203,7 @@ def _update_sequence_block_visualization(base_env, sequence_w_env0: torch.Tensor
         for block_index, color in enumerate(BENCHMARK_BLOCK_COLORS):
             prim_path = f"/Visuals/Command/left_hand_loco_reach_benchmark_blocks/block_{block_index}"
             cube = UsdGeom.Cube.Define(stage, prim_path)
-            cube.CreateSizeAttr(0.14)
+            cube.CreateSizeAttr(BENCHMARK_BLOCK_VISUAL_SIZE_M)
             cube_prim = cube.GetPrim()
             cube_xform = UsdGeom.XformCommonAPI(cube_prim)
             cube_xform.SetScale(Gf.Vec3f(1.0, 1.0, 1.0))
@@ -208,6 +215,33 @@ def _update_sequence_block_visualization(base_env, sequence_w_env0: torch.Tensor
     for block_prim, position in zip(block_prims, sequence_w_env0.tolist(), strict=True):
         cube_xform = UsdGeom.XformCommonAPI(block_prim)
         cube_xform.SetTranslate(Gf.Vec3d(float(position[0]), float(position[1]), float(position[2])))
+
+
+def _activate_benchmark_block(base_env, env_ids: torch.Tensor, block_indices: torch.Tensor):
+    if len(env_ids) == 0:
+        return
+    valid_mask = block_indices < MAX_TARGETS_PER_EPISODE
+    if torch.any(valid_mask):
+        valid_env_ids = env_ids[valid_mask]
+        valid_block_indices = block_indices[valid_mask]
+        base_env._left_hand_has_active_target[valid_env_ids] = True
+        base_env._left_hand_active_target_w[valid_env_ids] = base_env._reach_benchmark_sequence_w[
+            valid_env_ids, valid_block_indices
+        ]
+        base_env._left_hand_prev_target_w[valid_env_ids] = base_env._left_hand_active_target_w[valid_env_ids]
+        base_env._left_hand_target_age_steps[valid_env_ids] = 0
+        base_env._left_hand_post_switch_steps[valid_env_ids] = 0
+        base_env._left_hand_prev_success[valid_env_ids] = False
+        base_env._left_hand_recent_success[valid_env_ids] = False
+        base_env._left_hand_in_success_zone[valid_env_ids] = False
+        base_env._left_hand_success_hold_counter[valid_env_ids] = 0
+        base_env._left_hand_success_zone_time[valid_env_ids] = 0
+        base_env._left_hand_held_success_count[valid_env_ids] = 0
+        base_env._left_hand_completion_after_hold[valid_env_ids] = 0
+        base_env._left_hand_target_switched_this_step[valid_env_ids] = True
+    if torch.any(~valid_mask):
+        done_env_ids = env_ids[~valid_mask]
+        base_env._left_hand_has_active_target[done_env_ids] = False
 
 
 def _prime_benchmark_target_state(base_env):
@@ -262,7 +296,7 @@ def _num_repeats() -> int:
 def _benchmark_per_target_timeout_s(difficulty: str) -> float:
     if args_cli.benchmark_per_target_timeout_s is not None:
         return float(args_cli.benchmark_per_target_timeout_s)
-    return float(DEFAULT_BENCHMARK_PER_TARGET_TIMEOUT_S[difficulty])
+    return float(DEFAULT_BENCHMARK_PER_TARGET_TIMEOUT_S)
 
 
 def _mode_pose_range() -> dict[str, tuple[float, float]]:
@@ -423,8 +457,11 @@ def _build_summary(
         "sequence_length": MAX_TARGETS_PER_EPISODE,
         "benchmark_per_target_timeout_s": _benchmark_per_target_timeout_s(difficulty),
         "sequence_completion_rate": _safe_mean([float(record["sequence_completed"]) for record in records]),
+        "mean_blocks_touched": _safe_mean([record["blocks_touched"] for record in records]),
         "mean_blocks_completed": _safe_mean([record["blocks_completed"] for record in records]),
-        "target_timeout_rate": _safe_mean([float(record["failure_reason"] == "target_timeout") for record in records]),
+        "target_timeout_rate": _safe_mean(
+            [float(any(record[f"block_{idx}_status"] == "timeout" for idx in range(MAX_TARGETS_PER_EPISODE))) for record in records]
+        ),
         "fall_rate": _safe_mean([float(record["failure_reason"] == "fall") for record in records]),
         "mean_total_time_s": _safe_mean([record["total_time_s"] for record in records]),
         "mean_final_position_error_m": _safe_mean([record["final_position_error_m"] for record in records]),
@@ -438,20 +475,23 @@ def _build_summary(
         "sequence_pairwise_distances_m": _pairwise_distances(sequence_world_xyz_env0),
     }
     for block_index in range(MAX_TARGETS_PER_EPISODE):
+        summary[f"block_{block_index}_touch_rate"] = _safe_mean(
+            [float(record[f"block_{block_index}_status"] == "touched") for record in records]
+        )
         summary[f"block_{block_index}_success_rate"] = _safe_mean(
             [float(record[f"block_{block_index}_success"]) for record in records]
         )
         summary[f"block_{block_index}_timeout_rate"] = _safe_mean(
             [
-                float(
-                    (record["failure_reason"] == "target_timeout")
-                    and (record["failure_block_index"] == block_index)
-                )
+                float(record[f"block_{block_index}_status"] == "timeout")
                 for record in records
             ]
         )
         summary[f"block_{block_index}_time_mean_s"] = _safe_mean(
             [record[f"block_{block_index}_time_s"] for record in records]
+        )
+        summary[f"block_{block_index}_elapsed_mean_s"] = _safe_mean(
+            [record[f"block_{block_index}_elapsed_s"] for record in records]
         )
     return summary
 
@@ -497,7 +537,7 @@ def main():
         robot = base_env.scene["robot"]
         step_dt = float(base_env.step_dt)
         num_envs = base_env.num_envs
-        max_steps_per_sequence = max(1, int(round(args_cli.sequence_timeout_s / step_dt)))
+        base_max_steps_per_sequence = max(1, int(round(args_cli.sequence_timeout_s / step_dt)))
         settle_grace_steps = max(0, int(round(SETTLE_GRACE_S / step_dt)))
 
         hand_body_id = robot.find_bodies([freeze_base_reach_env_cfg.LEFT_HAND_BODY_NAME], preserve_order=True)[0][0]
@@ -537,7 +577,7 @@ def main():
         print(f"  reset_pose_range: {_mode_pose_range()}")
         print(f"  sequence_timeout_s: {args_cli.sequence_timeout_s:.2f}")
         print(f"  training_per_target_timeout_s: {TRAINING_PER_TARGET_TIMEOUT_S:.2f}")
-        print(f"  benchmark_per_target_timeouts_s: {DEFAULT_BENCHMARK_PER_TARGET_TIMEOUT_S}")
+        print(f"  benchmark_per_target_timeout_default_s: {DEFAULT_BENCHMARK_PER_TARGET_TIMEOUT_S:.2f}")
         if args_cli.benchmark_per_target_timeout_s is not None:
             print(f"  benchmark_per_target_timeout_override_s: {args_cli.benchmark_per_target_timeout_s:.2f}")
         print(f"  settle_grace_s: {SETTLE_GRACE_S:.2f}")
@@ -553,6 +593,7 @@ def main():
             sequence_world_xyz_env0: list[list[float]] | None = None
             benchmark_per_target_timeout_s = _benchmark_per_target_timeout_s(difficulty)
             per_target_timeout_steps = max(1, int(round(benchmark_per_target_timeout_s / step_dt)))
+            max_steps_per_sequence = max(base_max_steps_per_sequence, MAX_TARGETS_PER_EPISODE * per_target_timeout_steps)
             remaining = repeats
             batch_index = 0
             while remaining > 0:
@@ -582,6 +623,12 @@ def main():
                     obs = _maybe_tuple_obs(vec_env.reset())
                     _prime_benchmark_target_state(base_env)
                     _update_sequence_block_visualization(base_env, base_env._reach_benchmark_sequence_w[0])
+                active_env_ids = torch.nonzero(active_mask, as_tuple=False).squeeze(-1)
+                _activate_benchmark_block(
+                    base_env,
+                    active_env_ids,
+                    torch.zeros(batch_size, dtype=torch.long, device=base_env.device),
+                )
                 robot_root_env0 = robot.data.root_pos_w[0].detach().cpu().tolist()
                 print(
                     "[REACH_BENCH] "
@@ -589,8 +636,9 @@ def main():
                     f"robot_root_env0={robot_root_env0}"
                 )
 
-                completed_prev = base_env._left_hand_completed_targets.clone()
-                block_start_time_s = torch.zeros(num_envs, device=base_env.device)
+                current_block_index = torch.zeros(num_envs, dtype=torch.long, device=base_env.device)
+                blocks_touched = torch.zeros(num_envs, dtype=torch.long, device=base_env.device)
+                current_block_elapsed_steps = torch.zeros(num_envs, dtype=torch.long, device=base_env.device)
                 sequence_completed = torch.zeros(num_envs, dtype=torch.bool, device=base_env.device)
                 failure_reason = ["" for _ in range(num_envs)]
                 failure_block_index = torch.full((num_envs,), -1, dtype=torch.long, device=base_env.device)
@@ -611,8 +659,15 @@ def main():
                     float("nan"),
                     device=base_env.device,
                 )
+                block_elapsed_s = torch.full(
+                    (num_envs, MAX_TARGETS_PER_EPISODE),
+                    float("nan"),
+                    device=base_env.device,
+                )
+                block_statuses = [["not_reached" for _ in range(MAX_TARGETS_PER_EPISODE)] for _ in range(num_envs)]
 
                 final_position_error = torch.full((num_envs,), float("nan"), device=base_env.device)
+                position_error = torch.full((num_envs,), float("nan"), device=base_env.device)
 
                 for step in range(max_steps_per_sequence):
                     start_time = time.time()
@@ -652,58 +707,81 @@ def main():
                     near_target_right_arm_dev_sum += right_arm_dev * near_target_mask.float()
                     near_target_waist_dev_sum += waist_dev * near_target_mask.float()
 
-                    completed_now = base_env._left_hand_completed_targets.clone()
-                    newly_completed = tracked_mask & (completed_now > completed_prev)
-                    if torch.any(newly_completed):
-                        done_ids = torch.nonzero(newly_completed, as_tuple=False).squeeze(-1)
-                        now_time_s = (step + 1) * step_dt
-                        for env_id in done_ids.tolist():
-                            block_index = int(completed_now[env_id].item()) - 1
-                            if 0 <= block_index < MAX_TARGETS_PER_EPISODE:
-                                block_success[env_id, block_index] = True
-                                block_time_s[env_id, block_index] = now_time_s - block_start_time_s[env_id]
-                                block_start_time_s[env_id] = now_time_s
-                        completed_prev = torch.maximum(completed_prev, completed_now)
-
-                    effective_timeout_steps = per_target_timeout_steps + settle_grace_steps * (
-                        base_env._left_hand_success_zone_time > 0
-                    ).long()
-                    sequence_success_mask = tracked_mask & (completed_now >= MAX_TARGETS_PER_EPISODE)
+                    current_block_elapsed_steps += tracked_mask.long()
+                    touch_mask = tracked_mask & _hand_touches_block(hand_pos_w, base_env._left_hand_active_target_w)
                     fall_mask = tracked_mask & (
                         (root_height < args_cli.fall_height_threshold)
                         | (projected_gravity_z > args_cli.fall_gravity_threshold)
                     )
-                    timeout_mask = tracked_mask & (base_env._left_hand_target_age_steps >= effective_timeout_steps)
+                    timeout_mask = tracked_mask & (current_block_elapsed_steps >= per_target_timeout_steps)
 
-                    if torch.any(sequence_success_mask):
-                        env_ids = torch.nonzero(sequence_success_mask, as_tuple=False).squeeze(-1)
-                        sequence_completed[env_ids] = True
-                        final_position_error[env_ids] = position_error[env_ids]
+                    if torch.any(touch_mask):
+                        env_ids = torch.nonzero(touch_mask, as_tuple=False).squeeze(-1)
+                        elapsed_s = current_block_elapsed_steps[env_ids].float() * step_dt
+                        for local_idx, env_id in enumerate(env_ids.tolist()):
+                            block_index = int(current_block_index[env_id].item())
+                            block_success[env_id, block_index] = True
+                            block_time_s[env_id, block_index] = elapsed_s[local_idx]
+                            block_elapsed_s[env_id, block_index] = elapsed_s[local_idx]
+                            block_statuses[env_id][block_index] = "touched"
+                        blocks_touched[env_ids] += 1
+                        current_block_index[env_ids] += 1
+                        base_env._left_hand_completed_targets[env_ids] = current_block_index[env_ids]
+                        current_block_elapsed_steps[env_ids] = 0
                         total_time_s[env_ids] = (step + 1) * step_dt
-                        done_mask[env_ids] = True
-                        active_mask[env_ids] = False
+                        reached_end_mask = current_block_index[env_ids] >= MAX_TARGETS_PER_EPISODE
+                        if torch.any(reached_end_mask):
+                            done_env_ids = env_ids[reached_end_mask]
+                            sequence_completed[done_env_ids] = True
+                            final_position_error[done_env_ids] = position_error[done_env_ids]
+                            done_mask[done_env_ids] = True
+                            active_mask[done_env_ids] = False
+                        if torch.any(~reached_end_mask):
+                            next_env_ids = env_ids[~reached_end_mask]
+                            _activate_benchmark_block(base_env, next_env_ids, current_block_index[next_env_ids])
 
-                    unresolved_fall = fall_mask & (~done_mask)
+                    unresolved_fall = fall_mask & (~done_mask) & (~touch_mask)
                     if torch.any(unresolved_fall):
                         env_ids = torch.nonzero(unresolved_fall, as_tuple=False).squeeze(-1)
                         final_position_error[env_ids] = position_error[env_ids]
                         total_time_s[env_ids] = (step + 1) * step_dt
-                        failure_block_index[env_ids] = completed_now[env_ids]
+                        failure_block_index[env_ids] = current_block_index[env_ids]
                         done_mask[env_ids] = True
                         active_mask[env_ids] = False
-                        for env_id in env_ids.tolist():
+                        elapsed_s = current_block_elapsed_steps[env_ids].float() * step_dt
+                        for local_idx, env_id in enumerate(env_ids.tolist()):
                             failure_reason[env_id] = "fall"
+                            block_index = int(current_block_index[env_id].item())
+                            if 0 <= block_index < MAX_TARGETS_PER_EPISODE and block_statuses[env_id][block_index] == "not_reached":
+                                block_statuses[env_id][block_index] = "fall"
+                                block_elapsed_s[env_id, block_index] = elapsed_s[local_idx]
 
-                    unresolved_timeout = timeout_mask & (~done_mask)
+                    unresolved_timeout = timeout_mask & (~done_mask) & (~touch_mask)
                     if torch.any(unresolved_timeout):
                         env_ids = torch.nonzero(unresolved_timeout, as_tuple=False).squeeze(-1)
-                        final_position_error[env_ids] = position_error[env_ids]
+                        timed_out_block_indices = current_block_index[env_ids].clone()
+                        elapsed_s = current_block_elapsed_steps[env_ids].float() * step_dt
+                        for local_idx, env_id in enumerate(env_ids.tolist()):
+                            block_index = int(current_block_index[env_id].item())
+                            if 0 <= block_index < MAX_TARGETS_PER_EPISODE:
+                                block_statuses[env_id][block_index] = "timeout"
+                                block_elapsed_s[env_id, block_index] = elapsed_s[local_idx]
+                        current_block_index[env_ids] += 1
+                        base_env._left_hand_completed_targets[env_ids] = current_block_index[env_ids]
+                        current_block_elapsed_steps[env_ids] = 0
                         total_time_s[env_ids] = (step + 1) * step_dt
-                        failure_block_index[env_ids] = completed_now[env_ids]
-                        done_mask[env_ids] = True
-                        active_mask[env_ids] = False
-                        for env_id in env_ids.tolist():
-                            failure_reason[env_id] = "target_timeout"
+                        reached_end_mask = current_block_index[env_ids] >= MAX_TARGETS_PER_EPISODE
+                        if torch.any(reached_end_mask):
+                            done_env_ids = env_ids[reached_end_mask]
+                            final_position_error[done_env_ids] = position_error[done_env_ids]
+                            done_mask[done_env_ids] = True
+                            active_mask[done_env_ids] = False
+                            failure_block_index[done_env_ids] = timed_out_block_indices[reached_end_mask]
+                            for env_id in done_env_ids.tolist():
+                                failure_reason[env_id] = "sequence_end"
+                        if torch.any(~reached_end_mask):
+                            next_env_ids = env_ids[~reached_end_mask]
+                            _activate_benchmark_block(base_env, next_env_ids, current_block_index[next_env_ids])
 
                     if torch.all(done_mask[:batch_size]):
                         break
@@ -712,25 +790,39 @@ def main():
                     if args_cli.real_time and sleep_time > 0.0:
                         time.sleep(sleep_time)
 
+                guard_unfinished = active_mask & (~done_mask)
+                if torch.any(guard_unfinished):
+                    env_ids = torch.nonzero(guard_unfinished, as_tuple=False).squeeze(-1)
+                    elapsed_s = current_block_elapsed_steps[env_ids].float() * step_dt
+                    final_position_error[env_ids] = position_error[env_ids]
+                    total_time_s[env_ids] = max_steps_per_sequence * step_dt
+                    failure_block_index[env_ids] = current_block_index[env_ids]
+                    done_mask[env_ids] = True
+                    active_mask[env_ids] = False
+                    for local_idx, env_id in enumerate(env_ids.tolist()):
+                        failure_reason[env_id] = "guard_timeout"
+                        block_index = int(current_block_index[env_id].item())
+                        if 0 <= block_index < MAX_TARGETS_PER_EPISODE and block_statuses[env_id][block_index] == "not_reached":
+                            block_statuses[env_id][block_index] = "guard_timeout"
+                            block_elapsed_s[env_id, block_index] = elapsed_s[local_idx]
+
                 for env_id in range(batch_size):
                     if not math.isfinite(float(final_position_error[env_id].item())):
                         final_position_error[env_id] = position_error[env_id]
                         total_time_s[env_id] = max(float(total_time_s[env_id].item()), (step + 1) * step_dt)
-                    completed_blocks = int(completed_prev[env_id].item())
+                    completed_blocks = int(blocks_touched[env_id].item())
                     failed_block_index = int(failure_block_index[env_id].item())
                     failure_reason_env = failure_reason[env_id]
                     failed_block_elapsed_s = float("nan")
                     if failure_reason_env and 0 <= failed_block_index < MAX_TARGETS_PER_EPISODE:
-                        failed_block_elapsed_s = max(
-                            0.0,
-                            float(total_time_s[env_id].item() - block_start_time_s[env_id].item()),
-                        )
+                        failed_block_elapsed_s = float(block_elapsed_s[env_id, failed_block_index].item())
                     near_count = max(int(near_target_count[env_id].item()), 1)
                     record = {
                         "difficulty": difficulty,
                         "mode": args_cli.mode,
                         "repeat_index": len(difficulty_records),
                         "sequence_completed": bool(sequence_completed[env_id].item()),
+                        "blocks_touched": completed_blocks,
                         "blocks_completed": completed_blocks,
                         "failure_reason": failure_reason_env,
                         "failure_block_index": failed_block_index,
@@ -745,17 +837,16 @@ def main():
                     }
                     for block_index in range(MAX_TARGETS_PER_EPISODE):
                         block_completed = bool(block_success[env_id, block_index].item())
-                        if block_completed:
-                            block_status = "completed"
-                            block_elapsed_until_failure_s = float("nan")
-                        elif failure_reason_env and block_index == failed_block_index:
-                            block_status = failure_reason_env
-                            block_elapsed_until_failure_s = failed_block_elapsed_s
-                        else:
-                            block_status = "not_reached"
-                            block_elapsed_until_failure_s = float("nan")
+                        block_status = block_statuses[env_id][block_index]
+                        block_elapsed_until_failure_s = (
+                            failed_block_elapsed_s
+                            if block_status in ("timeout", "fall", "guard_timeout")
+                            and block_index == failed_block_index
+                            else float("nan")
+                        )
                         record[f"block_{block_index}_success"] = block_completed
                         record[f"block_{block_index}_time_s"] = float(block_time_s[env_id, block_index].item())
+                        record[f"block_{block_index}_elapsed_s"] = float(block_elapsed_s[env_id, block_index].item())
                         record[f"block_{block_index}_status"] = block_status
                         record[f"block_{block_index}_elapsed_until_failure_s"] = block_elapsed_until_failure_s
                     difficulty_records.append(record)
@@ -792,8 +883,14 @@ def main():
             "overall": {
                 "episodes": len(all_records),
                 "sequence_completion_rate": _safe_mean([float(record["sequence_completed"]) for record in all_records]),
+                "mean_blocks_touched": _safe_mean([record["blocks_touched"] for record in all_records]),
                 "mean_blocks_completed": _safe_mean([record["blocks_completed"] for record in all_records]),
-                "target_timeout_rate": _safe_mean([float(record["failure_reason"] == "target_timeout") for record in all_records]),
+                "target_timeout_rate": _safe_mean(
+                    [
+                        float(any(record[f"block_{idx}_status"] == "timeout" for idx in range(MAX_TARGETS_PER_EPISODE)))
+                        for record in all_records
+                    ]
+                ),
                 "fall_rate": _safe_mean([float(record["failure_reason"] == "fall") for record in all_records]),
                 "mean_total_time_s": _safe_mean([record["total_time_s"] for record in all_records]),
                 "mean_final_position_error_m": _safe_mean([record["final_position_error_m"] for record in all_records]),

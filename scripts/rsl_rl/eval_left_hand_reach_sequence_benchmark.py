@@ -274,6 +274,7 @@ def _benchmark_sync_long_horizon_state(
         max_targets_per_episode=max_targets_per_episode,
         switch_phase_steps=switch_phase_steps,
     )
+    freeze_base_reach_mdp._ensure_adapter_state(env)
     if env._left_hand_state_synced_step == env.common_step_counter:
         return
 
@@ -297,6 +298,9 @@ def _benchmark_sync_long_horizon_state(
         env._left_hand_success_zone_time[reset_ids] = 0
         env._left_hand_completion_after_hold[reset_ids] = False
         env._left_hand_has_active_target[reset_ids] = False
+        env._left_hand_in_post_success_dwell[reset_ids] = False
+        env._left_hand_post_success_dwell_counter[reset_ids] = 0
+        env._left_hand_recent_dwell_completion[reset_ids] = False
 
     switch_detected = torch.norm(env._left_hand_active_target_w - env._left_hand_prev_target_w, dim=-1) > 1.0e-5
     switch_detected |= reset_ids
@@ -320,6 +324,20 @@ def _benchmark_sync_long_horizon_state(
         command_term.metrics["held_success_count"][:] = env._left_hand_held_success_count.float()
         command_term.metrics["completion_distance"][:] = 0.0
         command_term.metrics["completion_after_hold"][:] = env._left_hand_completion_after_hold.float()
+        command_term.metrics.setdefault("post_success_dwell_flag", torch.zeros(env.num_envs, device=env.device))
+        command_term.metrics.setdefault("post_success_dwell_counter", torch.zeros(env.num_envs, device=env.device))
+        command_term.metrics.setdefault("completion_after_dwell", torch.zeros(env.num_envs, device=env.device))
+        command_term.metrics["post_success_dwell_flag"][:] = env._left_hand_in_post_success_dwell.float()
+        command_term.metrics["post_success_dwell_counter"][:] = env._left_hand_post_success_dwell_counter.float()
+        command_term.metrics["completion_after_dwell"][:] = env._left_hand_recent_dwell_completion.float()
+
+    adapter_command = fixed_target_mdp._active_target_pos_base_yaw(env)
+    env._left_hand_adapter_command[:] = adapter_command
+    pose_command = freeze_base_reach_mdp._command_tensor(env, command_name)
+    if pose_command is not None and pose_command.shape[1] >= 3:
+        pose_command[:, :3] = adapter_command
+        if pose_command.shape[1] >= 6:
+            pose_command[:, 3:6] = 0.0
 
     env._left_hand_prev_target_w = env._left_hand_active_target_w.clone()
     env._left_hand_prev_success.zero_()

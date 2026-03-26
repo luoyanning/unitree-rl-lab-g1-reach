@@ -29,11 +29,8 @@ def _apply_settle_finetune(cfg):
     cfg.curriculum.left_hand_target_levels = None
 
     long_horizon_updates = {
-        "success_exit_radius": 0.10,
-        "success_hold_steps": 2,
-        "post_success_dwell_steps": 25,
-        "post_success_exit_radius": 0.12,
-        "per_target_timeout_s": 5.0,
+        "post_success_dwell_steps": 12,
+        "per_target_timeout_s": 6.0,
     }
     term_names = (
         ("observations", "policy", "velocity_commands"),

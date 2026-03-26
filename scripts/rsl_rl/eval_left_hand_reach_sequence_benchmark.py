@@ -182,6 +182,37 @@ def _update_sequence_debug_visualization(base_env, sequence_w_env0: torch.Tensor
     )
 
 
+def _prime_benchmark_target_state(base_env):
+    if not hasattr(base_env, "_reach_benchmark_sequence_w"):
+        return
+    sequence_w = base_env._reach_benchmark_sequence_w
+    base_env._left_hand_completed_targets.zero_()
+    base_env._left_hand_target_index.zero_()
+    base_env._left_hand_target_age_steps.zero_()
+    base_env._left_hand_post_switch_steps.zero_()
+    base_env._left_hand_prev_success.zero_()
+    base_env._left_hand_recent_success.zero_()
+    base_env._left_hand_in_success_zone.zero_()
+    base_env._left_hand_success_hold_counter.zero_()
+    base_env._left_hand_success_zone_time.zero_()
+    base_env._left_hand_held_success_count.zero_()
+    base_env._left_hand_completion_after_hold.zero_()
+    base_env._left_hand_target_switched_this_step.zero_()
+    base_env._left_hand_has_active_target[:] = True
+    base_env._left_hand_active_target_w[:] = sequence_w[:, 0]
+    base_env._left_hand_prev_target_w[:] = sequence_w[:, 0]
+    if hasattr(base_env, "_left_hand_distance_at_completion"):
+        base_env._left_hand_distance_at_completion.zero_()
+    if hasattr(base_env, "_left_hand_foot_motion_before_contact"):
+        base_env._left_hand_foot_motion_before_contact.zero_()
+    if hasattr(base_env, "_left_hand_workspace_error_at_contact"):
+        base_env._left_hand_workspace_error_at_contact.zero_()
+    if hasattr(base_env, "_left_hand_torso_lean_at_contact"):
+        base_env._left_hand_torso_lean_at_contact.zero_()
+    if hasattr(base_env, "_left_hand_arm_extension_at_contact"):
+        base_env._left_hand_arm_extension_at_contact.zero_()
+
+
 
 
 def _maybe_tuple_obs(reset_result):
@@ -471,6 +502,7 @@ def main():
                 )
                 with torch.inference_mode():
                     obs = _maybe_tuple_obs(vec_env.reset())
+                    _prime_benchmark_target_state(base_env)
                     _update_sequence_debug_visualization(base_env, base_env._reach_benchmark_sequence_w[0])
                     fixed_target_mdp._update_target_debug_visualization(base_env)
 

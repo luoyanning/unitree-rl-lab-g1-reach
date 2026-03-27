@@ -596,11 +596,11 @@ def _benchmark_spawn_new_fixed_targets(env, env_ids, sample_regimes=None, sample
 
 
 def _sequence_tensor(base_env, difficulty: str) -> torch.Tensor:
-    sequence_env0_world = torch.tensor(
+    sequence_local = torch.tensor(
         FIXED_ENV0_WORLD_SEQUENCES[difficulty], dtype=torch.float32, device=base_env.device
     )
-    env_origin_offsets = base_env.scene.env_origins[:, :3] - base_env.scene.env_origins[0:1, :3]
-    return sequence_env0_world.unsqueeze(0) + env_origin_offsets.unsqueeze(1)
+    env_origins = base_env.scene.env_origins[:, :3]
+    return env_origins.unsqueeze(1) + sequence_local.unsqueeze(0)
 
 
 def _hand_pos_w(robot, hand_body_id: int) -> torch.Tensor:
@@ -809,7 +809,19 @@ def main():
 
                 base_env._reach_benchmark_sequence_w = _sequence_tensor(base_env, difficulty)
                 sequence_world_xyz_env0 = base_env._reach_benchmark_sequence_w[0].detach().cpu().tolist()
+                sequence_local_spec = [list(point) for point in FIXED_ENV0_WORLD_SEQUENCES[difficulty]]
+                env_origin_env0 = base_env.scene.env_origins[0, :3].detach().cpu().tolist()
                 sequence_pairwise_distances = _pairwise_distances(sequence_world_xyz_env0)
+                print(
+                    "[REACH_BENCH] "
+                    f"difficulty={difficulty} "
+                    f"env_origin_env0={env_origin_env0}"
+                )
+                print(
+                    "[REACH_BENCH] "
+                    f"difficulty={difficulty} "
+                    f"sequence_local_spec={sequence_local_spec}"
+                )
                 print(
                     "[REACH_BENCH] "
                     f"difficulty={difficulty} "

@@ -63,6 +63,7 @@ BENCHMARK_BLOCK_TOUCH_MARGIN_M = 0.02
 DEFAULT_BENCHMARK_PER_TARGET_TIMEOUT_S = 10.0
 DEFAULT_BENCHMARK_HOLD_TIME_S = 2.0
 DEFAULT_BENCHMARK_HOLD_MARGIN_M = 0.04
+BENCHMARK_ENV_TASK = "Unitree-G1-29dof-LeftHand-LocoReach-FreezeBaseReach-Benchmark-v0"
 
 parser = argparse.ArgumentParser(description="Benchmark a left-hand loco-reach checkpoint on fixed block sequences.")
 parser.add_argument("--video", action="store_true", default=False, help="Record a benchmark video.")
@@ -479,6 +480,10 @@ def _resolve_checkpoint_path(agent_cfg: RslRlOnPolicyRunnerCfg) -> str:
     return resume_path
 
 
+def _benchmark_env_task_name() -> str:
+    return BENCHMARK_ENV_TASK
+
+
 def _get_output_dir(resume_path: str) -> str:
     if args_cli.output_dir:
         return os.path.abspath(args_cli.output_dir)
@@ -702,8 +707,9 @@ def main():
     vec_env = None
     video_writer = None
     try:
+        benchmark_env_task = _benchmark_env_task_name()
         env_cfg = parse_env_cfg(
-            args_cli.task,
+            benchmark_env_task,
             device=args_cli.device,
             num_envs=args_cli.num_envs,
             use_fabric=not args_cli.disable_fabric,
@@ -716,7 +722,7 @@ def main():
         output_dir = _get_output_dir(resume_path)
         os.makedirs(output_dir, exist_ok=True)
 
-        env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+        env = gym.make(benchmark_env_task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
         if isinstance(env.unwrapped, DirectMARLEnv):
             env = multi_agent_to_single_agent(env)
         vec_env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
@@ -764,6 +770,8 @@ def main():
         print("[INFO] Benchmark configuration:")
         print(f"  checkpoint: {resume_path}")
         print(f"  output_dir: {output_dir}")
+        print(f"  policy_task: {args_cli.task}")
+        print(f"  benchmark_env_task: {benchmark_env_task}")
         print(f"  mode: {args_cli.mode}")
         print(f"  difficulty: {args_cli.difficulty}")
         print(f"  repeats_per_difficulty: {_num_repeats()}")
@@ -833,10 +841,21 @@ def main():
                         torch.zeros(batch_size, dtype=torch.long, device=base_env.device),
                     )
                 robot_root_env0 = robot.data.root_pos_w[0].detach().cpu().tolist()
+                hand_pos_env0 = robot.data.body_pos_w[0, hand_body_id].detach().cpu().tolist()
+                initial_target_env0 = base_env._left_hand_active_target_w[0].detach().cpu().tolist()
+                initial_position_error_env0 = float(
+                    torch.linalg.norm(base_env._left_hand_active_target_w[0] - robot.data.body_pos_w[0, hand_body_id]).item()
+                )
                 print(
                     "[REACH_BENCH] "
                     f"difficulty={difficulty} "
                     f"robot_root_env0={robot_root_env0}"
+                )
+                print(
+                    "[REACH_BENCH] "
+                    f"difficulty={difficulty} "
+                    f"hand_pos_env0={hand_pos_env0} initial_target_env0={initial_target_env0} "
+                    f"initial_position_error_env0={initial_position_error_env0:.3f}"
                 )
                 video_capture_stride = max(1, int(round((1.0 / step_dt) / float(args_cli.video_fps))))
                 if args_cli.video:

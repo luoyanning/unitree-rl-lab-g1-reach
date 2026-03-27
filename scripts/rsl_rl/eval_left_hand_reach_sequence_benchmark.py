@@ -268,13 +268,13 @@ def _activate_benchmark_block(base_env, env_ids: torch.Tensor, block_indices: to
         if torch.any(valid_mask):
             valid_env_ids = env_ids[valid_mask]
             valid_block_indices = block_indices[valid_mask]
+            previous_targets_w = base_env._left_hand_active_target_w[valid_env_ids].clone()
             base_env._left_hand_has_active_target[valid_env_ids] = True
             base_env._left_hand_active_target_w[valid_env_ids] = base_env._reach_benchmark_sequence_w[
                 valid_env_ids, valid_block_indices
             ]
-            base_env._left_hand_prev_target_w[valid_env_ids] = base_env._left_hand_active_target_w[valid_env_ids]
+            base_env._left_hand_prev_target_w[valid_env_ids] = previous_targets_w
             base_env._left_hand_target_age_steps[valid_env_ids] = 0
-            base_env._left_hand_post_switch_steps[valid_env_ids] = 0
             base_env._left_hand_prev_success[valid_env_ids] = False
             base_env._left_hand_recent_success[valid_env_ids] = False
             base_env._left_hand_in_success_zone[valid_env_ids] = False
@@ -286,6 +286,7 @@ def _activate_benchmark_block(base_env, env_ids: torch.Tensor, block_indices: to
         if torch.any(~valid_mask):
             done_env_ids = env_ids[~valid_mask]
             base_env._left_hand_has_active_target[done_env_ids] = False
+        base_env._left_hand_state_synced_step = -1
 
 
 def _benchmark_sync_long_horizon_state(
@@ -355,6 +356,17 @@ def _benchmark_sync_long_horizon_state(
     env._left_hand_target_switched_this_step[:] = switch_detected
 
     fixed_target_mdp._set_base_velocity_guidance_command(env, x_range=x_range, y_range=y_range)
+    base_velocity_command = freeze_base_reach_mdp._command_tensor(env, "base_velocity")
+    if base_velocity_command is not None:
+        freeze_base_mask = freeze_base_reach_mdp._freeze_base_reach_mask(
+            env,
+            command_name=command_name,
+            x_range=x_range,
+            y_range=y_range,
+            switch_phase_steps=switch_phase_steps,
+            gate_std=0.01,
+        )
+        base_velocity_command[freeze_base_mask] = 0.0
 
     command_term = env.command_manager.get_term(command_name)
     if hasattr(command_term, "metrics"):
@@ -448,6 +460,7 @@ def _prime_benchmark_target_state(base_env):
     base_env._left_hand_has_active_target[:] = True
     base_env._left_hand_active_target_w[:] = sequence_w[:, 0]
     base_env._left_hand_prev_target_w[:] = sequence_w[:, 0]
+    base_env._left_hand_state_synced_step = -1
     if hasattr(base_env, "_left_hand_distance_at_completion"):
         base_env._left_hand_distance_at_completion.zero_()
     if hasattr(base_env, "_left_hand_foot_motion_before_contact"):
@@ -464,6 +477,10 @@ def _prime_benchmark_target_state(base_env):
 
 def _maybe_tuple_obs(reset_result):
     return reset_result[0] if isinstance(reset_result, tuple) else reset_result
+
+
+def _refresh_policy_obs(vec_env):
+    return _maybe_tuple_obs(vec_env.get_observations())
 
 
 def _difficulty_names() -> list[str]:
@@ -921,6 +938,7 @@ def main():
                         active_env_ids,
                         torch.zeros(batch_size, dtype=torch.long, device=base_env.device),
                     )
+                    obs = _refresh_policy_obs(vec_env)
                 robot_root_env0 = robot.data.root_pos_w[0].detach().cpu().tolist()
                 hand_pos_env0 = robot.data.body_pos_w[0, hand_body_id].detach().cpu().tolist()
                 initial_target_env0 = base_env._left_hand_active_target_w[0].detach().cpu().tolist()
@@ -1089,6 +1107,7 @@ def main():
                                 next_env_ids = env_ids[~reached_end_mask]
                                 with torch.inference_mode():
                                     _activate_benchmark_block(base_env, next_env_ids, current_block_index[next_env_ids])
+                                    obs = _refresh_policy_obs(vec_env)
 
                     hold_zone_mask = tracked_mask & current_block_touched & _hand_in_hold_zone(
                         hand_pos_w, base_env._left_hand_active_target_w
@@ -1153,6 +1172,7 @@ def main():
                             next_env_ids = env_ids[~reached_end_mask]
                             with torch.inference_mode():
                                 _activate_benchmark_block(base_env, next_env_ids, current_block_index[next_env_ids])
+                                obs = _refresh_policy_obs(vec_env)
 
                     success_mask = stabilize_mask if success_requires_hold else touch_mask
                     unresolved_fall = fall_mask & (~done_mask) & (~success_mask)
@@ -1224,6 +1244,7 @@ def main():
                             next_env_ids = env_ids[~reached_end_mask]
                             with torch.inference_mode():
                                 _activate_benchmark_block(base_env, next_env_ids, current_block_index[next_env_ids])
+                                obs = _refresh_policy_obs(vec_env)
 
                     if torch.all(done_mask[:batch_size]):
                         print(

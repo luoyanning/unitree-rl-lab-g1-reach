@@ -59,10 +59,11 @@ BENCHMARK_BLOCK_COLORS = (
 )
 
 BENCHMARK_BLOCK_VISUAL_SIZE_M = 0.14
-BENCHMARK_BLOCK_TOUCH_MARGIN_M = 0.02
 DEFAULT_BENCHMARK_PER_TARGET_TIMEOUT_S = 10.0
 DEFAULT_BENCHMARK_HOLD_TIME_S = 2.0
 DEFAULT_BENCHMARK_HOLD_MARGIN_M = 0.04
+DEFAULT_FALL_HEIGHT_THRESHOLD = 0.12
+DEFAULT_FALL_GRAVITY_THRESHOLD = -math.cos(1.0)
 BENCHMARK_ENV_TASK = "Unitree-G1-29dof-LeftHand-LocoReach-FreezeBaseReach-Benchmark-v0"
 
 parser = argparse.ArgumentParser(description="Benchmark a left-hand loco-reach checkpoint on fixed block sequences.")
@@ -122,13 +123,13 @@ parser.add_argument(
 parser.add_argument(
     "--fall_height_threshold",
     type=float,
-    default=0.20,
+    default=DEFAULT_FALL_HEIGHT_THRESHOLD,
     help="Root height threshold below which the robot is considered fallen.",
 )
 parser.add_argument(
     "--fall_gravity_threshold",
     type=float,
-    default=-0.70,
+    default=DEFAULT_FALL_GRAVITY_THRESHOLD,
     help="Projected gravity z threshold above which the robot is considered fallen.",
 )
 parser.add_argument(
@@ -153,7 +154,7 @@ parser.add_argument(
     "--benchmark_hold_margin_m",
     type=float,
     default=DEFAULT_BENCHMARK_HOLD_MARGIN_M,
-    help="Extra half-extent margin used for the post-touch hold zone around a block.",
+    help="Extra radial margin added to the touch radius for the post-touch hold zone.",
 )
 parser.add_argument(
     "--output_dir",
@@ -202,6 +203,8 @@ fixed_target_mdp = importlib.import_module(
 SETTLE_GRACE_S = float(freeze_base_reach_mdp.SETTLE_GRACE_S)
 TRAINING_PER_TARGET_TIMEOUT_S = float(freeze_base_reach_env_cfg.PER_TARGET_TIMEOUT_S)
 MAX_TARGETS_PER_EPISODE = int(freeze_base_reach_env_cfg.MAX_TARGETS_PER_EPISODE)
+TASK_SUCCESS_ENTER_RADIUS_M = float(freeze_base_reach_env_cfg.SUCCESS_ENTER_RADIUS)
+TASK_SUCCESS_EXIT_RADIUS_M = float(freeze_base_reach_env_cfg.SUCCESS_EXIT_RADIUS)
 
 _ORIGINAL_SPAWN_NEW_FIXED_TARGETS = fixed_target_mdp._spawn_new_fixed_targets
 _ORIGINAL_SYNC_LONG_HORIZON_STATE = fixed_target_mdp._sync_long_horizon_state
@@ -215,22 +218,20 @@ def _pairwise_distances(points_xyz: list[list[float]]) -> list[float]:
     return distances
 
 
-def _touch_half_extent_m() -> float:
-    return 0.5 * BENCHMARK_BLOCK_VISUAL_SIZE_M + BENCHMARK_BLOCK_TOUCH_MARGIN_M
+def _touch_radius_m() -> float:
+    return TASK_SUCCESS_ENTER_RADIUS_M
 
 
 def _hand_touches_block(hand_pos_w: torch.Tensor, block_pos_w: torch.Tensor) -> torch.Tensor:
-    half_extent = _touch_half_extent_m()
-    return torch.all(torch.abs(hand_pos_w - block_pos_w) <= half_extent, dim=-1)
+    return torch.linalg.norm(hand_pos_w - block_pos_w, dim=-1) <= _touch_radius_m()
 
 
-def _hold_half_extent_m() -> float:
-    return 0.5 * BENCHMARK_BLOCK_VISUAL_SIZE_M + float(args_cli.benchmark_hold_margin_m)
+def _hold_radius_m() -> float:
+    return _touch_radius_m() + float(args_cli.benchmark_hold_margin_m)
 
 
 def _hand_in_hold_zone(hand_pos_w: torch.Tensor, block_pos_w: torch.Tensor) -> torch.Tensor:
-    half_extent = _hold_half_extent_m()
-    return torch.all(torch.abs(hand_pos_w - block_pos_w) <= half_extent, dim=-1)
+    return torch.linalg.norm(hand_pos_w - block_pos_w, dim=-1) <= _hold_radius_m()
 
 
 def _update_sequence_block_visualization(base_env, sequence_w_env0: torch.Tensor):
@@ -720,14 +721,10 @@ def _summary_csv_rows(
             "difficulty": difficulty,
             "mode": args_cli.mode,
             "success_mode": args_cli.success_mode,
+            "target_timeout_rate": summary["target_timeout_rate"],
+            "fall_rate": summary["fall_rate"],
+            "mean_total_time_s": summary["mean_total_time_s"],
         }
-        for key, value in summary.items():
-            if key in ("sequence_world_xyz_env0", "sequence_pairwise_distances_m"):
-                continue
-            if isinstance(value, (list, dict)):
-                row[key] = json.dumps(value)
-            else:
-                row[key] = value
         rows.append(row)
     return rows
 
@@ -817,8 +814,12 @@ def main():
         print(f"  benchmark_per_target_timeout_default_s: {DEFAULT_BENCHMARK_PER_TARGET_TIMEOUT_S:.2f}")
         if args_cli.benchmark_per_target_timeout_s is not None:
             print(f"  benchmark_per_target_timeout_override_s: {args_cli.benchmark_per_target_timeout_s:.2f}")
+        print(f"  benchmark_touch_radius_m: {_touch_radius_m():.3f}")
         print(f"  benchmark_hold_time_s: {args_cli.benchmark_hold_time_s:.2f}")
         print(f"  benchmark_hold_margin_m: {args_cli.benchmark_hold_margin_m:.3f}")
+        print(f"  benchmark_hold_radius_m: {_hold_radius_m():.3f}")
+        print(f"  fall_height_threshold: {args_cli.fall_height_threshold:.3f}")
+        print(f"  fall_gravity_threshold: {args_cli.fall_gravity_threshold:.4f}")
         print(f"  settle_grace_s: {SETTLE_GRACE_S:.2f}")
         print(f"  near_target_radius: {args_cli.near_target_radius:.3f}")
 

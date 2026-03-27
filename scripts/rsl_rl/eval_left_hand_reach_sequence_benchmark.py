@@ -302,8 +302,12 @@ def _benchmark_sync_long_horizon_state(
     sample_weights,
     success_exit_radius: float = 0.09,
     success_hold_steps: int = 8,
+    adapter_gate_std: float = 0.04,
+    adapter_post_switch_bias: float = 0.35,
+    adapter_min_z_blend: float = 0.35,
+    adapter_snap_to_target_radius: float = 0.12,
 ):
-    del success_threshold, static_target_hold_s, per_target_timeout_s, sample_regimes, sample_weights, success_exit_radius, success_hold_steps
+    del success_threshold, static_target_hold_s, per_target_timeout_s, success_exit_radius, success_hold_steps
     fixed_target_mdp._ensure_long_horizon_state(
         env,
         command_name=command_name,
@@ -367,7 +371,19 @@ def _benchmark_sync_long_horizon_state(
         command_term.metrics["post_success_dwell_counter"][:] = env._left_hand_post_success_dwell_counter.float()
         command_term.metrics["completion_after_dwell"][:] = env._left_hand_recent_dwell_completion.float()
 
-    adapter_command = fixed_target_mdp._active_target_pos_base_yaw(env)
+    adapter_command = freeze_base_reach_mdp._compute_adapter_command(
+        env=env,
+        x_range=x_range,
+        y_range=y_range,
+        switch_phase_steps=switch_phase_steps,
+        sample_regimes=sample_regimes,
+        sample_weights=sample_weights,
+        command_name=command_name,
+        adapter_gate_std=adapter_gate_std,
+        adapter_post_switch_bias=adapter_post_switch_bias,
+        adapter_min_z_blend=adapter_min_z_blend,
+        adapter_snap_to_target_radius=adapter_snap_to_target_radius,
+    )
     env._left_hand_adapter_command[:] = adapter_command
     pose_command = freeze_base_reach_mdp._command_tensor(env, command_name)
     if pose_command is not None and pose_command.shape[1] >= 3:
@@ -394,7 +410,6 @@ def _benchmark_sync_adapter_hold_stay_state(
     sample_weights,
     **kwargs,
 ):
-    del kwargs
     _benchmark_sync_long_horizon_state(
         env=env,
         command_name=command_name,
@@ -407,6 +422,10 @@ def _benchmark_sync_adapter_hold_stay_state(
         y_range=y_range,
         sample_regimes=sample_regimes,
         sample_weights=sample_weights,
+        adapter_gate_std=kwargs.get("adapter_gate_std", 0.04),
+        adapter_post_switch_bias=kwargs.get("adapter_post_switch_bias", 0.35),
+        adapter_min_z_blend=kwargs.get("adapter_min_z_blend", 0.35),
+        adapter_snap_to_target_radius=kwargs.get("adapter_snap_to_target_radius", 0.12),
     )
 
 

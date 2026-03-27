@@ -209,6 +209,7 @@ SETTLE_GRACE_S = float(freeze_base_reach_mdp.SETTLE_GRACE_S)
 TRAINING_PER_TARGET_TIMEOUT_S = float(freeze_base_reach_env_cfg.PER_TARGET_TIMEOUT_S)
 MAX_TARGETS_PER_EPISODE = int(freeze_base_reach_env_cfg.MAX_TARGETS_PER_EPISODE)
 TASK_SUCCESS_ENTER_RADIUS_M = float(freeze_base_reach_env_cfg.SUCCESS_ENTER_RADIUS)
+TOUCH_POST_SUCCESS_DWELL_STEPS = int(freeze_base_reach_env_cfg.POST_SUCCESS_DWELL_STEPS)
 
 _ORIGINAL_SPAWN_NEW_FIXED_TARGETS = fixed_target_mdp._spawn_new_fixed_targets
 _ORIGINAL_SYNC_LONG_HORIZON_STATE = fixed_target_mdp._sync_long_horizon_state
@@ -232,6 +233,10 @@ def _hand_touches_block(hand_pos_w: torch.Tensor, block_pos_w: torch.Tensor) -> 
 
 def _hold_radius_m() -> float:
     return _touch_radius_m() + float(args_cli.benchmark_hold_margin_m)
+
+
+def _touch_post_success_dwell_steps() -> int:
+    return max(1, TOUCH_POST_SUCCESS_DWELL_STEPS)
 
 
 def _hand_in_hold_zone(hand_pos_w: torch.Tensor, block_pos_w: torch.Tensor) -> torch.Tensor:
@@ -282,6 +287,9 @@ def _activate_benchmark_block(base_env, env_ids: torch.Tensor, block_indices: to
             base_env._left_hand_success_zone_time[valid_env_ids] = 0
             base_env._left_hand_held_success_count[valid_env_ids] = 0
             base_env._left_hand_completion_after_hold[valid_env_ids] = 0
+            base_env._left_hand_in_post_success_dwell[valid_env_ids] = False
+            base_env._left_hand_post_success_dwell_counter[valid_env_ids] = 0
+            base_env._left_hand_recent_dwell_completion[valid_env_ids] = False
             base_env._left_hand_target_switched_this_step[valid_env_ids] = True
         if torch.any(~valid_mask):
             done_env_ids = env_ids[~valid_mask]
@@ -366,7 +374,7 @@ def _benchmark_sync_long_horizon_state(
             switch_phase_steps=switch_phase_steps,
             gate_std=0.01,
         )
-        base_velocity_command[freeze_base_mask] = 0.0
+        base_velocity_command[env._left_hand_in_post_success_dwell | freeze_base_mask] = 0.0
 
     command_term = env.command_manager.get_term(command_name)
     if hasattr(command_term, "metrics"):
@@ -456,6 +464,9 @@ def _prime_benchmark_target_state(base_env):
     base_env._left_hand_success_zone_time.zero_()
     base_env._left_hand_held_success_count.zero_()
     base_env._left_hand_completion_after_hold.zero_()
+    base_env._left_hand_in_post_success_dwell.zero_()
+    base_env._left_hand_post_success_dwell_counter.zero_()
+    base_env._left_hand_recent_dwell_completion.zero_()
     base_env._left_hand_target_switched_this_step.zero_()
     base_env._left_hand_has_active_target[:] = True
     base_env._left_hand_active_target_w[:] = sequence_w[:, 0]
@@ -863,6 +874,10 @@ def main():
         print(f"  benchmark_hold_time_s: {args_cli.benchmark_hold_time_s:.2f}")
         print(f"  benchmark_hold_margin_m: {args_cli.benchmark_hold_margin_m:.3f}")
         print(f"  benchmark_hold_radius_m: {_hold_radius_m():.3f}")
+        print(
+            f"  touch_post_success_dwell_s: "
+            f"{_touch_post_success_dwell_steps() * step_dt:.2f} ({_touch_post_success_dwell_steps()} steps)"
+        )
         print(f"  fall_height_threshold: {args_cli.fall_height_threshold:.3f}")
         print(f"  fall_gravity_threshold: {args_cli.fall_gravity_threshold:.4f}")
         print(f"  settle_grace_s: {SETTLE_GRACE_S:.2f}")
@@ -963,6 +978,8 @@ def main():
                 current_block_touched = torch.zeros(num_envs, dtype=torch.bool, device=base_env.device)
                 current_block_hold_steps = torch.zeros(num_envs, dtype=torch.long, device=base_env.device)
                 current_block_max_hold_steps = torch.zeros(num_envs, dtype=torch.long, device=base_env.device)
+                touch_post_success_pending = torch.zeros(num_envs, dtype=torch.bool, device=base_env.device)
+                touch_post_success_dwell_counter = torch.zeros(num_envs, dtype=torch.long, device=base_env.device)
                 sequence_completed = torch.zeros(num_envs, dtype=torch.bool, device=base_env.device)
                 failure_reason = ["" for _ in range(num_envs)]
                 failure_block_index = torch.full((num_envs,), -1, dtype=torch.long, device=base_env.device)
@@ -1044,7 +1061,7 @@ def main():
                     near_target_waist_dev_sum += waist_dev * near_target_mask.float()
 
                     current_block_elapsed_steps += tracked_mask.long()
-                    touch_mask = tracked_mask & (~current_block_touched) & _hand_touches_block(
+                    touch_mask = tracked_mask & (~current_block_touched) & (~touch_post_success_pending) & _hand_touches_block(
                         hand_pos_w, base_env._left_hand_active_target_w
                     )
                     fall_eligible_mask = tracked_mask & (current_block_elapsed_steps > settle_grace_steps)
@@ -1052,7 +1069,6 @@ def main():
                         (root_height < args_cli.fall_height_threshold)
                         | (projected_gravity_z > args_cli.fall_gravity_threshold)
                     )
-                    timeout_mask = tracked_mask & (current_block_elapsed_steps >= per_target_timeout_steps)
 
                     if torch.any(touch_mask):
                         env_ids = torch.nonzero(touch_mask, as_tuple=False).squeeze(-1)
@@ -1079,35 +1095,74 @@ def main():
                                 block_success[env_id, block_index] = True
                                 block_elapsed_s[env_id, block_index] = elapsed_s[local_idx]
                                 block_statuses[env_id][block_index] = "touched"
-                            current_block_index[env_ids] += 1
                             with torch.inference_mode():
-                                base_env._left_hand_completed_targets[env_ids] = current_block_index[env_ids]
-                            current_block_elapsed_steps[env_ids] = 0
+                                base_env._left_hand_recent_success[env_ids] = True
+                                base_env._left_hand_in_post_success_dwell[env_ids] = True
+                                base_env._left_hand_post_success_dwell_counter[env_ids] = 0
+                                base_env._left_hand_recent_dwell_completion[env_ids] = False
+                            touch_post_success_pending[env_ids] = True
+                            touch_post_success_dwell_counter[env_ids] = 0
                             current_block_touched[env_ids] = False
-                            current_block_hold_steps[env_ids] = 0
-                            current_block_max_hold_steps[env_ids] = 0
-                            total_time_s[env_ids] = (step + 1) * step_dt
-                            reached_end_mask = current_block_index[env_ids] >= MAX_TARGETS_PER_EPISODE
-                            if torch.any(reached_end_mask):
-                                done_env_ids = env_ids[reached_end_mask]
-                                sequence_completed[done_env_ids] = True
-                                final_position_error[done_env_ids] = position_error[done_env_ids]
-                                done_mask[done_env_ids] = True
-                                active_mask[done_env_ids] = False
-                                with torch.inference_mode():
-                                    base_env._left_hand_has_active_target[done_env_ids] = False
-                                for env_id in done_env_ids.tolist():
-                                    if env_id == 0:
-                                        print(
-                                            "[REACH_BENCH] "
-                                            f"difficulty={difficulty} env=0 event=sequence_completed "
-                                            f"blocks_completed={int(blocks_touched[env_id].item())}"
-                                        )
-                            if torch.any(~reached_end_mask):
-                                next_env_ids = env_ids[~reached_end_mask]
-                                with torch.inference_mode():
-                                    _activate_benchmark_block(base_env, next_env_ids, current_block_index[next_env_ids])
-                                    obs = _refresh_policy_obs(vec_env)
+
+                    touch_dwell_mask = tracked_mask & touch_post_success_pending
+                    touch_post_success_dwell_counter = torch.where(
+                        touch_dwell_mask,
+                        touch_post_success_dwell_counter + 1,
+                        touch_post_success_dwell_counter,
+                    )
+                    with torch.inference_mode():
+                        base_env._left_hand_post_success_dwell_counter[:] = touch_post_success_dwell_counter
+                    touch_dwell_complete_mask = touch_dwell_mask & (
+                        touch_post_success_dwell_counter >= _touch_post_success_dwell_steps()
+                    )
+
+                    if not success_requires_hold and torch.any(touch_dwell_complete_mask):
+                        env_ids = torch.nonzero(touch_dwell_complete_mask, as_tuple=False).squeeze(-1)
+                        dwell_s = touch_post_success_dwell_counter[env_ids].float() * step_dt
+                        current_block_index[env_ids] += 1
+                        with torch.inference_mode():
+                            base_env._left_hand_completed_targets[env_ids] = current_block_index[env_ids]
+                            base_env._left_hand_in_post_success_dwell[env_ids] = False
+                            base_env._left_hand_post_success_dwell_counter[env_ids] = 0
+                            base_env._left_hand_recent_dwell_completion[env_ids] = True
+                        touch_post_success_pending[env_ids] = False
+                        touch_post_success_dwell_counter[env_ids] = 0
+                        current_block_elapsed_steps[env_ids] = 0
+                        current_block_hold_steps[env_ids] = 0
+                        current_block_max_hold_steps[env_ids] = 0
+                        total_time_s[env_ids] = (step + 1) * step_dt
+                        for local_idx, env_id in enumerate(env_ids.tolist()):
+                            if env_id == 0:
+                                print(
+                                    "[REACH_BENCH] "
+                                    f"difficulty={difficulty} env=0 block={int(current_block_index[env_id].item()) - 1} "
+                                    f"event=touch_settled dwell_s={float(dwell_s[local_idx]):.2f}"
+                                )
+                        reached_end_mask = current_block_index[env_ids] >= MAX_TARGETS_PER_EPISODE
+                        if torch.any(reached_end_mask):
+                            done_env_ids = env_ids[reached_end_mask]
+                            sequence_completed[done_env_ids] = True
+                            final_position_error[done_env_ids] = position_error[done_env_ids]
+                            done_mask[done_env_ids] = True
+                            active_mask[done_env_ids] = False
+                            with torch.inference_mode():
+                                base_env._left_hand_has_active_target[done_env_ids] = False
+                            for env_id in done_env_ids.tolist():
+                                if env_id == 0:
+                                    print(
+                                        "[REACH_BENCH] "
+                                        f"difficulty={difficulty} env=0 event=sequence_completed "
+                                        f"blocks_completed={int(blocks_touched[env_id].item())}"
+                                    )
+                        if torch.any(~reached_end_mask):
+                            next_env_ids = env_ids[~reached_end_mask]
+                            with torch.inference_mode():
+                                _activate_benchmark_block(base_env, next_env_ids, current_block_index[next_env_ids])
+                                obs = _refresh_policy_obs(vec_env)
+
+                    timeout_mask = tracked_mask & (~touch_post_success_pending) & (
+                        current_block_elapsed_steps >= per_target_timeout_steps
+                    )
 
                     hold_zone_mask = tracked_mask & current_block_touched & _hand_in_hold_zone(
                         hand_pos_w, base_env._left_hand_active_target_w
@@ -1174,7 +1229,7 @@ def main():
                                 _activate_benchmark_block(base_env, next_env_ids, current_block_index[next_env_ids])
                                 obs = _refresh_policy_obs(vec_env)
 
-                    success_mask = stabilize_mask if success_requires_hold else touch_mask
+                    success_mask = stabilize_mask if success_requires_hold else (touch_mask | touch_dwell_complete_mask)
                     unresolved_fall = fall_mask & (~done_mask) & (~success_mask)
                     if torch.any(unresolved_fall):
                         env_ids = torch.nonzero(unresolved_fall, as_tuple=False).squeeze(-1)
@@ -1183,8 +1238,14 @@ def main():
                         failure_block_index[env_ids] = current_block_index[env_ids]
                         done_mask[env_ids] = True
                         active_mask[env_ids] = False
+                        touch_post_success_pending[env_ids] = False
+                        touch_post_success_dwell_counter[env_ids] = 0
                         elapsed_s = current_block_elapsed_steps[env_ids].float() * step_dt
                         hold_s = current_block_max_hold_steps[env_ids].float() * step_dt
+                        with torch.inference_mode():
+                            base_env._left_hand_in_post_success_dwell[env_ids] = False
+                            base_env._left_hand_post_success_dwell_counter[env_ids] = 0
+                            base_env._left_hand_recent_dwell_completion[env_ids] = False
                         for local_idx, env_id in enumerate(env_ids.tolist()):
                             failure_reason[env_id] = "fall"
                             block_index = int(current_block_index[env_id].item())
@@ -1224,10 +1285,15 @@ def main():
                         current_block_index[env_ids] += 1
                         with torch.inference_mode():
                             base_env._left_hand_completed_targets[env_ids] = current_block_index[env_ids]
+                            base_env._left_hand_in_post_success_dwell[env_ids] = False
+                            base_env._left_hand_post_success_dwell_counter[env_ids] = 0
+                            base_env._left_hand_recent_dwell_completion[env_ids] = False
                         current_block_elapsed_steps[env_ids] = 0
                         current_block_touched[env_ids] = False
                         current_block_hold_steps[env_ids] = 0
                         current_block_max_hold_steps[env_ids] = 0
+                        touch_post_success_pending[env_ids] = False
+                        touch_post_success_dwell_counter[env_ids] = 0
                         total_time_s[env_ids] = (step + 1) * step_dt
                         reached_end_mask = current_block_index[env_ids] >= MAX_TARGETS_PER_EPISODE
                         if torch.any(reached_end_mask):
@@ -1271,6 +1337,12 @@ def main():
                     failure_block_index[env_ids] = current_block_index[env_ids]
                     done_mask[env_ids] = True
                     active_mask[env_ids] = False
+                    touch_post_success_pending[env_ids] = False
+                    touch_post_success_dwell_counter[env_ids] = 0
+                    with torch.inference_mode():
+                        base_env._left_hand_in_post_success_dwell[env_ids] = False
+                        base_env._left_hand_post_success_dwell_counter[env_ids] = 0
+                        base_env._left_hand_recent_dwell_completion[env_ids] = False
                     for local_idx, env_id in enumerate(env_ids.tolist()):
                         failure_reason[env_id] = "guard_timeout"
                         block_index = int(current_block_index[env_id].item())

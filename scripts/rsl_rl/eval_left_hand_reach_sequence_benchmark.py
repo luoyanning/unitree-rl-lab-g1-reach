@@ -24,12 +24,14 @@ import cli_args  # isort: skip
 
 FIXED_ENV0_WORLD_SEQUENCES = {
     "easy": (
-        (0.35, 0.18, 0.92),
-        (0.85, 0.18, 0.92),
-        (1.35, 0.18, 0.92),
-        (1.85, 0.18, 0.92),
-        (2.35, 0.18, 0.92),
-        (2.85, 0.18, 0.92),
+        # Keep easy targets centered and at a comfortable mid-height so the
+        # policy can progress without the low forward-lean failure mode.
+        (0.45, 0.18, 1.00),
+        (0.89, 0.18, 1.00),
+        (1.33, 0.18, 1.00),
+        (1.77, 0.18, 1.00),
+        (2.21, 0.18, 1.00),
+        (2.65, 0.18, 1.00),
     ),
     "medium": (
         (0.45, 0.18, 0.90),

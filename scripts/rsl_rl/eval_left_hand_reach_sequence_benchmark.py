@@ -59,6 +59,7 @@ BENCHMARK_BLOCK_COLORS = (
 )
 
 BENCHMARK_BLOCK_VISUAL_SIZE_M = 0.14
+DEFAULT_BENCHMARK_TOUCH_RADIUS_M = 0.12
 DEFAULT_BENCHMARK_PER_TARGET_TIMEOUT_S = 10.0
 DEFAULT_BENCHMARK_HOLD_TIME_S = 2.0
 DEFAULT_BENCHMARK_HOLD_MARGIN_M = 0.04
@@ -139,6 +140,12 @@ parser.add_argument(
     help="Hard guard timeout for one full benchmark sequence.",
 )
 parser.add_argument(
+    "--benchmark_touch_radius_m",
+    type=float,
+    default=DEFAULT_BENCHMARK_TOUCH_RADIUS_M,
+    help="Radial distance threshold for touch-mode success around the benchmark target center.",
+)
+parser.add_argument(
     "--benchmark_per_target_timeout_s",
     type=float,
     default=None,
@@ -204,7 +211,6 @@ SETTLE_GRACE_S = float(freeze_base_reach_mdp.SETTLE_GRACE_S)
 TRAINING_PER_TARGET_TIMEOUT_S = float(freeze_base_reach_env_cfg.PER_TARGET_TIMEOUT_S)
 MAX_TARGETS_PER_EPISODE = int(freeze_base_reach_env_cfg.MAX_TARGETS_PER_EPISODE)
 TASK_SUCCESS_ENTER_RADIUS_M = float(freeze_base_reach_env_cfg.SUCCESS_ENTER_RADIUS)
-TASK_SUCCESS_EXIT_RADIUS_M = float(freeze_base_reach_env_cfg.SUCCESS_EXIT_RADIUS)
 
 _ORIGINAL_SPAWN_NEW_FIXED_TARGETS = fixed_target_mdp._spawn_new_fixed_targets
 _ORIGINAL_SYNC_LONG_HORIZON_STATE = fixed_target_mdp._sync_long_horizon_state
@@ -219,7 +225,7 @@ def _pairwise_distances(points_xyz: list[list[float]]) -> list[float]:
 
 
 def _touch_radius_m() -> float:
-    return TASK_SUCCESS_ENTER_RADIUS_M
+    return max(float(args_cli.benchmark_touch_radius_m), TASK_SUCCESS_ENTER_RADIUS_M)
 
 
 def _hand_touches_block(hand_pos_w: torch.Tensor, block_pos_w: torch.Tensor) -> torch.Tensor:
@@ -721,9 +727,24 @@ def _summary_csv_rows(
             "difficulty": difficulty,
             "mode": args_cli.mode,
             "success_mode": args_cli.success_mode,
+            "episodes": summary["episodes"],
+            "sequence_length": summary["sequence_length"],
+            "benchmark_per_target_timeout_s": summary["benchmark_per_target_timeout_s"],
+            "benchmark_hold_time_s": summary["benchmark_hold_time_s"],
+            "sequence_completion_rate": summary["sequence_completion_rate"],
+            "mean_blocks_touched": summary["mean_blocks_touched"],
+            "mean_blocks_stabilized": summary["mean_blocks_stabilized"],
+            "mean_blocks_completed": summary["mean_blocks_completed"],
             "target_timeout_rate": summary["target_timeout_rate"],
             "fall_rate": summary["fall_rate"],
             "mean_total_time_s": summary["mean_total_time_s"],
+            "mean_final_position_error_m": summary["mean_final_position_error_m"],
+            "mean_near_target_hand_speed_mps": summary["mean_near_target_hand_speed_mps"],
+            "mean_near_target_base_speed_mps": summary["mean_near_target_base_speed_mps"],
+            "mean_near_target_yaw_rate_rps": summary["mean_near_target_yaw_rate_rps"],
+            "mean_near_target_foot_shuffle_mps": summary["mean_near_target_foot_shuffle_mps"],
+            "mean_near_target_right_arm_deviation": summary["mean_near_target_right_arm_deviation"],
+            "mean_near_target_waist_deviation": summary["mean_near_target_waist_deviation"],
         }
         rows.append(row)
     return rows
@@ -1015,7 +1036,8 @@ def main():
                     touch_mask = tracked_mask & (~current_block_touched) & _hand_touches_block(
                         hand_pos_w, base_env._left_hand_active_target_w
                     )
-                    fall_mask = tracked_mask & (
+                    fall_eligible_mask = tracked_mask & (current_block_elapsed_steps > settle_grace_steps)
+                    fall_mask = fall_eligible_mask & (
                         (root_height < args_cli.fall_height_threshold)
                         | (projected_gravity_z > args_cli.fall_gravity_threshold)
                     )

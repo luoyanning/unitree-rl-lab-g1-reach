@@ -91,6 +91,13 @@ parser.add_argument(
     choices=["main", "stability"],
     help="Benchmark mode. main=10 exact repeats, stability=100 perturbed repeats.",
 )
+parser.add_argument(
+    "--success_mode",
+    type=str,
+    default="touch",
+    choices=["touch", "stabilize"],
+    help="Block success criterion. touch=advance on first touch, stabilize=require touch plus continuous hold.",
+)
 parser.add_argument("--main_repeats", type=int, default=10, help="Repeats per difficulty in main mode.")
 parser.add_argument("--stability_repeats", type=int, default=100, help="Repeats per difficulty in stability mode.")
 parser.add_argument("--repeats", type=int, default=None, help="Optional explicit repeat override.")
@@ -453,6 +460,10 @@ def _benchmark_per_target_timeout_s(difficulty: str) -> float:
     return float(DEFAULT_BENCHMARK_PER_TARGET_TIMEOUT_S)
 
 
+def _success_requires_hold() -> bool:
+    return args_cli.success_mode == "stabilize"
+
+
 def _mode_pose_range() -> dict[str, tuple[float, float]]:
     if args_cli.mode == "stability":
         yaw = math.radians(args_cli.stability_yaw_perturb_deg)
@@ -637,6 +648,7 @@ def _build_summary(
 ) -> dict[str, float | list[float] | str]:
     summary: dict[str, float | list[float] | str] = {
         "difficulty": difficulty,
+        "success_mode": args_cli.success_mode,
         "episodes": len(records),
         "sequence_length": MAX_TARGETS_PER_EPISODE,
         "benchmark_per_target_timeout_s": _benchmark_per_target_timeout_s(difficulty),
@@ -697,6 +709,27 @@ def _build_summary(
             [record[f"block_{block_index}_elapsed_s"] for record in records]
         )
     return summary
+
+
+def _summary_csv_rows(
+    summaries: dict[str, dict[str, float | list[float] | str]],
+) -> list[dict[str, float | str]]:
+    rows: list[dict[str, float | str]] = []
+    for difficulty, summary in summaries.items():
+        row: dict[str, float | str] = {
+            "difficulty": difficulty,
+            "mode": args_cli.mode,
+            "success_mode": args_cli.success_mode,
+        }
+        for key, value in summary.items():
+            if key in ("sequence_world_xyz_env0", "sequence_pairwise_distances_m"):
+                continue
+            if isinstance(value, (list, dict)):
+                row[key] = json.dumps(value)
+            else:
+                row[key] = value
+        rows.append(row)
+    return rows
 
 
 def main():
@@ -773,6 +806,7 @@ def main():
         print(f"  policy_task: {args_cli.task}")
         print(f"  benchmark_env_task: {benchmark_env_task}")
         print(f"  mode: {args_cli.mode}")
+        print(f"  success_mode: {args_cli.success_mode}")
         print(f"  difficulty: {args_cli.difficulty}")
         print(f"  repeats_per_difficulty: {_num_repeats()}")
         print(f"  reset_pose_range: {_mode_pose_range()}")
@@ -799,6 +833,7 @@ def main():
             benchmark_per_target_timeout_s = _benchmark_per_target_timeout_s(difficulty)
             per_target_timeout_steps = max(1, int(round(benchmark_per_target_timeout_s / step_dt)))
             hold_steps_required = max(1, int(round(float(args_cli.benchmark_hold_time_s) / step_dt)))
+            success_requires_hold = _success_requires_hold()
             max_steps_per_sequence = max(base_max_steps_per_sequence, MAX_TARGETS_PER_EPISODE * per_target_timeout_steps)
             remaining = repeats
             batch_index = 0
@@ -836,6 +871,11 @@ def main():
                     "[REACH_BENCH] "
                     f"difficulty={difficulty} "
                     f"benchmark_per_target_timeout_s={benchmark_per_target_timeout_s:.2f}"
+                )
+                print(
+                    "[REACH_BENCH] "
+                    f"difficulty={difficulty} "
+                    f"success_mode={args_cli.success_mode}"
                 )
                 print(
                     "[REACH_BENCH] "
@@ -999,6 +1039,40 @@ def main():
                         current_block_hold_steps[env_ids] = 0
                         current_block_max_hold_steps[env_ids] = 0
                         blocks_touched[env_ids] += 1
+                        if not success_requires_hold:
+                            for local_idx, env_id in enumerate(env_ids.tolist()):
+                                block_index = int(current_block_index[env_id].item())
+                                block_success[env_id, block_index] = True
+                                block_elapsed_s[env_id, block_index] = elapsed_s[local_idx]
+                                block_statuses[env_id][block_index] = "touched"
+                            current_block_index[env_ids] += 1
+                            with torch.inference_mode():
+                                base_env._left_hand_completed_targets[env_ids] = current_block_index[env_ids]
+                            current_block_elapsed_steps[env_ids] = 0
+                            current_block_touched[env_ids] = False
+                            current_block_hold_steps[env_ids] = 0
+                            current_block_max_hold_steps[env_ids] = 0
+                            total_time_s[env_ids] = (step + 1) * step_dt
+                            reached_end_mask = current_block_index[env_ids] >= MAX_TARGETS_PER_EPISODE
+                            if torch.any(reached_end_mask):
+                                done_env_ids = env_ids[reached_end_mask]
+                                sequence_completed[done_env_ids] = True
+                                final_position_error[done_env_ids] = position_error[done_env_ids]
+                                done_mask[done_env_ids] = True
+                                active_mask[done_env_ids] = False
+                                with torch.inference_mode():
+                                    base_env._left_hand_has_active_target[done_env_ids] = False
+                                for env_id in done_env_ids.tolist():
+                                    if env_id == 0:
+                                        print(
+                                            "[REACH_BENCH] "
+                                            f"difficulty={difficulty} env=0 event=sequence_completed "
+                                            f"blocks_completed={int(blocks_touched[env_id].item())}"
+                                        )
+                            if torch.any(~reached_end_mask):
+                                next_env_ids = env_ids[~reached_end_mask]
+                                with torch.inference_mode():
+                                    _activate_benchmark_block(base_env, next_env_ids, current_block_index[next_env_ids])
 
                     hold_zone_mask = tracked_mask & current_block_touched & _hand_in_hold_zone(
                         hand_pos_w, base_env._left_hand_active_target_w
@@ -1015,7 +1089,7 @@ def main():
                     current_block_max_hold_steps = torch.maximum(current_block_max_hold_steps, current_block_hold_steps)
                     stabilize_mask = tracked_mask & current_block_touched & (current_block_hold_steps >= hold_steps_required)
 
-                    if torch.any(stabilize_mask):
+                    if success_requires_hold and torch.any(stabilize_mask):
                         env_ids = torch.nonzero(stabilize_mask, as_tuple=False).squeeze(-1)
                         elapsed_s = current_block_elapsed_steps[env_ids].float() * step_dt
                         hold_s = current_block_max_hold_steps[env_ids].float() * step_dt
@@ -1064,7 +1138,8 @@ def main():
                             with torch.inference_mode():
                                 _activate_benchmark_block(base_env, next_env_ids, current_block_index[next_env_ids])
 
-                    unresolved_fall = fall_mask & (~done_mask) & (~stabilize_mask)
+                    success_mask = stabilize_mask if success_requires_hold else touch_mask
+                    unresolved_fall = fall_mask & (~done_mask) & (~success_mask)
                     if torch.any(unresolved_fall):
                         env_ids = torch.nonzero(unresolved_fall, as_tuple=False).squeeze(-1)
                         final_position_error[env_ids] = position_error[env_ids]
@@ -1089,7 +1164,7 @@ def main():
                                         f"event=fall elapsed_s={float(elapsed_s[local_idx]):.2f}"
                                     )
 
-                    unresolved_timeout = timeout_mask & (~done_mask) & (~stabilize_mask)
+                    unresolved_timeout = timeout_mask & (~done_mask) & (~success_mask)
                     if torch.any(unresolved_timeout):
                         env_ids = torch.nonzero(unresolved_timeout, as_tuple=False).squeeze(-1)
                         timed_out_block_indices = current_block_index[env_ids].clone()
@@ -1098,7 +1173,7 @@ def main():
                         for local_idx, env_id in enumerate(env_ids.tolist()):
                             block_index = int(current_block_index[env_id].item())
                             if 0 <= block_index < MAX_TARGETS_PER_EPISODE:
-                                if current_block_touched[env_id]:
+                                if current_block_touched[env_id] and success_requires_hold:
                                     block_statuses[env_id][block_index] = "touched_timeout"
                                     block_max_hold_s[env_id, block_index] = hold_s[local_idx]
                                 else:
@@ -1185,11 +1260,12 @@ def main():
                     record = {
                         "difficulty": difficulty,
                         "mode": args_cli.mode,
+                        "success_mode": args_cli.success_mode,
                         "repeat_index": len(difficulty_records),
                         "sequence_completed": bool(sequence_completed[env_id].item()),
                         "blocks_touched": touched_blocks,
                         "blocks_stabilized": stabilized_blocks,
-                        "blocks_completed": stabilized_blocks,
+                        "blocks_completed": touched_blocks if not success_requires_hold else stabilized_blocks,
                         "failure_reason": failure_reason_env,
                         "failure_block_index": failed_block_index,
                         "total_time_s": float(total_time_s[env_id].item()),
@@ -1213,7 +1289,13 @@ def main():
                         record[f"block_{block_index}_success"] = block_completed
                         record[f"block_{block_index}_touched"] = bool(block_touched[env_id, block_index].item())
                         record[f"block_{block_index}_stabilized"] = bool(block_stabilized[env_id, block_index].item())
-                        record[f"block_{block_index}_time_s"] = float(block_stabilize_time_s[env_id, block_index].item())
+                        record[f"block_{block_index}_time_s"] = float(
+                            (
+                                block_touch_time_s[env_id, block_index]
+                                if not success_requires_hold
+                                else block_stabilize_time_s[env_id, block_index]
+                            ).item()
+                        )
                         record[f"block_{block_index}_touch_time_s"] = float(block_touch_time_s[env_id, block_index].item())
                         record[f"block_{block_index}_stabilize_time_s"] = float(block_stabilize_time_s[env_id, block_index].item())
                         record[f"block_{block_index}_max_hold_s"] = float(block_max_hold_s[env_id, block_index].item())
@@ -1243,7 +1325,9 @@ def main():
 
         overall_summary = {
             "task": args_cli.task,
+            "benchmark_env_task": benchmark_env_task,
             "mode": args_cli.mode,
+            "success_mode": args_cli.success_mode,
             "checkpoint": resume_path,
             "difficulty": args_cli.difficulty,
             "repeats_per_difficulty": repeats,
@@ -1284,15 +1368,16 @@ def main():
         with open(summary_path, "w", encoding="utf-8") as file:
             json.dump(overall_summary, file, indent=2)
 
-        csv_path = os.path.join(output_dir, "episodes.csv")
+        csv_path = os.path.join(output_dir, "summary.csv")
+        summary_rows = _summary_csv_rows(summaries)
         with open(csv_path, "w", newline="", encoding="utf-8") as file:
-            writer = csv.DictWriter(file, fieldnames=list(all_records[0].keys()) if all_records else [])
-            if all_records:
+            if summary_rows:
+                writer = csv.DictWriter(file, fieldnames=list(summary_rows[0].keys()))
                 writer.writeheader()
-                writer.writerows(all_records)
+                writer.writerows(summary_rows)
 
         print(f"[REACH_BENCH] Summary written to: {summary_path}")
-        print(f"[REACH_BENCH] Episode records written to: {csv_path}")
+        print(f"[REACH_BENCH] Aggregate CSV written to: {csv_path}")
         if args_cli.video:
             latest_video_path = _latest_video_path(output_dir)
             if latest_video_path is not None:

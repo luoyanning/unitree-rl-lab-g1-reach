@@ -12,10 +12,6 @@ from datetime import datetime
 
 import gymnasium as gym
 import torch
-try:
-    import imageio.v2 as imageio
-except ImportError:
-    imageio = None
 
 from isaaclab.app import AppLauncher
 
@@ -525,28 +521,6 @@ def _latest_video_path(output_dir: str) -> str | None:
     return sorted(video_paths)[-1]
 
 
-def _init_manual_video_writer(output_dir: str, difficulty: str, repeat_index: int):
-    if imageio is None:
-        raise RuntimeError("imageio is required for --video but is not available in the current environment.")
-    video_dir = os.path.join(output_dir, "videos")
-    os.makedirs(video_dir, exist_ok=True)
-    video_path = os.path.join(video_dir, f"{difficulty}_repeat_{repeat_index:03d}.mp4")
-    writer = imageio.get_writer(
-        video_path,
-        fps=int(args_cli.video_fps),
-        codec="libx264",
-        macro_block_size=None,
-    )
-    return writer, video_path
-
-
-def _render_rgb_frame(env):
-    frame = env.render()
-    if isinstance(frame, (list, tuple)):
-        frame = frame[0]
-    return frame
-
-
 def _configure_benchmark_env(env_cfg):
     env_cfg.episode_length_s = max(float(env_cfg.episode_length_s), float(args_cli.sequence_timeout_s))
     if hasattr(env_cfg, "scene") and hasattr(env_cfg.scene, "terrain"):
@@ -758,7 +732,6 @@ def main():
     freeze_base_reach_mdp._sync_adapter_hold_stay_state = _benchmark_sync_adapter_hold_stay_state
     env = None
     vec_env = None
-    video_writer = None
     try:
         benchmark_env_task = _benchmark_env_task_name()
         env_cfg = parse_env_cfg(
@@ -778,6 +751,19 @@ def main():
         env = gym.make(benchmark_env_task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
         if isinstance(env.unwrapped, DirectMARLEnv):
             env = multi_agent_to_single_agent(env)
+        if args_cli.video:
+            if args_cli.num_envs != 1:
+                raise RuntimeError("--video requires --num_envs 1 for benchmark capture.")
+            video_kwargs = {
+                "video_folder": os.path.join(output_dir, "videos"),
+                "step_trigger": lambda step: step == 0,
+                "video_length": args_cli.video_length,
+                "fps": args_cli.video_fps,
+                "disable_logger": True,
+                "name_prefix": f"{args_cli.difficulty}_{args_cli.mode}_{args_cli.success_mode}",
+            }
+            print(f"[REACH_BENCH] RecordVideo config: {video_kwargs}")
+            env = gym.wrappers.RecordVideo(env, **video_kwargs)
         vec_env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
         print(f"[INFO] Loading model checkpoint from: {resume_path}")
@@ -933,18 +919,6 @@ def main():
                     f"hand_pos_env0={hand_pos_env0} initial_target_env0={initial_target_env0} "
                     f"initial_position_error_env0={initial_position_error_env0:.3f}"
                 )
-                video_capture_stride = max(1, int(round((1.0 / step_dt) / float(args_cli.video_fps))))
-                if args_cli.video:
-                    if batch_size != 1:
-                        raise RuntimeError("--video currently requires --num_envs 1 for benchmark capture.")
-                    video_writer, video_path = _init_manual_video_writer(
-                        output_dir=output_dir,
-                        difficulty=difficulty,
-                        repeat_index=len(difficulty_records),
-                    )
-                    print(f"[REACH_BENCH] Manual video path: {video_path}")
-                    video_writer.append_data(_render_rgb_frame(env))
-
                 current_block_index = torch.zeros(num_envs, dtype=torch.long, device=base_env.device)
                 blocks_touched = torch.zeros(num_envs, dtype=torch.long, device=base_env.device)
                 blocks_stabilized = torch.zeros(num_envs, dtype=torch.long, device=base_env.device)
@@ -1009,8 +983,6 @@ def main():
                         actions = actions.clone()
                         actions[~active_mask] = 0.0
                         obs, _, _, _ = vec_env.step(actions)
-                    if args_cli.video and step % video_capture_stride == 0:
-                        video_writer.append_data(_render_rgb_frame(env))
 
                     hand_pos_w = _hand_pos_w(robot, hand_body_id)
                     hand_vel_w = _hand_vel_w(robot, hand_body_id)
@@ -1328,11 +1300,6 @@ def main():
                         record[f"block_{block_index}_status"] = block_status
                         record[f"block_{block_index}_elapsed_until_failure_s"] = block_elapsed_until_failure_s
                     difficulty_records.append(record)
-                if args_cli.video and video_writer is not None:
-                    video_writer.append_data(_render_rgb_frame(env))
-                    video_writer.close()
-                    video_writer = None
-
                 remaining -= batch_size
                 batch_index += 1
                 print(
@@ -1416,12 +1383,6 @@ def main():
         fixed_target_mdp._spawn_new_fixed_targets = _ORIGINAL_SPAWN_NEW_FIXED_TARGETS
         fixed_target_mdp._sync_long_horizon_state = _ORIGINAL_SYNC_LONG_HORIZON_STATE
         freeze_base_reach_mdp._sync_adapter_hold_stay_state = _ORIGINAL_FREEZE_SYNC_ADAPTER_HOLD_STAY_STATE
-        if video_writer is not None:
-            try:
-                print("[REACH_BENCH] Closing manual video writer...")
-                video_writer.close()
-            except Exception as exc:
-                print(f"[REACH_BENCH] Warning: video writer close failed: {exc}")
         if vec_env is not None:
             try:
                 print("[REACH_BENCH] Closing vec env...")

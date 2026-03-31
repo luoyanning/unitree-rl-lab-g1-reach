@@ -141,7 +141,7 @@ def _tabletop_stand_then_touch_gate(
     base_ang_speed = torch.linalg.norm(robot.data.root_ang_vel_w[:, :3], dim=-1)
     foot_vel_xy = robot.data.body_lin_vel_w[:, feet_cfg.body_ids, :2] - robot.data.root_lin_vel_w[:, None, :2]
     foot_speed = torch.linalg.norm(foot_vel_xy, dim=-1).mean(dim=1)
-    support_clear = (_tabletop_support_contact_force(env, support_sensor_cfg=support_sensor_cfg) < support_force_threshold).float()
+    support_clear = (_tabletop_support_contact_force(env, sensor_cfg=support_sensor_cfg) < support_force_threshold).float()
     reach_gate = freeze_base_reach_mdp._ready_reach_gate(
         env,
         command_name=command_name,

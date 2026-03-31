@@ -17,6 +17,21 @@ from pathlib import Path
 CHECKPOINT_PATTERN = re.compile(r"model_(\d+)\.pt$")
 
 
+def build_train_command(train_script: Path, launch_args: list[str], repo_root: Path) -> list[str]:
+    candidate_roots: list[Path] = []
+    isaaclab_path = os.environ.get("ISAACLAB_PATH")
+    if isaaclab_path:
+        candidate_roots.append(Path(isaaclab_path).expanduser())
+    candidate_roots.append(repo_root.parent / "IsaacLab")
+
+    for candidate_root in candidate_roots:
+        isaaclab_sh = candidate_root / "isaaclab.sh"
+        if isaaclab_sh.is_file():
+            return ["bash", str(isaaclab_sh), "-p", str(train_script), *launch_args]
+
+    return [sys.executable, str(train_script), *launch_args]
+
+
 def parse_wrapper_args() -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(description="Watchdog wrapper around scripts/rsl_rl/train.py.")
     parser.add_argument(
@@ -313,7 +328,7 @@ def main() -> int:
         elif "--resume" in base_train_args and initial_checkpoint_arg:
             launch_checkpoint = Path(initial_checkpoint_arg).expanduser()
 
-        command = [sys.executable, str(train_script), *launch_args]
+        command = build_train_command(train_script, launch_args, repo_root)
         print(f"[AUTO-RESUME] Launching: {' '.join(command)}", flush=True)
 
         try:

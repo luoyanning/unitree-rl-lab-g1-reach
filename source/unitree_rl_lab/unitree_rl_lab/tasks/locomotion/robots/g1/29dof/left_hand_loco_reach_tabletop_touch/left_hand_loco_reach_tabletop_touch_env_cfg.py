@@ -17,6 +17,7 @@ TABLE_TOP_BLOCK_Z = 0.805
 TABLETOP_BLOCK_NAMES = tuple(f"target_block_{index}" for index in range(6))
 TABLETOP_MAX_TARGETS_PER_EPISODE = 3
 TABLETOP_PER_TARGET_TIMEOUT_S = 5.0
+TABLETOP_POST_SUCCESS_DWELL_STEPS = 6
 TABLETOP_STANCE_X_RANGE = (0.36, 0.54)
 TABLETOP_STANCE_Y_RANGE = (0.10, 0.24)
 TABLETOP_NEAR_POS_X = (0.34, 0.46)
@@ -90,6 +91,8 @@ def _retarget_term_params(term_cfg) -> None:
         params["max_targets_per_episode"] = TABLETOP_MAX_TARGETS_PER_EPISODE
     if "per_target_timeout_s" in params:
         params["per_target_timeout_s"] = TABLETOP_PER_TARGET_TIMEOUT_S
+    if "post_success_dwell_steps" in params:
+        params["post_success_dwell_steps"] = TABLETOP_POST_SUCCESS_DWELL_STEPS
 
 
 @configclass
@@ -212,6 +215,20 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
             _retarget_term_params(term_cfg)
         for term_cfg in vars(self.terminations).values():
             _retarget_term_params(term_cfg)
+
+        self.rewards.base_target_stance.weight = -1.6
+        self.rewards.stance_ready.weight = 2.0
+        self.rewards.stance_progress.weight = 2.5
+        self.rewards.ready_reach_stationary.weight = 2.0
+        self.rewards.ready_reach_left_hand_stillness.weight = 0.8
+        self.rewards.ready_reach_left_hand_vertical_motion.weight = -1.0
+        self.rewards.ready_reach_foot_shuffle.weight = -0.8
+        self.rewards.target_completion.weight = 8.0
+        self.rewards.target_hold.weight = 7.5
+        self.rewards.near_target_left_hand_stillness.weight = 2.0
+        self.rewards.dwell_left_hand_stillness.weight = 2.0
+        self.rewards.left_hand_position_tracking_fine.weight = 10.0
+        self.rewards.success_posture_bonus.weight = 3.5
 
         self.rewards.base_height.params["target_height"] = 0.78
 

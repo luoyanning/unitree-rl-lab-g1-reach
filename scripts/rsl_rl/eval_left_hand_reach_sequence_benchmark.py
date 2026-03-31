@@ -16,6 +16,7 @@ import torch
 from isaaclab.app import AppLauncher
 
 import cli_args  # isort: skip
+from rsl_rl_compat import sanitize_runner_cfg  # isort: skip
 
 
 FIXED_ENV0_WORLD_SEQUENCES = {
@@ -814,7 +815,8 @@ def main():
         vec_env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
         print(f"[INFO] Loading model checkpoint from: {resume_path}")
-        runner = OnPolicyRunner(vec_env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+        agent_cfg_dict = sanitize_runner_cfg(agent_cfg.to_dict())
+        runner = OnPolicyRunner(vec_env, agent_cfg_dict, log_dir=None, device=agent_cfg.device)
         runner.load(resume_path)
         policy = runner.get_inference_policy(device=vec_env.device)
 

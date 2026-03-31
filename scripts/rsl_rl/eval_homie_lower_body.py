@@ -9,6 +9,7 @@ import time
 from isaaclab.app import AppLauncher
 
 import cli_args  # isort: skip
+from rsl_rl_compat import sanitize_runner_cfg  # isort: skip
 
 
 parser = argparse.ArgumentParser(description="Evaluate a trained G1 HOMIE lower-body checkpoint.")
@@ -88,7 +89,8 @@ def main():
     agent_cfg = cli_args.parse_rsl_rl_cfg(args_cli.task, rsl_args)
 
     vec_env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-    runner = OnPolicyRunner(vec_env, agent_cfg.to_dict(), log_dir=None, device=args_cli.device)
+    agent_cfg_dict = sanitize_runner_cfg(agent_cfg.to_dict())
+    runner = OnPolicyRunner(vec_env, agent_cfg_dict, log_dir=None, device=args_cli.device)
     runner.load(retrieve_file_path(args_cli.checkpoint))
     policy = runner.get_inference_policy(device=vec_env.device)
 

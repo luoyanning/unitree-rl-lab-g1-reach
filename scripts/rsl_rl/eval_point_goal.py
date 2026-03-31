@@ -15,6 +15,7 @@ import torch
 from isaaclab.app import AppLauncher
 
 import cli_args  # isort: skip
+from rsl_rl_compat import sanitize_runner_cfg  # isort: skip
 
 
 parser = argparse.ArgumentParser(description="Evaluate the G1 point-goal policy on fixed benchmark cases.")
@@ -159,7 +160,7 @@ def main():
         log_project_name=None,
     )
     agent_cfg = cli_args.parse_rsl_rl_cfg(args_cli.task, rsl_args)
-    agent_cfg_dict = agent_cfg.to_dict()
+    agent_cfg_dict = sanitize_runner_cfg(agent_cfg.to_dict())
     if not agent_cfg_dict.get("obs_groups"):
         agent_cfg_dict["obs_groups"] = {"policy": ["policy"], "critic": ["critic"]}
     runner = OnPolicyRunner(vec_env, agent_cfg_dict, log_dir=None, device=args_cli.device)

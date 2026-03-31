@@ -34,6 +34,7 @@ from list_envs import import_packages  # noqa: F401
 sys.path.pop(0)
 
 import cli_args  # isort: skip
+from rsl_rl_compat import sanitize_runner_cfg  # isort: skip
 
 POINT_GOAL_TASK = "Unitree-G1-29dof-PointGoal-v0"
 
@@ -326,7 +327,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-    agent_cfg_dict = agent_cfg.to_dict()
+    agent_cfg_dict = sanitize_runner_cfg(agent_cfg.to_dict())
     if not agent_cfg_dict.get("obs_groups"):
         agent_cfg_dict["obs_groups"] = {"policy": ["policy"], "critic": ["critic"]}
     runner = OnPolicyRunner(env, agent_cfg_dict, log_dir=log_dir, device=agent_cfg.device)

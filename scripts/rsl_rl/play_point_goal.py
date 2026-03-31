@@ -16,6 +16,7 @@ import torch
 from isaaclab.app import AppLauncher
 
 import cli_args  # isort: skip
+from rsl_rl_compat import sanitize_runner_cfg  # isort: skip
 
 
 POINT_GOAL_TASK = "Unitree-G1-29dof-PointGoal-v0"
@@ -107,7 +108,7 @@ def main():
 
     print(f"[INFO]: Loading high-level checkpoint from: {resume_path}")
     print(f"[INFO]: Loading low-level checkpoint from: {low_level_checkpoint_path}")
-    agent_cfg_dict = agent_cfg.to_dict()
+    agent_cfg_dict = sanitize_runner_cfg(agent_cfg.to_dict())
     if not agent_cfg_dict.get("obs_groups"):
         agent_cfg_dict["obs_groups"] = {"policy": ["policy"], "critic": ["critic"]}
     runner = OnPolicyRunner(vec_env, agent_cfg_dict, log_dir=None, device=agent_cfg.device)

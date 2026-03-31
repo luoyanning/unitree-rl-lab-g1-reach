@@ -248,6 +248,54 @@ def _static_target_position_error_tanh(
     return 1.0 - torch.tanh(position_error / std)
 
 
+def _scene_target_positions_w(env, scene_target_names: Sequence[str]):
+    target_positions = []
+    for target_name in scene_target_names:
+        target_asset = env.scene[target_name]
+        target_pos_w = target_asset.data.root_pos_w
+        if target_pos_w.ndim == 3:
+            target_pos_w = target_pos_w[:, 0]
+        target_positions.append(target_pos_w)
+    return torch.stack(target_positions, dim=1)
+
+
+def _spawn_scene_targets(
+    env,
+    env_ids,
+    scene_target_names: Sequence[str],
+    randomize_order: bool = True,
+):
+    if len(env_ids) == 0 or len(scene_target_names) == 0:
+        return False
+
+    num_scene_targets = len(scene_target_names)
+    if (
+        not hasattr(env, "_left_hand_scene_target_permutation")
+        or env._left_hand_scene_target_permutation.shape != (env.num_envs, num_scene_targets)
+    ):
+        base_order = torch.arange(num_scene_targets, dtype=torch.long, device=env.device)
+        env._left_hand_scene_target_permutation = base_order.unsqueeze(0).repeat(env.num_envs, 1)
+        env._left_hand_scene_target_permutation_valid = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+
+    sequence_reset_mask = (env._left_hand_completed_targets[env_ids] == 0) | ~env._left_hand_scene_target_permutation_valid[env_ids]
+    reset_env_ids = env_ids[sequence_reset_mask]
+    if len(reset_env_ids) > 0:
+        if randomize_order and num_scene_targets > 1:
+            random_priority = torch.rand((len(reset_env_ids), num_scene_targets), device=env.device)
+            env._left_hand_scene_target_permutation[reset_env_ids] = torch.argsort(random_priority, dim=-1)
+        else:
+            base_order = torch.arange(num_scene_targets, dtype=torch.long, device=env.device)
+            env._left_hand_scene_target_permutation[reset_env_ids] = base_order.unsqueeze(0).repeat(len(reset_env_ids), 1)
+        env._left_hand_scene_target_permutation_valid[reset_env_ids] = True
+
+    target_positions_w = _scene_target_positions_w(env, scene_target_names)
+    sequence_index = torch.clamp(env._left_hand_completed_targets[env_ids], min=0, max=num_scene_targets - 1)
+    selected_target_ids = env._left_hand_scene_target_permutation[env_ids, sequence_index]
+    env._left_hand_active_target_w[env_ids] = target_positions_w[env_ids, selected_target_ids]
+    env._left_hand_has_active_target[env_ids] = True
+    return True
+
+
 def _spawn_new_fixed_targets(
     env,
     env_ids,
@@ -255,6 +303,15 @@ def _spawn_new_fixed_targets(
     sample_weights: dict[str, float] | None,
 ):
     if len(env_ids) == 0:
+        return
+
+    scene_target_names = tuple(getattr(env.cfg, "left_hand_scene_target_names", ()))
+    if _spawn_scene_targets(
+        env,
+        env_ids,
+        scene_target_names=scene_target_names,
+        randomize_order=bool(getattr(env.cfg, "left_hand_scene_target_randomize_order", True)),
+    ):
         return
 
     sample_regimes, sample_weights = _get_sampling_distribution_state(

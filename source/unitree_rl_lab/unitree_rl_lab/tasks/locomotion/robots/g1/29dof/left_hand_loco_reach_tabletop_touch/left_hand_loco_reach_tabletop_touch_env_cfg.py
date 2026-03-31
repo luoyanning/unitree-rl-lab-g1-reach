@@ -25,12 +25,16 @@ TABLETOP_BLOCK_NAMES = tuple(f"target_block_{index}" for index in range(6))
 TABLETOP_MAX_TARGETS_PER_EPISODE = 3
 TABLETOP_PER_TARGET_TIMEOUT_S = 5.0
 TABLETOP_POST_SUCCESS_DWELL_STEPS = 6
-TABLETOP_STANCE_X_RANGE = (0.40, 0.54)
+TABLETOP_STANCE_X_RANGE = (0.36, 0.54)
 TABLETOP_STANCE_Y_RANGE = (0.10, 0.24)
 TABLETOP_SUPPORT_CONTACT_BODY_REGEX = (
     r"^(?!left_ankle_roll_link$)(?!right_ankle_roll_link$)(?!left_wrist_yaw_link$).+$"
 )
 TABLETOP_HARD_SUPPORT_CONTACT_BODY_NAMES = ("torso_link", "waist.*")
+TABLETOP_STAND_TOUCH_MAX_TARGETS_PER_EPISODE = 1
+TABLETOP_STAND_TOUCH_PER_TARGET_TIMEOUT_S = 6.0
+TABLETOP_STAND_TOUCH_STANCE_X_RANGE = (0.40, 0.54)
+TABLETOP_STAND_TOUCH_STANCE_Y_RANGE = TABLETOP_STANCE_Y_RANGE
 TABLETOP_NEAR_POS_X = (0.34, 0.46)
 TABLETOP_POSTURE_POS_X = (0.40, 0.54)
 TABLETOP_FAR_POS_X = (0.46, 0.62)
@@ -104,6 +108,21 @@ def _retarget_term_params(term_cfg) -> None:
         params["per_target_timeout_s"] = TABLETOP_PER_TARGET_TIMEOUT_S
     if "post_success_dwell_steps" in params:
         params["post_success_dwell_steps"] = TABLETOP_POST_SUCCESS_DWELL_STEPS
+
+
+def _override_stand_touch_term_params(term_cfg) -> None:
+    params = getattr(term_cfg, "params", None)
+    if not isinstance(params, dict):
+        return
+    if "command_name" in params and params["command_name"] == LEFT_HAND_COMMAND_NAME:
+        if "x_range" in params:
+            params["x_range"] = TABLETOP_STAND_TOUCH_STANCE_X_RANGE
+        if "y_range" in params:
+            params["y_range"] = TABLETOP_STAND_TOUCH_STANCE_Y_RANGE
+    if "max_targets_per_episode" in params:
+        params["max_targets_per_episode"] = TABLETOP_STAND_TOUCH_MAX_TARGETS_PER_EPISODE
+    if "per_target_timeout_s" in params:
+        params["per_target_timeout_s"] = TABLETOP_STAND_TOUCH_PER_TARGET_TIMEOUT_S
 
 
 @configclass
@@ -243,7 +262,42 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
         self.rewards.left_hand_position_tracking_fine.weight = 10.0
         self.rewards.success_posture_bonus.func = freeze_base_reach_mdp.success_posture_bonus
         self.rewards.success_posture_bonus.weight = 3.5
-        # Only the supporting feet and the active left hand are allowed to touch geometry.
+
+        self.rewards.base_height.params["target_height"] = 0.78
+
+        self.viewer.origin_type = "world"
+        self.viewer.eye = (2.8, -2.8, 1.9)
+        self.viewer.lookat = (0.84, 0.08, 0.88)
+
+
+@configclass
+class RobotLeftHandLocoReachTableTopTouchPlayEnvCfg(RobotLeftHandLocoReachTableTopTouchEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.scene.num_envs = 16
+        self.observations.policy.enable_corruption = False
+        self.events.reset_base.params["pose_range"] = {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)}
+
+
+@configclass
+class RobotLeftHandLocoReachTableTopTouchStandTouchEnvCfg(RobotLeftHandLocoReachTableTopTouchEnvCfg):
+    """Stage-2 tabletop finetune: single-target standing touch without body support on the table."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        for term_cfg in (
+            self.observations.policy.velocity_commands,
+            self.observations.critic.velocity_commands,
+        ):
+            _override_stand_touch_term_params(term_cfg)
+
+        for term_cfg in vars(self.rewards).values():
+            _override_stand_touch_term_params(term_cfg)
+        for term_cfg in vars(self.terminations).values():
+            _override_stand_touch_term_params(term_cfg)
+
         self.rewards.undesired_contacts.params["sensor_cfg"] = SceneEntityCfg(
             "contact_forces",
             body_names=[TABLETOP_SUPPORT_CONTACT_BODY_REGEX],
@@ -251,7 +305,6 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
         self.rewards.undesired_contacts.params["threshold"] = 1.0
         self.rewards.undesired_contacts.weight = -1.0
 
-        self.rewards.base_height.params["target_height"] = 0.78
         self.terminations.body_support_contact = DoneTerm(
             func=mdp.illegal_contact,
             params={
@@ -263,13 +316,9 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
             },
         )
 
-        self.viewer.origin_type = "world"
-        self.viewer.eye = (2.8, -2.8, 1.9)
-        self.viewer.lookat = (0.84, 0.08, 0.88)
-
 
 @configclass
-class RobotLeftHandLocoReachTableTopTouchPlayEnvCfg(RobotLeftHandLocoReachTableTopTouchEnvCfg):
+class RobotLeftHandLocoReachTableTopTouchStandTouchPlayEnvCfg(RobotLeftHandLocoReachTableTopTouchStandTouchEnvCfg):
     def __post_init__(self):
         super().__post_init__()
 

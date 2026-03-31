@@ -67,12 +67,12 @@ TABLETOP_SAMPLE_WEIGHTS = {
     "far": 0.15,
 }
 TABLETOP_BLOCK_LAYOUT = (
-    ((0.70, 0.10, TABLE_TOP_BLOCK_Z), (0.90, 0.30, 0.24)),
-    ((0.76, 0.18, TABLE_TOP_BLOCK_Z), (0.94, 0.56, 0.20)),
-    ((0.82, 0.12, TABLE_TOP_BLOCK_Z), (0.95, 0.78, 0.20)),
-    ((0.86, 0.22, TABLE_TOP_BLOCK_Z), (0.26, 0.74, 0.40)),
-    ((0.90, 0.08, TABLE_TOP_BLOCK_Z), (0.22, 0.58, 0.90)),
-    ((0.94, 0.16, TABLE_TOP_BLOCK_Z), (0.64, 0.38, 0.90)),
+    ((0.56, 0.08, TABLE_TOP_BLOCK_Z), (0.90, 0.30, 0.24)),
+    ((0.60, 0.16, TABLE_TOP_BLOCK_Z), (0.94, 0.56, 0.20)),
+    ((0.62, 0.10, TABLE_TOP_BLOCK_Z), (0.95, 0.78, 0.20)),
+    ((0.64, 0.20, TABLE_TOP_BLOCK_Z), (0.26, 0.74, 0.40)),
+    ((0.66, 0.06, TABLE_TOP_BLOCK_Z), (0.22, 0.58, 0.90)),
+    ((0.68, 0.14, TABLE_TOP_BLOCK_Z), (0.64, 0.38, 0.90)),
 )
 
 

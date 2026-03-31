@@ -198,6 +198,18 @@ def resolve_resume_path(
     return get_checkpoint_path(log_root_path, load_run, load_checkpoint)
 
 
+def validate_checkpoint_path(checkpoint_path: str, flag_name: str) -> str:
+    """Validate that a resolved checkpoint path points to a model checkpoint file."""
+    if not os.path.isfile(checkpoint_path):
+        raise FileNotFoundError(f"{flag_name} resolved to a non-file path: '{checkpoint_path}'")
+    if not checkpoint_path.endswith(".pt"):
+        raise ValueError(
+            f"{flag_name} must point to a model checkpoint '*.pt', but got: '{checkpoint_path}'. "
+            "This often happens when a shell variable accidentally captured a TensorBoard event file or run directory."
+        )
+    return checkpoint_path
+
+
 def _left_hand_loco_reach_actor_input_merge(
     current_weight: torch.Tensor,
     pretrained_weight: torch.Tensor,
@@ -466,9 +478,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # save resume path before creating a new log_dir
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         resume_path = resolve_resume_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+        resume_path = validate_checkpoint_path(resume_path, "--checkpoint")
     else:
         resume_path = None
     init_checkpoint_path = retrieve_file_path(args_cli.init_checkpoint) if args_cli.init_checkpoint else None
+    if init_checkpoint_path is not None:
+        init_checkpoint_path = validate_checkpoint_path(init_checkpoint_path, "--init_checkpoint")
     # wrap for video recording
     if args_cli.video:
         video_kwargs = {

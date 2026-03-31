@@ -65,6 +65,17 @@ import unitree_rl_lab.tasks  # noqa: F401
 from unitree_rl_lab.utils.parser_cfg import parse_env_cfg
 
 
+def validate_checkpoint_path(checkpoint_path: str, flag_name: str = "--checkpoint") -> str:
+    if not os.path.isfile(checkpoint_path):
+        raise FileNotFoundError(f"{flag_name} resolved to a non-file path: '{checkpoint_path}'")
+    if not checkpoint_path.endswith(".pt"):
+        raise ValueError(
+            f"{flag_name} must point to a model checkpoint '*.pt', but got: '{checkpoint_path}'. "
+            "This often happens when a shell variable accidentally captured a TensorBoard event file or run directory."
+        )
+    return checkpoint_path
+
+
 def main():
     """Play with RSL-RL agent."""
     # parse configuration
@@ -87,9 +98,9 @@ def main():
             print("[INFO] Unfortunately a pre-trained checkpoint is currently unavailable for this task.")
             return
     elif args_cli.checkpoint:
-        resume_path = retrieve_file_path(args_cli.checkpoint)
+        resume_path = validate_checkpoint_path(retrieve_file_path(args_cli.checkpoint))
     else:
-        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+        resume_path = validate_checkpoint_path(get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint))
 
     log_dir = os.path.dirname(resume_path)
 

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import torch
+
 import isaaclab.sim as sim_utils
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
+from isaaclab.sensors import ContactSensor
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 
@@ -13,6 +16,9 @@ from ..left_hand_loco_reach_adapter_acquire_tight_stay_natural_reach_settle_shor
     LEFT_HAND_COMMAND_NAME,
     STATIC_TARGET_HOLD_S,
     RobotLeftHandLocoReachAdapterAcquireTightStayNaturalReachSettleShortFreezeBaseReachEnvCfg,
+)
+from ..left_hand_loco_reach_adapter_acquire_tight_stay_natural_reach_settle_short_freeze_base_reach import (
+    left_hand_loco_reach_adapter_acquire_tight_stay_natural_reach_settle_short_freeze_base_reach_mdp as freeze_base_reach_mdp,
 )
 from ..velocity_env_cfg import RobotSceneCfg
 
@@ -27,6 +33,7 @@ TABLETOP_STANCE_Y_RANGE = (0.10, 0.24)
 TABLETOP_SUPPORT_CONTACT_BODY_REGEX = (
     r"^(?!left_ankle_roll_link$)(?!right_ankle_roll_link$)(?!left_wrist_yaw_link$).+$"
 )
+TABLETOP_HARD_SUPPORT_CONTACT_BODY_NAMES = ("torso_link", "waist.*")
 TABLETOP_NEAR_POS_X = (0.34, 0.46)
 TABLETOP_POSTURE_POS_X = (0.40, 0.54)
 TABLETOP_FAR_POS_X = (0.46, 0.62)
@@ -100,6 +107,62 @@ def _retarget_term_params(term_cfg) -> None:
         params["per_target_timeout_s"] = TABLETOP_PER_TARGET_TIMEOUT_S
     if "post_success_dwell_steps" in params:
         params["post_success_dwell_steps"] = TABLETOP_POST_SUCCESS_DWELL_STEPS
+
+
+def _tabletop_support_contact_force(
+    env,
+    sensor_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    net_forces = torch.linalg.norm(contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids], dim=-1)
+    return torch.amax(net_forces, dim=1)
+
+
+def _tabletop_stand_then_touch_gate(
+    env,
+    feet_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["left_ankle_roll_link", "right_ankle_roll_link"]),
+    support_sensor_cfg: SceneEntityCfg = SceneEntityCfg(
+        "contact_forces",
+        body_names=[TABLETOP_SUPPORT_CONTACT_BODY_REGEX],
+    ),
+    support_force_threshold: float = 1.0,
+    command_name: str = LEFT_HAND_COMMAND_NAME,
+    x_range: tuple[float, float] = TABLETOP_STANCE_X_RANGE,
+    y_range: tuple[float, float] = TABLETOP_STANCE_Y_RANGE,
+    switch_phase_steps: int = 30,
+    gate_std: float = 0.01,
+    base_lin_speed_scale: float = 0.10,
+    base_ang_speed_scale: float = 0.28,
+    foot_speed_scale: float = 0.08,
+    **_,
+) -> torch.Tensor:
+    robot = env.scene["robot"]
+    base_lin_speed = torch.linalg.norm(robot.data.root_lin_vel_w[:, :2], dim=-1)
+    base_ang_speed = torch.linalg.norm(robot.data.root_ang_vel_w[:, :3], dim=-1)
+    foot_vel_xy = robot.data.body_lin_vel_w[:, feet_cfg.body_ids, :2] - robot.data.root_lin_vel_w[:, None, :2]
+    foot_speed = torch.linalg.norm(foot_vel_xy, dim=-1).mean(dim=1)
+    support_clear = (_tabletop_support_contact_force(env, support_sensor_cfg=support_sensor_cfg) < support_force_threshold).float()
+    reach_gate = freeze_base_reach_mdp._ready_reach_gate(
+        env,
+        command_name=command_name,
+        x_range=x_range,
+        y_range=y_range,
+        switch_phase_steps=switch_phase_steps,
+        gate_std=gate_std,
+    )
+    stability = (
+        torch.exp(-base_lin_speed / base_lin_speed_scale)
+        * torch.exp(-base_ang_speed / base_ang_speed_scale)
+        * torch.exp(-foot_speed / foot_speed_scale)
+    )
+    return reach_gate * stability * support_clear
+
+
+def tabletop_success_posture_bonus(
+    env,
+    **kwargs,
+) -> torch.Tensor:
+    return freeze_base_reach_mdp.success_posture_bonus(env, **kwargs) * _tabletop_stand_then_touch_gate(env, **kwargs)
 
 
 @configclass
@@ -230,19 +293,22 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
         self.rewards.ready_reach_left_hand_stillness.weight = 0.8
         self.rewards.ready_reach_left_hand_vertical_motion.weight = -1.0
         self.rewards.ready_reach_foot_shuffle.weight = -0.8
+        self.rewards.target_completion.func = freeze_base_reach_mdp.target_completion_bonus
         self.rewards.target_completion.weight = 8.0
+        self.rewards.target_hold.func = freeze_base_reach_mdp.target_hold_reward
         self.rewards.target_hold.weight = 7.5
         self.rewards.near_target_left_hand_stillness.weight = 2.0
         self.rewards.dwell_left_hand_stillness.weight = 2.0
         self.rewards.left_hand_position_tracking_fine.weight = 10.0
-        self.rewards.success_posture_bonus.weight = 3.5
+        self.rewards.success_posture_bonus.func = tabletop_success_posture_bonus
+        self.rewards.success_posture_bonus.weight = 6.0
         # Only the supporting feet and the active left hand are allowed to touch geometry.
         self.rewards.undesired_contacts.params["sensor_cfg"] = SceneEntityCfg(
             "contact_forces",
             body_names=[TABLETOP_SUPPORT_CONTACT_BODY_REGEX],
         )
         self.rewards.undesired_contacts.params["threshold"] = 1.0
-        self.rewards.undesired_contacts.weight = -2.5
+        self.rewards.undesired_contacts.weight = -1.0
 
         self.rewards.base_height.params["target_height"] = 0.78
         self.terminations.body_support_contact = DoneTerm(
@@ -250,7 +316,7 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
             params={
                 "sensor_cfg": SceneEntityCfg(
                     "contact_forces",
-                    body_names=[TABLETOP_SUPPORT_CONTACT_BODY_REGEX],
+                    body_names=list(TABLETOP_HARD_SUPPORT_CONTACT_BODY_NAMES),
                 ),
                 "threshold": 5.0,
             },

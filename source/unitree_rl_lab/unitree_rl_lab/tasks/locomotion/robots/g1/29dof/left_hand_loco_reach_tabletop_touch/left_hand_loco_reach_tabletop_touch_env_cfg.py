@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import torch
-
 import isaaclab.sim as sim_utils
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.sensors import ContactSensor
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 
@@ -107,131 +104,6 @@ def _retarget_term_params(term_cfg) -> None:
         params["per_target_timeout_s"] = TABLETOP_PER_TARGET_TIMEOUT_S
     if "post_success_dwell_steps" in params:
         params["post_success_dwell_steps"] = TABLETOP_POST_SUCCESS_DWELL_STEPS
-
-
-def _tabletop_support_contact_force(
-    env,
-    sensor_cfg: SceneEntityCfg,
-) -> torch.Tensor:
-    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-    net_forces = torch.linalg.norm(contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids], dim=-1)
-    return torch.amax(net_forces, dim=1)
-
-
-def _tabletop_stand_then_touch_gate(
-    env,
-    feet_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["left_ankle_roll_link", "right_ankle_roll_link"]),
-    support_sensor_cfg: SceneEntityCfg = SceneEntityCfg(
-        "contact_forces",
-        body_names=[TABLETOP_SUPPORT_CONTACT_BODY_REGEX],
-    ),
-    support_force_threshold: float = 1.0,
-    command_name: str = LEFT_HAND_COMMAND_NAME,
-    x_range: tuple[float, float] = TABLETOP_STANCE_X_RANGE,
-    y_range: tuple[float, float] = TABLETOP_STANCE_Y_RANGE,
-    switch_phase_steps: int = 30,
-    gate_std: float = 0.01,
-    base_lin_speed_scale: float = 0.10,
-    base_ang_speed_scale: float = 0.28,
-    foot_speed_scale: float = 0.08,
-    **_,
-) -> torch.Tensor:
-    robot = env.scene["robot"]
-    base_lin_speed = torch.linalg.norm(robot.data.root_lin_vel_w[:, :2], dim=-1)
-    base_ang_speed = torch.linalg.norm(robot.data.root_ang_vel_w[:, :3], dim=-1)
-    foot_vel_xy = robot.data.body_lin_vel_w[:, feet_cfg.body_ids, :2] - robot.data.root_lin_vel_w[:, None, :2]
-    foot_speed = torch.linalg.norm(foot_vel_xy, dim=-1).mean(dim=1)
-    support_clear = (_tabletop_support_contact_force(env, sensor_cfg=support_sensor_cfg) < support_force_threshold).float()
-    reach_gate = freeze_base_reach_mdp._ready_reach_gate(
-        env,
-        command_name=command_name,
-        x_range=x_range,
-        y_range=y_range,
-        switch_phase_steps=switch_phase_steps,
-        gate_std=gate_std,
-    )
-    stability = (
-        torch.exp(-base_lin_speed / base_lin_speed_scale)
-        * torch.exp(-base_ang_speed / base_ang_speed_scale)
-        * torch.exp(-foot_speed / foot_speed_scale)
-    )
-    return reach_gate * stability * support_clear
-
-
-def tabletop_success_posture_bonus(
-    env,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["left_wrist_yaw_link"]),
-    arm_joint_cfg: SceneEntityCfg = SceneEntityCfg(
-        "robot",
-        joint_names=[
-            "left_shoulder_pitch_joint",
-            "left_shoulder_roll_joint",
-            "left_shoulder_yaw_joint",
-            "left_elbow_joint",
-        ],
-    ),
-    command_name: str = LEFT_HAND_COMMAND_NAME,
-    success_threshold: float = 0.06,
-    success_exit_radius: float = 0.09,
-    success_hold_steps: int = 8,
-    post_success_dwell_steps: int = TABLETOP_POST_SUCCESS_DWELL_STEPS,
-    post_success_exit_radius: float = 0.12,
-    max_targets_per_episode: int = TABLETOP_MAX_TARGETS_PER_EPISODE,
-    switch_phase_steps: int = 30,
-    static_target_hold_s: float = STATIC_TARGET_HOLD_S,
-    per_target_timeout_s: float = TABLETOP_PER_TARGET_TIMEOUT_S,
-    x_range: tuple[float, float] = TABLETOP_STANCE_X_RANGE,
-    y_range: tuple[float, float] = TABLETOP_STANCE_Y_RANGE,
-    sample_regimes: dict[str, dict[str, tuple[float, float]]] | None = None,
-    sample_weights: dict[str, float] | None = None,
-    gate_std: float = 0.01,
-    reach_std: float = 0.08,
-    feet_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["left_ankle_roll_link", "right_ankle_roll_link"]),
-    support_sensor_cfg: SceneEntityCfg = SceneEntityCfg(
-        "contact_forces",
-        body_names=[TABLETOP_SUPPORT_CONTACT_BODY_REGEX],
-    ),
-    support_force_threshold: float = 1.0,
-    base_lin_speed_scale: float = 0.10,
-    base_ang_speed_scale: float = 0.28,
-    foot_speed_scale: float = 0.08,
-) -> torch.Tensor:
-    posture_bonus = freeze_base_reach_mdp.success_posture_bonus(
-        env,
-        asset_cfg=asset_cfg,
-        arm_joint_cfg=arm_joint_cfg,
-        command_name=command_name,
-        success_threshold=success_threshold,
-        success_exit_radius=success_exit_radius,
-        success_hold_steps=success_hold_steps,
-        post_success_dwell_steps=post_success_dwell_steps,
-        post_success_exit_radius=post_success_exit_radius,
-        max_targets_per_episode=max_targets_per_episode,
-        switch_phase_steps=switch_phase_steps,
-        static_target_hold_s=static_target_hold_s,
-        per_target_timeout_s=per_target_timeout_s,
-        x_range=x_range,
-        y_range=y_range,
-        sample_regimes=sample_regimes,
-        sample_weights=sample_weights,
-        gate_std=gate_std,
-        reach_std=reach_std,
-    )
-    stand_then_touch_gate = _tabletop_stand_then_touch_gate(
-        env,
-        feet_cfg=feet_cfg,
-        support_sensor_cfg=support_sensor_cfg,
-        support_force_threshold=support_force_threshold,
-        command_name=command_name,
-        x_range=x_range,
-        y_range=y_range,
-        switch_phase_steps=switch_phase_steps,
-        gate_std=gate_std,
-        base_lin_speed_scale=base_lin_speed_scale,
-        base_ang_speed_scale=base_ang_speed_scale,
-        foot_speed_scale=foot_speed_scale,
-    )
-    return posture_bonus * stand_then_touch_gate
 
 
 @configclass
@@ -369,8 +241,8 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
         self.rewards.near_target_left_hand_stillness.weight = 2.0
         self.rewards.dwell_left_hand_stillness.weight = 2.0
         self.rewards.left_hand_position_tracking_fine.weight = 10.0
-        self.rewards.success_posture_bonus.func = tabletop_success_posture_bonus
-        self.rewards.success_posture_bonus.weight = 6.0
+        self.rewards.success_posture_bonus.func = freeze_base_reach_mdp.success_posture_bonus
+        self.rewards.success_posture_bonus.weight = 3.5
         # Only the supporting feet and the active left hand are allowed to touch geometry.
         self.rewards.undesired_contacts.params["sensor_cfg"] = SceneEntityCfg(
             "contact_forces",

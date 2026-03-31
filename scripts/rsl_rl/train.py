@@ -146,6 +146,12 @@ def resolve_resume_path(
         has_path_hint = any(sep in load_checkpoint for sep in [os.path.sep, os.path.altsep] if sep is not None)
         if has_path_hint or os.path.exists(os.path.expanduser(load_checkpoint)):
             return retrieve_file_path(load_checkpoint)
+        if any(char.isspace() for char in load_checkpoint):
+            raise ValueError(
+                f"--checkpoint looks invalid: '{load_checkpoint}'. "
+                "It contains whitespace and is not an existing path. "
+                "This usually means a shell variable expansion failed and did not resolve to model_*.pt."
+            )
     return get_checkpoint_path(log_root_path, load_run, load_checkpoint)
 
 

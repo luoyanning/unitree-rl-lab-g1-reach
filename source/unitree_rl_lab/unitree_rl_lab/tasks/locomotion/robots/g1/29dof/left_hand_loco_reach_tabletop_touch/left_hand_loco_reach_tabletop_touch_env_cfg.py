@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import isaaclab.sim as sim_utils
+from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
+
+from unitree_rl_lab.tasks.locomotion import mdp
 
 from ..benchmark_v1.benchmark_env_cfg import _kinematic_cuboid
 from ..left_hand_loco_reach_adapter_acquire_tight_stay_natural_reach_settle_short_freeze_base_reach.left_hand_loco_reach_adapter_acquire_tight_stay_natural_reach_settle_short_freeze_base_reach_env_cfg import (
@@ -18,8 +22,11 @@ TABLETOP_BLOCK_NAMES = tuple(f"target_block_{index}" for index in range(6))
 TABLETOP_MAX_TARGETS_PER_EPISODE = 3
 TABLETOP_PER_TARGET_TIMEOUT_S = 5.0
 TABLETOP_POST_SUCCESS_DWELL_STEPS = 6
-TABLETOP_STANCE_X_RANGE = (0.36, 0.54)
+TABLETOP_STANCE_X_RANGE = (0.40, 0.54)
 TABLETOP_STANCE_Y_RANGE = (0.10, 0.24)
+TABLETOP_SUPPORT_CONTACT_BODY_REGEX = (
+    r"^(?!left_ankle_roll_link$)(?!right_ankle_roll_link$)(?!left_wrist_yaw_link$).+$"
+)
 TABLETOP_NEAR_POS_X = (0.34, 0.46)
 TABLETOP_POSTURE_POS_X = (0.40, 0.54)
 TABLETOP_FAR_POS_X = (0.46, 0.62)
@@ -229,8 +236,25 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
         self.rewards.dwell_left_hand_stillness.weight = 2.0
         self.rewards.left_hand_position_tracking_fine.weight = 10.0
         self.rewards.success_posture_bonus.weight = 3.5
+        # Only the supporting feet and the active left hand are allowed to touch geometry.
+        self.rewards.undesired_contacts.params["sensor_cfg"] = SceneEntityCfg(
+            "contact_forces",
+            body_names=[TABLETOP_SUPPORT_CONTACT_BODY_REGEX],
+        )
+        self.rewards.undesired_contacts.params["threshold"] = 1.0
+        self.rewards.undesired_contacts.weight = -2.5
 
         self.rewards.base_height.params["target_height"] = 0.78
+        self.terminations.body_support_contact = DoneTerm(
+            func=mdp.illegal_contact,
+            params={
+                "sensor_cfg": SceneEntityCfg(
+                    "contact_forces",
+                    body_names=[TABLETOP_SUPPORT_CONTACT_BODY_REGEX],
+                ),
+                "threshold": 5.0,
+            },
+        )
 
         self.viewer.origin_type = "world"
         self.viewer.eye = (2.8, -2.8, 1.9)

@@ -19,7 +19,10 @@ import torch
 import types
 from datetime import datetime
 
-import argcomplete
+try:
+    import argcomplete
+except ModuleNotFoundError:
+    argcomplete = None
 import gymnasium as gym
 from packaging import version
 
@@ -47,7 +50,8 @@ parser.add_argument(
 )
 cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
-argcomplete.autocomplete(parser)
+if argcomplete is not None:
+    argcomplete.autocomplete(parser)
 args_cli, hydra_args = parser.parse_known_args()
 
 if args_cli.video:

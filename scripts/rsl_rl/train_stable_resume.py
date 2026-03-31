@@ -24,7 +24,10 @@ for task_spec in gym.registry.values():
 
 import argparse
 
-import argcomplete
+try:
+    import argcomplete
+except ModuleNotFoundError:
+    argcomplete = None
 
 from isaaclab.app import AppLauncher
 
@@ -100,7 +103,8 @@ parser.add_argument(
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
-argcomplete.autocomplete(parser)
+if argcomplete is not None:
+    argcomplete.autocomplete(parser)
 args_cli, hydra_args = parser.parse_known_args()
 
 # always enable cameras to record video

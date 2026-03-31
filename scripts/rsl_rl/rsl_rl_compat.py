@@ -56,21 +56,23 @@ def sanitize_runner_cfg(agent_cfg_dict: dict[str, Any]) -> dict[str, Any]:
 
     policy_cls = _resolve_exported_class("rsl_rl.modules", cfg.get("policy_class_name"))
     if isinstance(cfg.get("policy"), dict):
+        for key in ("state_dependent_std",):
+            if key in cfg["policy"]:
+                cfg["policy"].pop(key, None)
+                dropped.append(f"policy.{key}")
         accepted = _accepted_kwargs(policy_cls)
         cfg["policy"], removed = _filter_kwargs(cfg["policy"], accepted)
         dropped.extend(f"policy.{key}" for key in removed)
-        if "state_dependent_std" in cfg["policy"]:
-            cfg["policy"].pop("state_dependent_std", None)
-            dropped.append("policy.state_dependent_std")
 
     algorithm_cls = _resolve_exported_class("rsl_rl.algorithms", cfg.get("algorithm_class_name"))
     if isinstance(cfg.get("algorithm"), dict):
+        for key in ("optimizer", "share_cnn_encoders"):
+            if key in cfg["algorithm"]:
+                cfg["algorithm"].pop(key, None)
+                dropped.append(f"algorithm.{key}")
         accepted = _accepted_kwargs(algorithm_cls)
         cfg["algorithm"], removed = _filter_kwargs(cfg["algorithm"], accepted)
         dropped.extend(f"algorithm.{key}" for key in removed)
-        if "optimizer" in cfg["algorithm"]:
-            cfg["algorithm"].pop("optimizer", None)
-            dropped.append("algorithm.optimizer")
 
     if dropped:
         print(

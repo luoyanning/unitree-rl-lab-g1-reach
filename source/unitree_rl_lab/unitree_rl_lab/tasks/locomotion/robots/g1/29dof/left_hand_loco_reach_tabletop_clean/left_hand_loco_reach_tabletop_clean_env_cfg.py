@@ -324,6 +324,11 @@ class RobotLeftHandLocoReachTableTopCleanBaseEnvCfg(RobotEnvCfg):
             weight=8.0,
             params=task_params,
         )
+        self.rewards.target_age = RewTerm(
+            func=tabletop_clean_mdp.target_age_penalty,
+            weight=-0.2,
+            params={**task_params, "grace_ratio": 0.25, "power": 1.5},
+        )
         self.rewards.support_contact = RewTerm(
             func=tabletop_clean_mdp.support_contact_penalty,
             weight=-2.0,
@@ -384,6 +389,7 @@ def _set_task_params(env_cfg: RobotLeftHandLocoReachTableTopCleanBaseEnvCfg, **u
         env_cfg.rewards.pretouch_bonus,
         env_cfg.rewards.touch_bonus,
         env_cfg.rewards.target_completion,
+        env_cfg.rewards.target_age,
         env_cfg.rewards.support_contact,
         env_cfg.rewards.torso_lean,
         env_cfg.rewards.waist_twist,
@@ -426,6 +432,7 @@ class RobotLeftHandLocoReachTableTopBalanceCleanEnvCfg(RobotLeftHandLocoReachTab
         self.rewards.pretouch_bonus.weight = 0.0
         self.rewards.touch_bonus.weight = 0.0
         self.rewards.target_completion.weight = 12.0
+        self.rewards.target_age.weight = 0.0
         self.rewards.support_contact.weight = 0.0
         self.rewards.left_hand_tracking.weight = 0.0
 
@@ -470,6 +477,7 @@ class RobotLeftHandLocoReachTableTopPreTouchCleanEnvCfg(RobotLeftHandLocoReachTa
         self.rewards.pretouch_bonus.weight = 10.0
         self.rewards.touch_bonus.weight = 0.0
         self.rewards.target_completion.weight = 16.0
+        self.rewards.target_age.weight = -0.15
         self.rewards.support_contact.weight = -0.05
         self.rewards.left_hand_tracking.weight = 2.5
 
@@ -517,6 +525,7 @@ class RobotLeftHandLocoReachTableTopTouchCleanEnvCfg(RobotLeftHandLocoReachTable
         self.rewards.pretouch_bonus.weight = 4.0
         self.rewards.touch_bonus.weight = 10.0
         self.rewards.target_completion.weight = 18.0
+        self.rewards.target_age.weight = -0.25
         self.rewards.support_contact.weight = -0.1
         self.rewards.left_hand_tracking.weight = 2.5
 
@@ -540,7 +549,7 @@ class RobotLeftHandLocoReachTableTopTouchSpreadCleanEnvCfg(RobotLeftHandLocoReac
             stability_lean_scale=0.53,
             pretouch_backoff_x=0.03,
             pretouch_height=0.04,
-            pretouch_radius=0.10,
+            pretouch_radius=0.11,
             pretouch_hold_steps=2,
             pretouch_stability_gate=0.06,
             touch_height_offset=0.01,
@@ -550,7 +559,7 @@ class RobotLeftHandLocoReachTableTopTouchSpreadCleanEnvCfg(RobotLeftHandLocoReac
             recover_radius=0.14,
             recover_hold_steps=3,
             recover_stability_gate=0.12,
-            hand_speed_threshold=0.65,
+            hand_speed_threshold=0.55,
             support_force_threshold=4.0,
         )
         self.episode_length_s = 14.0
@@ -559,13 +568,16 @@ class RobotLeftHandLocoReachTableTopTouchSpreadCleanEnvCfg(RobotLeftHandLocoReac
         self.rewards.stance_stability.weight = 1.5
         self.rewards.phase_progress.weight = 5.5
         self.rewards.phase_tracking.weight = 4.5
-        self.rewards.phase_hold.weight = 2.5
-        self.rewards.lift_intent.weight = 1.2
+        self.rewards.phase_hold.weight = 3.2
+        self.rewards.lift_intent.weight = 0.8
         self.rewards.pretouch_bonus.weight = 4.0
         self.rewards.touch_bonus.weight = 9.0
         self.rewards.target_completion.weight = 16.0
+        self.rewards.target_age.weight = -0.45
         self.rewards.support_contact.weight = -0.12
         self.rewards.left_hand_tracking.weight = 2.0
+        self.rewards.phase_tracking.params["std"] = 0.10
+        self.rewards.left_hand_tracking.params["std"] = 0.07
 
 
 @configclass
@@ -578,26 +590,26 @@ class RobotLeftHandLocoReachTableTopMultiTouchPairCleanEnvCfg(RobotLeftHandLocoR
             scene_target_names=("target_block_0", "target_block_1", "target_block_2"),
             randomize_order=True,
             max_targets_per_episode=2,
-            per_target_timeout_s=10.0,
+            per_target_timeout_s=9.5,
             stance_anchor_std=0.22,
             stance_anchor_tolerance=0.13,
             base_speed_threshold=0.36,
             torso_lean_threshold=0.66,
             stability_speed_scale=0.36,
             stability_lean_scale=0.56,
-            pretouch_backoff_x=0.03,
+            pretouch_backoff_x=0.02,
             pretouch_height=0.04,
-            pretouch_radius=0.10,
-            pretouch_hold_steps=1,
+            pretouch_radius=0.12,
+            pretouch_hold_steps=2,
             pretouch_stability_gate=0.06,
             touch_height_offset=0.01,
-            touch_radius=0.08,
-            touch_hold_steps=1,
+            touch_radius=0.085,
+            touch_hold_steps=2,
             touch_stability_gate=0.10,
             recover_radius=0.14,
             recover_hold_steps=3,
             recover_stability_gate=0.12,
-            hand_speed_threshold=0.70,
+            hand_speed_threshold=0.55,
             support_force_threshold=4.0,
         )
         self.episode_length_s = 22.0
@@ -605,19 +617,22 @@ class RobotLeftHandLocoReachTableTopMultiTouchPairCleanEnvCfg(RobotLeftHandLocoR
         self.rewards.stance_anchor.weight = -0.35
         self.rewards.stance_stability.weight = 1.5
         self.rewards.phase_progress.weight = 5.0
-        self.rewards.phase_tracking.weight = 4.0
-        self.rewards.phase_hold.weight = 2.5
-        self.rewards.lift_intent.weight = 1.0
+        self.rewards.phase_tracking.weight = 4.6
+        self.rewards.phase_hold.weight = 4.2
+        self.rewards.lift_intent.weight = 0.45
         self.rewards.pretouch_bonus.weight = 3.0
         self.rewards.touch_bonus.weight = 8.0
         self.rewards.target_completion.weight = 18.0
-        self.rewards.support_contact.weight = -0.20
-        self.rewards.left_hand_tracking.weight = 1.8
+        self.rewards.target_age.weight = -0.9
+        self.rewards.support_contact.weight = -0.28
+        self.rewards.left_hand_tracking.weight = 2.5
+        self.rewards.phase_tracking.params["std"] = 0.10
+        self.rewards.left_hand_tracking.params["std"] = 0.07
         self.terminations.body_support_contact = DoneTerm(
             func=tabletop_clean_mdp.support_contact_termination,
             params={
                 **self.observations.policy.velocity_commands.params,
-                "termination_force_threshold": 12.0,
+                "termination_force_threshold": 11.0,
             },
         )
 
@@ -632,46 +647,49 @@ class RobotLeftHandLocoReachTableTopMultiTouchCleanEnvCfg(RobotLeftHandLocoReach
             scene_target_names=TABLETOP_BLOCK_NAMES,
             randomize_order=True,
             max_targets_per_episode=3,
-            per_target_timeout_s=10.0,
+            per_target_timeout_s=9.0,
             stance_anchor_std=0.22,
             stance_anchor_tolerance=0.13,
             base_speed_threshold=0.36,
             torso_lean_threshold=0.66,
             stability_speed_scale=0.36,
             stability_lean_scale=0.56,
-            pretouch_backoff_x=0.03,
+            pretouch_backoff_x=0.02,
             pretouch_height=0.04,
-            pretouch_radius=0.10,
-            pretouch_hold_steps=1,
+            pretouch_radius=0.12,
+            pretouch_hold_steps=2,
             pretouch_stability_gate=0.07,
             touch_height_offset=0.01,
-            touch_radius=0.08,
-            touch_hold_steps=1,
+            touch_radius=0.085,
+            touch_hold_steps=2,
             touch_stability_gate=0.12,
             recover_radius=0.14,
             recover_hold_steps=3,
             recover_stability_gate=0.14,
-            hand_speed_threshold=0.70,
+            hand_speed_threshold=0.55,
             support_force_threshold=4.0,
         )
         self.episode_length_s = 28.0
         self.commands.base_velocity.resampling_time_range = (self.episode_length_s, self.episode_length_s)
         self.rewards.stance_anchor.weight = -0.35
         self.rewards.stance_stability.weight = 1.5
-        self.rewards.phase_progress.weight = 4.5
-        self.rewards.phase_tracking.weight = 3.8
-        self.rewards.phase_hold.weight = 2.5
-        self.rewards.lift_intent.weight = 0.9
+        self.rewards.phase_progress.weight = 4.0
+        self.rewards.phase_tracking.weight = 4.4
+        self.rewards.phase_hold.weight = 4.6
+        self.rewards.lift_intent.weight = 0.35
         self.rewards.pretouch_bonus.weight = 3.0
-        self.rewards.touch_bonus.weight = 8.0
-        self.rewards.target_completion.weight = 18.0
-        self.rewards.support_contact.weight = -0.35
-        self.rewards.left_hand_tracking.weight = 1.5
+        self.rewards.touch_bonus.weight = 8.5
+        self.rewards.target_completion.weight = 20.0
+        self.rewards.target_age.weight = -1.1
+        self.rewards.support_contact.weight = -0.45
+        self.rewards.left_hand_tracking.weight = 2.4
+        self.rewards.phase_tracking.params["std"] = 0.10
+        self.rewards.left_hand_tracking.params["std"] = 0.07
         self.terminations.body_support_contact = DoneTerm(
             func=tabletop_clean_mdp.support_contact_termination,
             params={
                 **self.observations.policy.velocity_commands.params,
-                "termination_force_threshold": 10.0,
+                "termination_force_threshold": 9.0,
             },
         )
 

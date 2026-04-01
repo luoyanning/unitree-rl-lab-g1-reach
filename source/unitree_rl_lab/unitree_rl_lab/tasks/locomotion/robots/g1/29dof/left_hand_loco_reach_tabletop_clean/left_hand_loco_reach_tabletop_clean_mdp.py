@@ -766,7 +766,8 @@ def phase_progress_reward(
     progress_scale: float = 0.04,
 ):
     _sync_from_locals(env, locals())
-    return torch.tanh(torch.clamp(env._ttc_hand_progress, min=0.0) / max(progress_scale, 1.0e-6))
+    # Use signed progress so moving away from the active target is explicitly penalized.
+    return torch.tanh(env._ttc_hand_progress / max(progress_scale, 1.0e-6))
 
 
 def phase_target_tracking_reward(
@@ -806,7 +807,7 @@ def phase_target_tracking_reward(
 ):
     del asset_cfg
     _sync_from_locals(env, locals())
-    return 1.0 - torch.tanh(env._ttc_hand_target_error / max(std, 1.0e-6))
+    return torch.exp(-env._ttc_hand_target_error / max(std, 1.0e-6))
 
 
 def phase_hold_reward(
@@ -1001,6 +1002,49 @@ def target_completion_bonus(
 ):
     _sync_from_locals(env, locals())
     return env._ttc_recent_success.float()
+
+
+def target_age_penalty(
+    env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
+    grace_ratio: float = 0.25,
+    power: float = 1.5,
+):
+    _sync_from_locals(env, locals())
+    timeout_steps = max(1.0, round(per_target_timeout_s / env.step_dt))
+    age_ratio = torch.clamp(env._ttc_target_age_steps.float() / timeout_steps, min=0.0, max=1.0)
+    delayed = torch.clamp(age_ratio - grace_ratio, min=0.0) / max(1.0 - grace_ratio, 1.0e-6)
+    active_phase = (env._ttc_phase != PHASE_BALANCE).float()
+    return active_phase * torch.pow(delayed, power)
 
 
 def support_contact_penalty(

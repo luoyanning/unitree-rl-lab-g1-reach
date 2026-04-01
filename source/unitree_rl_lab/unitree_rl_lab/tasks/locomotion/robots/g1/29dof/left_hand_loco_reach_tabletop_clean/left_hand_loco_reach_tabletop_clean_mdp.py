@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import torch
-import torch.nn.functional as F
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import ContactSensor
 from isaaclab.utils.math import quat_apply, yaw_quat
@@ -381,8 +380,16 @@ def _sync_tabletop_clean_state(
         touch_stability_gate=touch_stability_gate,
         recover_stability_gate=recover_stability_gate,
     )
-    phase_success_zone = (hand_target_error <= phase_radius) & (hand_speed <= hand_speed_threshold) & phase_gate
-    phase_success_zone &= ~support_contact
+    phase_success_zone = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    balance_mask = phase == PHASE_BALANCE
+    phase_success_zone[balance_mask] = phase_gate[balance_mask]
+    active_reach_mask = ~balance_mask
+    phase_success_zone[active_reach_mask] = (
+        (hand_target_error[active_reach_mask] <= phase_radius[active_reach_mask])
+        & (hand_speed[active_reach_mask] <= hand_speed_threshold)
+        & phase_gate[active_reach_mask]
+        & ~support_contact[active_reach_mask]
+    )
 
     env._ttc_phase_hold_counter = torch.where(
         phase_success_zone,
@@ -397,18 +404,18 @@ def _sync_tabletop_clean_state(
         done_ids = torch.where(phase_done & (phase == PHASE_PRETOUCH))[0]
         env._ttc_recent_pretouch[done_ids] = True
         if mode == "pretouch":
-            env._ttc_phase[done_ids] = PHASE_RECOVER
+            env._ttc_recent_success[done_ids] = True
+            _advance_to_next_target(env, done_ids, mode=mode, max_targets_per_episode=max_targets_per_episode)
         else:
             env._ttc_phase[done_ids] = PHASE_TOUCH
-        env._ttc_phase_hold_counter[done_ids] = 0
-        env._ttc_phase_steps[done_ids] = 0
+            env._ttc_phase_hold_counter[done_ids] = 0
+            env._ttc_phase_steps[done_ids] = 0
 
     if torch.any(phase_done & (phase == PHASE_TOUCH)):
         done_ids = torch.where(phase_done & (phase == PHASE_TOUCH))[0]
         env._ttc_recent_touch[done_ids] = True
-        env._ttc_phase[done_ids] = PHASE_RECOVER
-        env._ttc_phase_hold_counter[done_ids] = 0
-        env._ttc_phase_steps[done_ids] = 0
+        env._ttc_recent_success[done_ids] = True
+        _advance_to_next_target(env, done_ids, mode=mode, max_targets_per_episode=max_targets_per_episode)
 
     if torch.any(phase_done & (phase == PHASE_RECOVER)):
         done_ids = torch.where(phase_done & (phase == PHASE_RECOVER))[0]
@@ -485,16 +492,7 @@ def _sync_tabletop_clean_state(
 
 
 def _task_obs(env) -> torch.Tensor:
-    phase_one_hot = F.one_hot(env._ttc_phase, num_classes=NUM_PHASES).float()
-    return torch.cat(
-        (
-            _active_target_pos_base_yaw(env),
-            _object_pos_base_yaw(env),
-            phase_one_hot,
-            env._ttc_stability_gate.unsqueeze(-1),
-        ),
-        dim=-1,
-    )
+    return _active_target_pos_base_yaw(env)
 
 
 def _joint_deviation(env, asset_cfg: SceneEntityCfg) -> torch.Tensor:

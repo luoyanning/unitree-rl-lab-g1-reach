@@ -407,18 +407,27 @@ class RobotLeftHandLocoReachTableTopBalanceCleanEnvCfg(RobotLeftHandLocoReachTab
             randomize_order=False,
             max_targets_per_episode=1,
             per_target_timeout_s=6.0,
+            stance_anchor_std=0.12,
+            stance_anchor_tolerance=0.08,
+            base_speed_threshold=0.25,
+            torso_lean_threshold=0.55,
+            stability_speed_scale=0.25,
+            stability_lean_scale=0.45,
+            balance_hold_steps=15,
         )
         self.episode_length_s = 10.0
         self.commands.base_velocity.resampling_time_range = (self.episode_length_s, self.episode_length_s)
         self.rewards.stance_anchor.weight = -2.0
-        self.rewards.stance_stability.weight = 3.0
-        self.rewards.phase_progress.weight = 1.0
-        self.rewards.phase_tracking.weight = 3.0
-        self.rewards.phase_hold.weight = 2.0
+        self.rewards.stance_stability.weight = 5.0
+        self.rewards.phase_progress.weight = 0.0
+        self.rewards.phase_tracking.weight = 0.0
+        self.rewards.phase_hold.weight = 0.0
         self.rewards.lift_intent.weight = 0.0
         self.rewards.pretouch_bonus.weight = 0.0
         self.rewards.touch_bonus.weight = 0.0
-        self.rewards.target_completion.weight = 8.0
+        self.rewards.target_completion.weight = 12.0
+        self.rewards.support_contact.weight = 0.0
+        self.rewards.left_hand_tracking.weight = 0.0
 
 
 @configclass
@@ -431,20 +440,38 @@ class RobotLeftHandLocoReachTableTopPreTouchCleanEnvCfg(RobotLeftHandLocoReachTa
             scene_target_names=("target_block_0",),
             randomize_order=False,
             max_targets_per_episode=1,
-            per_target_timeout_s=7.0,
-            pretouch_backoff_x=0.05,
-            pretouch_height=0.12,
+            per_target_timeout_s=10.0,
+            stance_anchor_std=0.22,
+            stance_anchor_tolerance=0.12,
+            base_speed_threshold=0.35,
+            torso_lean_threshold=0.65,
+            stability_speed_scale=0.35,
+            stability_lean_scale=0.55,
+            pretouch_backoff_x=0.04,
+            pretouch_height=0.10,
+            pretouch_radius=0.12,
+            pretouch_hold_steps=2,
+            pretouch_stability_gate=0.05,
             touch_height_offset=0.03,
+            recover_radius=0.14,
+            recover_hold_steps=3,
+            recover_stability_gate=0.10,
+            hand_speed_threshold=0.45,
+            support_force_threshold=4.0,
         )
         self.episode_length_s = 12.0
         self.commands.base_velocity.resampling_time_range = (self.episode_length_s, self.episode_length_s)
+        self.rewards.stance_anchor.weight = -0.4
+        self.rewards.stance_stability.weight = 1.5
         self.rewards.phase_progress.weight = 6.0
-        self.rewards.phase_tracking.weight = 4.5
+        self.rewards.phase_tracking.weight = 5.0
         self.rewards.phase_hold.weight = 2.5
-        self.rewards.lift_intent.weight = 1.5
-        self.rewards.pretouch_bonus.weight = 5.0
+        self.rewards.lift_intent.weight = 2.0
+        self.rewards.pretouch_bonus.weight = 10.0
         self.rewards.touch_bonus.weight = 0.0
-        self.rewards.target_completion.weight = 10.0
+        self.rewards.target_completion.weight = 16.0
+        self.rewards.support_contact.weight = -0.05
+        self.rewards.left_hand_tracking.weight = 2.5
 
 
 @configclass
@@ -454,24 +481,91 @@ class RobotLeftHandLocoReachTableTopTouchCleanEnvCfg(RobotLeftHandLocoReachTable
         _set_task_params(
             self,
             mode="touch",
-            scene_target_names=("target_block_0", "target_block_1", "target_block_2"),
-            randomize_order=True,
+            scene_target_names=("target_block_0",),
+            randomize_order=False,
             max_targets_per_episode=1,
-            per_target_timeout_s=8.0,
-            pretouch_backoff_x=0.05,
-            pretouch_height=0.11,
+            per_target_timeout_s=10.0,
+            stance_anchor_std=0.20,
+            stance_anchor_tolerance=0.12,
+            base_speed_threshold=0.33,
+            torso_lean_threshold=0.63,
+            stability_speed_scale=0.33,
+            stability_lean_scale=0.53,
+            pretouch_backoff_x=0.04,
+            pretouch_height=0.10,
+            pretouch_radius=0.10,
+            pretouch_hold_steps=2,
+            pretouch_stability_gate=0.05,
             touch_height_offset=0.03,
+            touch_radius=0.08,
+            touch_hold_steps=2,
+            touch_stability_gate=0.08,
+            recover_radius=0.14,
+            recover_hold_steps=3,
+            recover_stability_gate=0.12,
+            hand_speed_threshold=0.45,
+            support_force_threshold=4.0,
         )
         self.episode_length_s = 14.0
         self.commands.base_velocity.resampling_time_range = (self.episode_length_s, self.episode_length_s)
+        self.rewards.stance_anchor.weight = -0.4
+        self.rewards.stance_stability.weight = 1.5
         self.rewards.phase_progress.weight = 6.0
+        self.rewards.phase_tracking.weight = 5.0
+        self.rewards.phase_hold.weight = 2.5
+        self.rewards.lift_intent.weight = 1.5
+        self.rewards.pretouch_bonus.weight = 4.0
+        self.rewards.touch_bonus.weight = 10.0
+        self.rewards.target_completion.weight = 18.0
+        self.rewards.support_contact.weight = -0.1
+        self.rewards.left_hand_tracking.weight = 2.5
+
+
+@configclass
+class RobotLeftHandLocoReachTableTopTouchSpreadCleanEnvCfg(RobotLeftHandLocoReachTableTopCleanBaseEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        _set_task_params(
+            self,
+            mode="touch",
+            scene_target_names=("target_block_0", "target_block_1", "target_block_2"),
+            randomize_order=True,
+            max_targets_per_episode=1,
+            per_target_timeout_s=11.0,
+            stance_anchor_std=0.20,
+            stance_anchor_tolerance=0.12,
+            base_speed_threshold=0.33,
+            torso_lean_threshold=0.63,
+            stability_speed_scale=0.33,
+            stability_lean_scale=0.53,
+            pretouch_backoff_x=0.04,
+            pretouch_height=0.10,
+            pretouch_radius=0.10,
+            pretouch_hold_steps=2,
+            pretouch_stability_gate=0.06,
+            touch_height_offset=0.03,
+            touch_radius=0.08,
+            touch_hold_steps=2,
+            touch_stability_gate=0.10,
+            recover_radius=0.14,
+            recover_hold_steps=3,
+            recover_stability_gate=0.12,
+            hand_speed_threshold=0.45,
+            support_force_threshold=4.0,
+        )
+        self.episode_length_s = 14.0
+        self.commands.base_velocity.resampling_time_range = (self.episode_length_s, self.episode_length_s)
+        self.rewards.stance_anchor.weight = -0.4
+        self.rewards.stance_stability.weight = 1.5
+        self.rewards.phase_progress.weight = 5.5
         self.rewards.phase_tracking.weight = 4.5
-        self.rewards.phase_hold.weight = 3.0
-        self.rewards.lift_intent.weight = 1.0
-        self.rewards.pretouch_bonus.weight = 3.0
-        self.rewards.touch_bonus.weight = 6.0
-        self.rewards.target_completion.weight = 12.0
-        self.rewards.support_contact.weight = -2.5
+        self.rewards.phase_hold.weight = 2.5
+        self.rewards.lift_intent.weight = 1.2
+        self.rewards.pretouch_bonus.weight = 4.0
+        self.rewards.touch_bonus.weight = 9.0
+        self.rewards.target_completion.weight = 16.0
+        self.rewards.support_contact.weight = -0.12
+        self.rewards.left_hand_tracking.weight = 2.0
 
 
 @configclass
@@ -543,6 +637,17 @@ class RobotLeftHandLocoReachTableTopPreTouchCleanPlayEnvCfg(
 @configclass
 class RobotLeftHandLocoReachTableTopTouchCleanPlayEnvCfg(
     RobotLeftHandLocoReachTableTopTouchCleanEnvCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 16
+        self.observations.policy.enable_corruption = False
+        self.events.reset_base.params["pose_range"] = {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)}
+
+
+@configclass
+class RobotLeftHandLocoReachTableTopTouchSpreadCleanPlayEnvCfg(
+    RobotLeftHandLocoReachTableTopTouchSpreadCleanEnvCfg
 ):
     def __post_init__(self):
         super().__post_init__()

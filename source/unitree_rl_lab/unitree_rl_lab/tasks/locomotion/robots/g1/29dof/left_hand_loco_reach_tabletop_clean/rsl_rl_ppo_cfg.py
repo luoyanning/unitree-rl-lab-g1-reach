@@ -16,21 +16,31 @@ class LeftHandLocoReachTableTopBalanceCleanPPORunnerCfg(BasePPORunnerCfg):
 @configclass
 class LeftHandLocoReachTableTopPreTouchCleanPPORunnerCfg(BasePPORunnerCfg):
     def __post_init__(self):
-        self.policy.init_noise_std = 0.08
-        self.algorithm.learning_rate = 8.0e-5
-        self.algorithm.desired_kl = 0.004
-        self.algorithm.entropy_coef = 0.0012
-        self.save_interval = 50
+        self.policy.init_noise_std = 0.03
+        self.algorithm.learning_rate = 3.0e-5
+        self.algorithm.desired_kl = 0.002
+        self.algorithm.entropy_coef = 0.0005
+        self.save_interval = 25
 
 
 @configclass
 class LeftHandLocoReachTableTopTouchCleanPPORunnerCfg(BasePPORunnerCfg):
     def __post_init__(self):
-        self.policy.init_noise_std = 0.07
-        self.algorithm.learning_rate = 7.0e-5
-        self.algorithm.desired_kl = 0.003
-        self.algorithm.entropy_coef = 0.001
-        self.save_interval = 50
+        self.policy.init_noise_std = 0.03
+        self.algorithm.learning_rate = 3.0e-5
+        self.algorithm.desired_kl = 0.002
+        self.algorithm.entropy_coef = 0.0005
+        self.save_interval = 25
+
+
+@configclass
+class LeftHandLocoReachTableTopTouchSpreadCleanPPORunnerCfg(BasePPORunnerCfg):
+    def __post_init__(self):
+        self.policy.init_noise_std = 0.04
+        self.algorithm.learning_rate = 4.0e-5
+        self.algorithm.desired_kl = 0.002
+        self.algorithm.entropy_coef = 0.0005
+        self.save_interval = 25
 
 
 @configclass

@@ -15,6 +15,36 @@ from ..left_hand_loco_reach import left_hand_loco_reach_mdp as fixed_mdp
 LEFT_HAND_BODY_NAME = "left_wrist_yaw_link"
 
 
+def _bootstrap_enabled(env) -> bool:
+    return bool(getattr(env.cfg, "tabletop_bootstrap_enabled", False))
+
+
+def _bootstrap_alpha_scalar(env) -> float:
+    if not _bootstrap_enabled(env):
+        return 1.0
+    warmup_steps = max(0, int(getattr(env.cfg, "tabletop_bootstrap_warmup_steps", 0)))
+    anneal_steps = max(1, int(getattr(env.cfg, "tabletop_bootstrap_anneal_steps", 1)))
+    if env.common_step_counter <= warmup_steps:
+        return 0.0
+    return float(min(1.0, (env.common_step_counter - warmup_steps) / anneal_steps))
+
+
+def _bootstrap_active_mask(env) -> torch.Tensor:
+    return env._tt_bootstrap_alpha < (1.0 - 1.0e-6)
+
+
+def _blended_target_error(env) -> torch.Tensor:
+    return torch.lerp(env._tt_pre_target_error, env._tt_hand_object_error, env._tt_bootstrap_alpha)
+
+
+def _blended_completion_signal(env) -> torch.Tensor:
+    return torch.lerp(
+        env._tt_recent_bootstrap_success.float(),
+        env._tt_recent_success.float(),
+        env._tt_bootstrap_alpha,
+    )
+
+
 def _episode_length_buf(env) -> torch.Tensor:
     if hasattr(env, "episode_length_buf"):
         return env.episode_length_buf.clone()
@@ -97,6 +127,7 @@ def _ensure_tabletop_touch_state(env):
     env._tt_workspace_error = torch.zeros(num_envs, device=device)
     env._tt_workspace_progress = torch.zeros(num_envs, device=device)
     env._tt_workspace_ready = torch.zeros(num_envs, device=device)
+    env._tt_pre_target_error = torch.zeros(num_envs, device=device)
     env._tt_hand_target_error = torch.zeros(num_envs, device=device)
     env._tt_prev_hand_target_error = torch.zeros(num_envs, device=device)
     env._tt_hand_progress = torch.zeros(num_envs, device=device)
@@ -104,8 +135,11 @@ def _ensure_tabletop_touch_state(env):
     env._tt_base_speed = torch.zeros(num_envs, device=device)
     env._tt_hand_speed = torch.zeros(num_envs, device=device)
     env._tt_base_ready = torch.zeros(num_envs, dtype=torch.bool, device=device)
+    env._tt_pretouch_hold_counter = torch.zeros(num_envs, dtype=torch.long, device=device)
     env._tt_hold_counter = torch.zeros(num_envs, dtype=torch.long, device=device)
     env._tt_success_zone_time = torch.zeros(num_envs, dtype=torch.long, device=device)
+    env._tt_prev_bootstrap_success = torch.zeros(num_envs, dtype=torch.bool, device=device)
+    env._tt_recent_bootstrap_success = torch.zeros(num_envs, dtype=torch.bool, device=device)
     env._tt_prev_success = torch.zeros(num_envs, dtype=torch.bool, device=device)
     env._tt_recent_success = torch.zeros(num_envs, dtype=torch.bool, device=device)
     env._tt_recent_pretouch = torch.zeros(num_envs, dtype=torch.bool, device=device)
@@ -114,6 +148,7 @@ def _ensure_tabletop_touch_state(env):
     env._tt_completed = torch.zeros(num_envs, dtype=torch.long, device=device)
     env._tt_use_final_target = torch.zeros(num_envs, dtype=torch.bool, device=device)
     env._tt_prev_use_final_target = torch.zeros(num_envs, dtype=torch.bool, device=device)
+    env._tt_bootstrap_alpha = torch.ones(num_envs, device=device)
     env._tt_state_synced_step = -1
 
     env._tt_hand_body_id = int(robot.find_bodies([LEFT_HAND_BODY_NAME], preserve_order=True)[0][0])
@@ -171,14 +206,22 @@ def _sync_tabletop_touch_state(
         raise RuntimeError("TableTopTouch requires env.cfg.left_hand_scene_target_names to be set.")
 
     reset_ids, current_episode_length = _compute_just_reset_mask(env)
+    bootstrap_alpha_scalar = _bootstrap_alpha_scalar(env)
+    env._tt_bootstrap_alpha.fill_(bootstrap_alpha_scalar)
+    bootstrap_success_radius = float(getattr(env.cfg, "tabletop_bootstrap_pretouch_success_radius", pre_target_switch_radius))
+    bootstrap_hold_steps = max(1, int(getattr(env.cfg, "tabletop_bootstrap_hold_steps", success_hold_steps)))
+    bootstrap_timeout_s = float(getattr(env.cfg, "tabletop_bootstrap_timeout_s", per_target_timeout_s))
     env._tt_recent_success.zero_()
+    env._tt_recent_bootstrap_success.zero_()
     env._tt_recent_pretouch.zero_()
 
     if torch.any(reset_ids):
         reset_env_ids = torch.where(reset_ids)[0]
         _sample_tabletop_targets(env, reset_env_ids, scene_target_names)
+        env._tt_pretouch_hold_counter[reset_ids] = 0
         env._tt_hold_counter[reset_ids] = 0
         env._tt_success_zone_time[reset_ids] = 0
+        env._tt_prev_bootstrap_success[reset_ids] = False
         env._tt_prev_success[reset_ids] = False
         env._tt_timed_out[reset_ids] = False
         env._tt_target_age_steps[reset_ids] = 0
@@ -202,6 +245,7 @@ def _sync_tabletop_touch_state(
     env._tt_final_target_w[:, 2] += touch_height_offset
 
     pre_target_error = torch.linalg.norm(env._tt_pre_target_w - hand_pos_w, dim=-1)
+    env._tt_pre_target_error[:] = pre_target_error
     target_pos_base = quat_apply_inverse(
         yaw_quat(robot.data.root_quat_w),
         env._tt_final_target_w - robot.data.root_pos_w,
@@ -234,6 +278,20 @@ def _sync_tabletop_touch_state(
     env._tt_base_speed[:] = base_speed
     env._tt_hand_speed[:] = hand_speed
 
+    bootstrap_success_zone = (
+        env._tt_base_ready
+        & (pre_target_error <= bootstrap_success_radius)
+        & (hand_speed <= hand_speed_threshold * 1.5)
+    )
+    env._tt_pretouch_hold_counter = torch.where(
+        bootstrap_success_zone,
+        env._tt_pretouch_hold_counter + 1,
+        torch.zeros_like(env._tt_pretouch_hold_counter),
+    )
+    bootstrap_hold_qualified = env._tt_pretouch_hold_counter >= bootstrap_hold_steps
+    env._tt_recent_bootstrap_success[:] = bootstrap_hold_qualified & ~env._tt_prev_bootstrap_success & ~reset_ids
+    env._tt_prev_bootstrap_success[:] = bootstrap_hold_qualified
+
     success_zone = (
         env._tt_use_final_target
         & (env._tt_hand_object_error <= success_threshold)
@@ -250,14 +308,17 @@ def _sync_tabletop_touch_state(
     env._tt_recent_success[:] = hold_qualified & ~env._tt_prev_success & ~reset_ids
     env._tt_prev_success[:] = hold_qualified
     env._tt_completed[:] = torch.where(
-        env._tt_recent_success,
+        env._tt_recent_success | (_bootstrap_active_mask(env) & env._tt_recent_bootstrap_success),
         torch.ones_like(env._tt_completed),
         env._tt_completed,
     )
 
     env._tt_target_age_steps += 1
     env._tt_target_age_steps[reset_ids] = 0
-    per_target_timeout_steps = max(1, int(round(float(per_target_timeout_s) / env.step_dt)))
+    effective_timeout_s = (1.0 - bootstrap_alpha_scalar) * bootstrap_timeout_s + bootstrap_alpha_scalar * float(
+        per_target_timeout_s
+    )
+    per_target_timeout_steps = max(1, int(round(effective_timeout_s / env.step_dt)))
     env._tt_timed_out[:] = env._tt_target_age_steps >= per_target_timeout_steps
 
     command_term = env.command_manager.get_term("left_hand_pose")
@@ -272,20 +333,30 @@ def _sync_tabletop_touch_state(
         command_term.metrics.setdefault("post_success_dwell_counter", torch.zeros(env.num_envs, device=env.device))
         command_term.metrics.setdefault("completion_after_dwell", torch.zeros(env.num_envs, device=env.device))
         command_term.metrics.setdefault("pretouch_switch_flag", torch.zeros(env.num_envs, device=env.device))
+        command_term.metrics.setdefault("bootstrap_alpha", torch.zeros(env.num_envs, device=env.device))
+        command_term.metrics.setdefault("bootstrap_success_flag", torch.zeros(env.num_envs, device=env.device))
+        completion_flag = (env._tt_recent_success | env._tt_recent_bootstrap_success).float()
+        completion_distance = torch.where(
+            env._tt_recent_success,
+            env._tt_hand_object_error,
+            torch.where(
+                env._tt_recent_bootstrap_success,
+                env._tt_pre_target_error,
+                torch.zeros_like(env._tt_hand_object_error),
+            ),
+        )
         command_term.metrics["success_zone_flag"][:] = success_zone.float()
         command_term.metrics["success_hold_counter"][:] = env._tt_hold_counter.float()
         command_term.metrics["success_zone_time"][:] = env._tt_success_zone_time.float()
         command_term.metrics["held_success_count"][:] = env._tt_completed.float()
-        command_term.metrics["completion_distance"][:] = torch.where(
-            env._tt_recent_success,
-            env._tt_hand_object_error,
-            torch.zeros_like(env._tt_hand_object_error),
-        )
-        command_term.metrics["completion_after_hold"][:] = env._tt_recent_success.float()
+        command_term.metrics["completion_distance"][:] = completion_distance
+        command_term.metrics["completion_after_hold"][:] = completion_flag
         command_term.metrics["post_success_dwell_flag"][:] = torch.zeros(env.num_envs, device=env.device)
         command_term.metrics["post_success_dwell_counter"][:] = torch.zeros(env.num_envs, device=env.device)
-        command_term.metrics["completion_after_dwell"][:] = env._tt_recent_success.float()
+        command_term.metrics["completion_after_dwell"][:] = completion_flag
         command_term.metrics["pretouch_switch_flag"][:] = env._tt_recent_pretouch.float()
+        command_term.metrics["bootstrap_alpha"][:] = env._tt_bootstrap_alpha
+        command_term.metrics["bootstrap_success_flag"][:] = env._tt_recent_bootstrap_success.float()
 
     env._tt_prev_episode_length_buf = current_episode_length
     env._tt_state_synced_step = env.common_step_counter
@@ -517,8 +588,10 @@ def target_hold_reward(
         x_range=x_range,
         y_range=y_range,
     )
-    hold_gate = (env._tt_hold_counter > 0).float()
-    return hold_gate * torch.exp(-env._tt_hand_object_error / max(hold_reward_std, 1.0e-6))
+    bootstrap_hold_gate = (env._tt_pretouch_hold_counter > 0).float()
+    final_hold_gate = (env._tt_hold_counter > 0).float()
+    hold_gate = torch.lerp(bootstrap_hold_gate, final_hold_gate, env._tt_bootstrap_alpha)
+    return hold_gate * torch.exp(-_blended_target_error(env) / max(hold_reward_std, 1.0e-6))
 
 
 def hand_phase_progress_reward(
@@ -583,7 +656,8 @@ def pretouch_ready_bonus(
         x_range=x_range,
         y_range=y_range,
     )
-    return env._tt_recent_pretouch.float()
+    bootstrap_ready = env._tt_recent_bootstrap_success.float() * (1.0 - env._tt_bootstrap_alpha)
+    return torch.maximum(env._tt_recent_pretouch.float(), bootstrap_ready)
 
 
 def near_target_left_hand_stillness_reward(
@@ -618,7 +692,7 @@ def near_target_left_hand_stillness_reward(
         x_range=x_range,
         y_range=y_range,
     )
-    near_target = (env._tt_hand_object_error <= near_target_radius).float()
+    near_target = (_blended_target_error(env) <= near_target_radius).float()
     return near_target * torch.exp(-env._tt_hand_speed / max(hand_speed_scale, 1.0e-6))
 
 
@@ -650,7 +724,7 @@ def target_completion_bonus(
         x_range=x_range,
         y_range=y_range,
     )
-    return env._tt_recent_success.float()
+    return _blended_completion_signal(env)
 
 
 def success_posture_bonus(
@@ -689,7 +763,7 @@ def success_posture_bonus(
         torch.abs(robot.data.joint_pos[:, arm_joint_cfg.joint_ids] - robot.data.default_joint_pos[:, arm_joint_cfg.joint_ids]),
         dim=1,
     )
-    return env._tt_recent_success.float() * torch.exp(-0.5 * deviation)
+    return _blended_completion_signal(env) * torch.exp(-0.5 * deviation)
 
 
 def pre_stance_torso_lean_penalty(
@@ -872,7 +946,7 @@ def target_success_reached(
         x_range=x_range,
         y_range=y_range,
     )
-    return env._tt_recent_success
+    return env._tt_recent_success | (_bootstrap_active_mask(env) & env._tt_recent_bootstrap_success)
 
 
 def target_timeout_reached(

@@ -248,6 +248,7 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
         self.episode_length_s = 24.0
         self.left_hand_scene_target_names = TABLETOP_BLOCK_NAMES
         self.left_hand_scene_target_randomize_order = True
+        self.tabletop_bootstrap_enabled = False
 
         self.commands.left_hand_pose.resampling_time_range = (STATIC_TARGET_HOLD_S, STATIC_TARGET_HOLD_S)
         self.commands.left_hand_pose.ranges.pos_x = (
@@ -450,6 +451,12 @@ class RobotLeftHandLocoReachTableTopTouchScratchEnvCfg(RobotLeftHandLocoReachTab
 
         self.left_hand_scene_target_names = ("target_block_0",)
         self.left_hand_scene_target_randomize_order = False
+        self.tabletop_bootstrap_enabled = True
+        self.tabletop_bootstrap_warmup_steps = 1500
+        self.tabletop_bootstrap_anneal_steps = 2500
+        self.tabletop_bootstrap_pretouch_success_radius = 0.10
+        self.tabletop_bootstrap_hold_steps = 6
+        self.tabletop_bootstrap_timeout_s = 8.0
         self.scene.robot.init_state.pos = (0.10, 0.0, 0.8)
         self.episode_length_s = 12.0
 

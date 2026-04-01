@@ -44,10 +44,20 @@ class LeftHandLocoReachTableTopTouchSpreadCleanPPORunnerCfg(BasePPORunnerCfg):
 
 
 @configclass
+class LeftHandLocoReachTableTopMultiTouchPairCleanPPORunnerCfg(BasePPORunnerCfg):
+    def __post_init__(self):
+        self.policy.init_noise_std = 0.05
+        self.algorithm.learning_rate = 4.0e-5
+        self.algorithm.desired_kl = 0.002
+        self.algorithm.entropy_coef = 0.0005
+        self.save_interval = 25
+
+
+@configclass
 class LeftHandLocoReachTableTopMultiTouchCleanPPORunnerCfg(BasePPORunnerCfg):
     def __post_init__(self):
-        self.policy.init_noise_std = 0.06
-        self.algorithm.learning_rate = 5.0e-5
-        self.algorithm.desired_kl = 0.003
-        self.algorithm.entropy_coef = 0.0008
-        self.save_interval = 50
+        self.policy.init_noise_std = 0.05
+        self.algorithm.learning_rate = 4.0e-5
+        self.algorithm.desired_kl = 0.002
+        self.algorithm.entropy_coef = 0.0005
+        self.save_interval = 25

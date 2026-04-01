@@ -94,39 +94,51 @@ STAGES: tuple[StageConfig, ...] = (
         name="touch_spread",
         task="Unitree-G1-29dof-LeftHand-LocoReach-TableTopTouchSpread-Clean-v0",
         max_iterations=8000,
-        min_success_iteration=25,
-        success_patience=5,
+        min_success_iteration=60,
+        success_patience=8,
         thresholds=(
-            MetricThreshold("Episode_Termination/target_quota", minimum=0.75),
-            MetricThreshold("Episode_Termination/target_timeout", maximum=0.25),
-            MetricThreshold("Metrics/left_hand_pose/touch_success_flag", minimum=0.65),
+            MetricThreshold("Episode_Termination/target_quota", minimum=0.80),
+            MetricThreshold("Episode_Termination/target_timeout", maximum=0.18),
+            MetricThreshold("Metrics/left_hand_pose/touch_success_flag", minimum=0.75),
+            MetricThreshold("Metrics/left_hand_pose/hand_object_error", maximum=0.11),
             MetricThreshold("Metrics/left_hand_pose/support_contact_flag", maximum=0.08),
+            MetricThreshold("Metrics/left_hand_pose/stance_anchor_error", maximum=0.10),
         ),
     ),
     StageConfig(
         name="multi_touch_pair",
         task="Unitree-G1-29dof-LeftHand-LocoReach-TableTopMultiTouchPair-Clean-v0",
         max_iterations=10000,
-        min_success_iteration=30,
-        success_patience=5,
+        min_success_iteration=120,
+        success_patience=10,
         thresholds=(
-            MetricThreshold("Episode_Termination/target_quota", minimum=0.65),
-            MetricThreshold("Episode_Termination/target_timeout", maximum=0.30),
-            MetricThreshold("Metrics/left_hand_pose/targets_completed", minimum=1.8),
-            MetricThreshold("Metrics/left_hand_pose/support_contact_flag", maximum=0.10),
+            MetricThreshold("Episode_Termination/target_quota", minimum=0.75),
+            MetricThreshold("Episode_Termination/target_timeout", maximum=0.20),
+            MetricThreshold("Episode_Termination/body_support_contact", maximum=0.06),
+            MetricThreshold("Metrics/left_hand_pose/targets_completed", minimum=1.9),
+            MetricThreshold("Metrics/left_hand_pose/touch_success_flag", minimum=0.78),
+            MetricThreshold("Metrics/left_hand_pose/hand_object_error", maximum=0.11),
+            MetricThreshold("Metrics/left_hand_pose/support_contact_flag", maximum=0.08),
+            MetricThreshold("Metrics/left_hand_pose/support_force", maximum=9.0),
+            MetricThreshold("Metrics/left_hand_pose/stance_anchor_error", maximum=0.09),
         ),
     ),
     StageConfig(
         name="multi_touch",
         task="Unitree-G1-29dof-LeftHand-LocoReach-TableTopMultiTouch-Clean-v0",
         max_iterations=14000,
-        min_success_iteration=40,
-        success_patience=5,
+        min_success_iteration=200,
+        success_patience=12,
         thresholds=(
-            MetricThreshold("Episode_Termination/target_quota", minimum=0.45),
-            MetricThreshold("Episode_Termination/target_timeout", maximum=0.40),
-            MetricThreshold("Metrics/left_hand_pose/targets_completed", minimum=2.5),
-            MetricThreshold("Metrics/left_hand_pose/support_contact_flag", maximum=0.12),
+            MetricThreshold("Episode_Termination/target_quota", minimum=0.80),
+            MetricThreshold("Episode_Termination/target_timeout", maximum=0.10),
+            MetricThreshold("Episode_Termination/body_support_contact", maximum=0.05),
+            MetricThreshold("Metrics/left_hand_pose/targets_completed", minimum=2.7),
+            MetricThreshold("Metrics/left_hand_pose/touch_success_flag", minimum=0.86),
+            MetricThreshold("Metrics/left_hand_pose/hand_object_error", maximum=0.11),
+            MetricThreshold("Metrics/left_hand_pose/support_contact_flag", maximum=0.08),
+            MetricThreshold("Metrics/left_hand_pose/support_force", maximum=8.0),
+            MetricThreshold("Metrics/left_hand_pose/stance_anchor_error", maximum=0.09),
         ),
     ),
 )
@@ -379,7 +391,14 @@ def launch_stage_and_wait(
             if latest_iteration is not None and latest_iteration >= success_iteration:
                 checkpoint_requested = True
                 stage_completed = True
-                signal_process_group(process, signal.SIGINT)
+                print(
+                    f"[CURRICULUM] Stage '{stage.name}' checkpoint is ready "
+                    f"(model_{latest_iteration}). Stopping this stage process for promotion.",
+                    flush=True,
+                )
+                # Use SIGTERM (not SIGINT) to avoid train_autoresume printing misleading
+                # '[AUTO-RESUME] Interrupted by user.' messages.
+                signal_process_group(process, signal.SIGTERM)
 
     try:
         assert process.stdout is not None

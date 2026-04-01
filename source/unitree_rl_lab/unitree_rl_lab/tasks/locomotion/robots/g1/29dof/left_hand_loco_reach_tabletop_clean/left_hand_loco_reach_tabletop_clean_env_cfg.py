@@ -611,8 +611,15 @@ class RobotLeftHandLocoReachTableTopMultiTouchPairCleanEnvCfg(RobotLeftHandLocoR
         self.rewards.pretouch_bonus.weight = 3.0
         self.rewards.touch_bonus.weight = 8.0
         self.rewards.target_completion.weight = 18.0
-        self.rewards.support_contact.weight = -0.12
+        self.rewards.support_contact.weight = -0.20
         self.rewards.left_hand_tracking.weight = 1.8
+        self.terminations.body_support_contact = DoneTerm(
+            func=tabletop_clean_mdp.support_contact_termination,
+            params={
+                **self.observations.policy.velocity_commands.params,
+                "termination_force_threshold": 12.0,
+            },
+        )
 
 
 @configclass
@@ -658,13 +665,13 @@ class RobotLeftHandLocoReachTableTopMultiTouchCleanEnvCfg(RobotLeftHandLocoReach
         self.rewards.pretouch_bonus.weight = 3.0
         self.rewards.touch_bonus.weight = 8.0
         self.rewards.target_completion.weight = 18.0
-        self.rewards.support_contact.weight = -0.18
+        self.rewards.support_contact.weight = -0.35
         self.rewards.left_hand_tracking.weight = 1.5
         self.terminations.body_support_contact = DoneTerm(
             func=tabletop_clean_mdp.support_contact_termination,
             params={
                 **self.observations.policy.velocity_commands.params,
-                "termination_force_threshold": 15.0,
+                "termination_force_threshold": 10.0,
             },
         )
 

@@ -9,13 +9,10 @@ from isaaclab.utils import configclass
 from unitree_rl_lab.tasks.locomotion import mdp
 
 from ..benchmark_v1.benchmark_env_cfg import _kinematic_cuboid
-from ..left_hand_loco_reach_adapter_acquire_tight_stay_natural_reach_settle_short_freeze_base_reach.left_hand_loco_reach_adapter_acquire_tight_stay_natural_reach_settle_short_freeze_base_reach_env_cfg import (
+from ..left_hand_loco_reach_adapter_hold_stay.left_hand_loco_reach_adapter_hold_stay_env_cfg import (
     LEFT_HAND_COMMAND_NAME,
     STATIC_TARGET_HOLD_S,
-    RobotLeftHandLocoReachAdapterAcquireTightStayNaturalReachSettleShortFreezeBaseReachEnvCfg,
-)
-from ..left_hand_loco_reach_adapter_acquire_tight_stay_natural_reach_settle_short_freeze_base_reach import (
-    left_hand_loco_reach_adapter_acquire_tight_stay_natural_reach_settle_short_freeze_base_reach_mdp as freeze_base_reach_mdp,
+    RobotLeftHandLocoReachAdapterHoldStayEnvCfg,
 )
 from ..velocity_env_cfg import RobotSceneCfg
 
@@ -188,9 +185,9 @@ class RobotLeftHandTableTopTouchSceneCfg(RobotSceneCfg):
 
 @configclass
 class RobotLeftHandLocoReachTableTopTouchEnvCfg(
-    RobotLeftHandLocoReachAdapterAcquireTightStayNaturalReachSettleShortFreezeBaseReachEnvCfg
+    RobotLeftHandLocoReachAdapterHoldStayEnvCfg
 ):
-    """Table-aligned freeze-base reach task for pre-benchmark tabletop touch training."""
+    """Table-aligned hold-stay reach task for natural tabletop touch pretraining."""
 
     scene: RobotLeftHandTableTopTouchSceneCfg = RobotLeftHandTableTopTouchSceneCfg(num_envs=2048, env_spacing=4.0)
 
@@ -246,28 +243,6 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
         for term_cfg in vars(self.terminations).values():
             _retarget_term_params(term_cfg)
 
-        self.rewards.base_target_stance.weight = -2.5
-        self.rewards.stance_ready.weight = 4.0
-        self.rewards.stance_progress.weight = 5.0
-        self.rewards.right_arm_balance_posture.weight = -0.02
-        self.rewards.ready_reach_stationary.weight = 1.5
-        self.rewards.ready_reach_left_hand_stillness.weight = 0.4
-        self.rewards.ready_reach_left_hand_vertical_motion.weight = -0.8
-        self.rewards.ready_reach_foot_shuffle.weight = -1.0
-        self.rewards.pre_stance_torso_lean.weight = -1.5
-        self.rewards.pre_stance_waist_twist.weight = -0.8
-        self.rewards.pre_stance_arm_extension.weight = -1.0
-        self.rewards.pre_stance_foot_motion.weight = 0.2
-        self.rewards.target_completion.func = freeze_base_reach_mdp.target_completion_bonus
-        self.rewards.target_completion.weight = 4.0
-        self.rewards.target_hold.func = freeze_base_reach_mdp.target_hold_reward
-        self.rewards.target_hold.weight = 5.0
-        self.rewards.post_success_stay.weight = 3.0
-        self.rewards.near_target_left_hand_stillness.weight = 2.0
-        self.rewards.dwell_left_hand_stillness.weight = 2.0
-        self.rewards.left_hand_position_tracking_fine.weight = 9.0
-        self.rewards.success_posture_bonus.func = freeze_base_reach_mdp.success_posture_bonus
-        self.rewards.success_posture_bonus.weight = 2.5
         self.rewards.undesired_contacts.params["sensor_cfg"] = SceneEntityCfg(
             "contact_forces",
             body_names=[TABLETOP_SUPPORT_CONTACT_BODY_REGEX],
@@ -275,7 +250,6 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
         self.rewards.undesired_contacts.params["threshold"] = 1.0
         self.rewards.undesired_contacts.weight = -1.0
 
-        self.rewards.base_height.params["target_height"] = 0.78
         self.terminations.base_height.params["minimum_height"] = 0.16
         self.terminations.bad_orientation.params["limit_angle"] = 0.8
         self.terminations.body_support_contact = DoneTerm(

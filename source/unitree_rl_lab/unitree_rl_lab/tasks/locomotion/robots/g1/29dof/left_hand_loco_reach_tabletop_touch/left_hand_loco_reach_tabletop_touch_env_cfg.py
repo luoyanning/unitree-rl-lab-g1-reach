@@ -22,11 +22,11 @@ from ..velocity_env_cfg import RobotSceneCfg
 
 TABLE_TOP_BLOCK_Z = 0.805
 TABLETOP_BLOCK_NAMES = tuple(f"target_block_{index}" for index in range(6))
-TABLETOP_MAX_TARGETS_PER_EPISODE = 3
-TABLETOP_PER_TARGET_TIMEOUT_S = 5.0
-TABLETOP_POST_SUCCESS_DWELL_STEPS = 6
-TABLETOP_STANCE_X_RANGE = (0.36, 0.54)
-TABLETOP_STANCE_Y_RANGE = (0.10, 0.24)
+TABLETOP_MAX_TARGETS_PER_EPISODE = 1
+TABLETOP_PER_TARGET_TIMEOUT_S = 6.0
+TABLETOP_POST_SUCCESS_DWELL_STEPS = 10
+TABLETOP_STANCE_X_RANGE = (0.40, 0.56)
+TABLETOP_STANCE_Y_RANGE = (0.10, 0.26)
 TABLETOP_SUPPORT_CONTACT_BODY_REGEX = (
     r"^(?!left_ankle_roll_link$)(?!right_ankle_roll_link$)(?!left_wrist_yaw_link$).+$"
 )
@@ -197,7 +197,7 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
     def __post_init__(self):
         super().__post_init__()
 
-        self.scene.robot.init_state.pos = (0.22, 0.0, 0.8)
+        self.scene.robot.init_state.pos = (0.18, 0.0, 0.8)
         self.scene.robot.init_state.rot = (1.0, 0.0, 0.0, 0.0)
         self.scene.env_spacing = 4.0
         self.episode_length_s = 24.0
@@ -246,30 +246,38 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
         for term_cfg in vars(self.terminations).values():
             _retarget_term_params(term_cfg)
 
-        self.rewards.base_target_stance.weight = -1.6
-        self.rewards.stance_ready.weight = 2.0
-        self.rewards.stance_progress.weight = 2.5
-        self.rewards.ready_reach_stationary.weight = 2.0
-        self.rewards.ready_reach_left_hand_stillness.weight = 0.8
-        self.rewards.ready_reach_left_hand_vertical_motion.weight = -1.0
-        self.rewards.ready_reach_foot_shuffle.weight = -0.8
+        self.rewards.base_target_stance.weight = -2.5
+        self.rewards.stance_ready.weight = 4.0
+        self.rewards.stance_progress.weight = 5.0
+        self.rewards.right_arm_balance_posture.weight = -0.02
+        self.rewards.ready_reach_stationary.weight = 1.5
+        self.rewards.ready_reach_left_hand_stillness.weight = 0.4
+        self.rewards.ready_reach_left_hand_vertical_motion.weight = -0.8
+        self.rewards.ready_reach_foot_shuffle.weight = -1.0
+        self.rewards.pre_stance_torso_lean.weight = -1.5
+        self.rewards.pre_stance_waist_twist.weight = -0.8
+        self.rewards.pre_stance_arm_extension.weight = -1.0
+        self.rewards.pre_stance_foot_motion.weight = 0.2
         self.rewards.target_completion.func = freeze_base_reach_mdp.target_completion_bonus
-        self.rewards.target_completion.weight = 8.0
+        self.rewards.target_completion.weight = 4.0
         self.rewards.target_hold.func = freeze_base_reach_mdp.target_hold_reward
-        self.rewards.target_hold.weight = 7.5
+        self.rewards.target_hold.weight = 5.0
+        self.rewards.post_success_stay.weight = 3.0
         self.rewards.near_target_left_hand_stillness.weight = 2.0
         self.rewards.dwell_left_hand_stillness.weight = 2.0
-        self.rewards.left_hand_position_tracking_fine.weight = 10.0
+        self.rewards.left_hand_position_tracking_fine.weight = 9.0
         self.rewards.success_posture_bonus.func = freeze_base_reach_mdp.success_posture_bonus
-        self.rewards.success_posture_bonus.weight = 3.5
+        self.rewards.success_posture_bonus.weight = 2.5
         self.rewards.undesired_contacts.params["sensor_cfg"] = SceneEntityCfg(
             "contact_forces",
             body_names=[TABLETOP_SUPPORT_CONTACT_BODY_REGEX],
         )
         self.rewards.undesired_contacts.params["threshold"] = 1.0
-        self.rewards.undesired_contacts.weight = -0.4
+        self.rewards.undesired_contacts.weight = -1.0
 
         self.rewards.base_height.params["target_height"] = 0.78
+        self.terminations.base_height.params["minimum_height"] = 0.16
+        self.terminations.bad_orientation.params["limit_angle"] = 0.8
         self.terminations.body_support_contact = DoneTerm(
             func=mdp.illegal_contact,
             params={

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 
 import torch
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.markers import VisualizationMarkers
+from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.sensors import ContactSensor
 from isaaclab.utils.math import quat_apply, yaw_quat
 
@@ -22,6 +25,11 @@ PHASE_PRETOUCH = 1
 PHASE_TOUCH = 2
 PHASE_RECOVER = 3
 NUM_PHASES = 4
+ENABLE_TABLETOP_TARGET_VIS = os.getenv("UTRL_TABLETOP_CLEAN_TARGET_VIS", "0") == "1"
+ACTIVE_TARGET_MARKER_CFG = FRAME_MARKER_CFG.replace(prim_path="/Visuals/Command/tabletop_clean_active_target")
+ACTIVE_TARGET_MARKER_CFG.markers["frame"].scale = (0.10, 0.10, 0.10)
+TOUCH_TARGET_MARKER_CFG = FRAME_MARKER_CFG.replace(prim_path="/Visuals/Command/tabletop_clean_touch_target")
+TOUCH_TARGET_MARKER_CFG.markers["frame"].scale = (0.07, 0.07, 0.07)
 
 
 def _robot(env):
@@ -79,6 +87,25 @@ def _ready_pose_w(env, ready_local_pos: tuple[float, float, float]) -> torch.Ten
 
 def _start_phase(mode: str) -> int:
     return PHASE_BALANCE if mode == "balance" else PHASE_PRETOUCH
+
+
+def _marker_quat(env) -> torch.Tensor:
+    if not hasattr(env, "_ttc_marker_quat"):
+        env._ttc_marker_quat = torch.zeros(env.num_envs, 4, device=env.device)
+        env._ttc_marker_quat[:, 0] = 1.0
+    return env._ttc_marker_quat
+
+
+def _update_target_debug_visualization(env) -> None:
+    if not ENABLE_TABLETOP_TARGET_VIS:
+        return
+    marker_quat = _marker_quat(env)
+    if not hasattr(env, "_ttc_active_target_visualizer"):
+        env._ttc_active_target_visualizer = VisualizationMarkers(ACTIVE_TARGET_MARKER_CFG)
+    env._ttc_active_target_visualizer.visualize(env._ttc_active_target_w, marker_quat)
+    if not hasattr(env, "_ttc_touch_target_visualizer"):
+        env._ttc_touch_target_visualizer = VisualizationMarkers(TOUCH_TARGET_MARKER_CFG)
+    env._ttc_touch_target_visualizer.visualize(env._ttc_touch_w, marker_quat)
 
 
 def _ensure_state(env, num_targets: int):
@@ -489,6 +516,7 @@ def _sync_tabletop_clean_state(
 
     env._ttc_prev_episode_length_buf = current_episode_length
     env._ttc_state_synced_step = env.common_step_counter
+    _update_target_debug_visualization(env)
 
 
 def _task_obs(env) -> torch.Tensor:

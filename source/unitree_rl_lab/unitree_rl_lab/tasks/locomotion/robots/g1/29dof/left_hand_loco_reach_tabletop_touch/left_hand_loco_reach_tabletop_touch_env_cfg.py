@@ -67,12 +67,12 @@ TABLETOP_SAMPLE_WEIGHTS = {
     "far": 0.15,
 }
 TABLETOP_BLOCK_LAYOUT = (
-    ((0.56, 0.08, TABLE_TOP_BLOCK_Z), (0.90, 0.30, 0.24)),
-    ((0.60, 0.16, TABLE_TOP_BLOCK_Z), (0.94, 0.56, 0.20)),
-    ((0.62, 0.10, TABLE_TOP_BLOCK_Z), (0.95, 0.78, 0.20)),
-    ((0.64, 0.20, TABLE_TOP_BLOCK_Z), (0.26, 0.74, 0.40)),
-    ((0.66, 0.06, TABLE_TOP_BLOCK_Z), (0.22, 0.58, 0.90)),
-    ((0.68, 0.14, TABLE_TOP_BLOCK_Z), (0.64, 0.38, 0.90)),
+    ((0.58, 0.08, TABLE_TOP_BLOCK_Z), (0.90, 0.30, 0.24)),
+    ((0.62, 0.16, TABLE_TOP_BLOCK_Z), (0.94, 0.56, 0.20)),
+    ((0.64, 0.10, TABLE_TOP_BLOCK_Z), (0.95, 0.78, 0.20)),
+    ((0.66, 0.20, TABLE_TOP_BLOCK_Z), (0.26, 0.74, 0.40)),
+    ((0.68, 0.06, TABLE_TOP_BLOCK_Z), (0.22, 0.58, 0.90)),
+    ((0.70, 0.14, TABLE_TOP_BLOCK_Z), (0.64, 0.38, 0.90)),
 )
 
 
@@ -197,7 +197,7 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
     def __post_init__(self):
         super().__post_init__()
 
-        self.scene.robot.init_state.pos = (0.26, 0.0, 0.8)
+        self.scene.robot.init_state.pos = (0.22, 0.0, 0.8)
         self.scene.robot.init_state.rot = (1.0, 0.0, 0.0, 0.0)
         self.scene.env_spacing = 4.0
         self.episode_length_s = 24.0
@@ -224,7 +224,7 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
         self.events.add_base_mass = None
         self.events.push_robot = None
         self.events.base_external_force_torque = None
-        self.events.reset_base.params["pose_range"] = {"x": (-0.03, 0.03), "y": (-0.03, 0.03), "yaw": (-0.12, 0.12)}
+        self.events.reset_base.params["pose_range"] = {"x": (-0.015, 0.015), "y": (-0.02, 0.02), "yaw": (-0.08, 0.08)}
         self.events.reset_base.params["velocity_range"] = {
             "x": (0.0, 0.0),
             "y": (0.0, 0.0),
@@ -262,8 +262,24 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
         self.rewards.left_hand_position_tracking_fine.weight = 10.0
         self.rewards.success_posture_bonus.func = freeze_base_reach_mdp.success_posture_bonus
         self.rewards.success_posture_bonus.weight = 3.5
+        self.rewards.undesired_contacts.params["sensor_cfg"] = SceneEntityCfg(
+            "contact_forces",
+            body_names=[TABLETOP_SUPPORT_CONTACT_BODY_REGEX],
+        )
+        self.rewards.undesired_contacts.params["threshold"] = 1.0
+        self.rewards.undesired_contacts.weight = -0.4
 
         self.rewards.base_height.params["target_height"] = 0.78
+        self.terminations.body_support_contact = DoneTerm(
+            func=mdp.illegal_contact,
+            params={
+                "sensor_cfg": SceneEntityCfg(
+                    "contact_forces",
+                    body_names=list(TABLETOP_HARD_SUPPORT_CONTACT_BODY_NAMES),
+                ),
+                "threshold": 5.0,
+            },
+        )
 
         self.viewer.origin_type = "world"
         self.viewer.eye = (2.8, -2.8, 1.9)

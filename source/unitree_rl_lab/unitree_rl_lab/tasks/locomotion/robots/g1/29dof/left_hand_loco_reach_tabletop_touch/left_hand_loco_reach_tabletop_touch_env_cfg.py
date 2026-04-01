@@ -429,20 +429,20 @@ class RobotLeftHandLocoReachTableTopTouchPlayEnvCfg(RobotLeftHandLocoReachTableT
 
 @configclass
 class RobotLeftHandLocoReachTableTopTouchScratchEnvCfg(RobotLeftHandLocoReachTableTopTouchEnvCfg):
-    """Scratch-friendly tabletop bootstrap: one fixed near-left object, no warm start required."""
+    """Scratch-friendly tabletop bootstrap: stand-first single-object curriculum without hard table-contact resets."""
 
     def __post_init__(self):
         super().__post_init__()
 
         scratch_params = {
             "success_threshold": 0.07,
-            "success_hold_steps": 4,
+            "success_hold_steps": 3,
             "per_target_timeout_s": 5.0,
             "pretouch_height": 0.06,
             "pretouch_backoff_x": 0.03,
             "touch_height_offset": 0.015,
-            "base_speed_threshold": 0.10,
-            "hand_speed_threshold": 0.18,
+            "base_speed_threshold": 0.12,
+            "hand_speed_threshold": 0.22,
             "pre_target_switch_radius": 0.12,
             "x_range": (0.42, 0.54),
             "y_range": (0.10, 0.24),
@@ -450,14 +450,14 @@ class RobotLeftHandLocoReachTableTopTouchScratchEnvCfg(RobotLeftHandLocoReachTab
 
         self.left_hand_scene_target_names = ("target_block_0",)
         self.left_hand_scene_target_randomize_order = False
-        self.scene.robot.init_state.pos = (0.20, 0.0, 0.8)
+        self.scene.robot.init_state.pos = (0.10, 0.0, 0.8)
         self.episode_length_s = 12.0
 
         self.commands.left_hand_pose.ranges.pos_x = (0.56, 0.66)
         self.commands.left_hand_pose.ranges.pos_y = (0.10, 0.22)
         self.commands.left_hand_pose.ranges.pos_z = (0.00, 0.08)
 
-        self.events.reset_base.params["pose_range"] = {"x": (-0.005, 0.005), "y": (-0.01, 0.01), "yaw": (-0.04, 0.04)}
+        self.events.reset_base.params["pose_range"] = {"x": (-0.003, 0.003), "y": (-0.006, 0.006), "yaw": (-0.02, 0.02)}
 
         for term_cfg in (
             self.observations.policy.velocity_commands,
@@ -488,28 +488,28 @@ class RobotLeftHandLocoReachTableTopTouchScratchEnvCfg(RobotLeftHandLocoReachTab
         for done_name in ("target_quota", "target_timeout"):
             _update_term_params(getattr(self.terminations, done_name), **scratch_params)
 
-        self.rewards.track_lin_vel_xy.weight = 0.2
-        self.rewards.track_ang_vel_z.weight = 0.1
-        self.rewards.alive.weight = 0.05
-        self.rewards.base_target_stance.weight = -0.8
-        self.rewards.stance_ready.weight = 0.5
-        self.rewards.stance_progress.weight = 1.0
+        self.rewards.track_lin_vel_xy.weight = 0.05
+        self.rewards.track_ang_vel_z.weight = 0.02
+        self.rewards.alive.weight = 0.10
+        self.rewards.base_target_stance.weight = -0.4
+        self.rewards.stance_ready.weight = 1.5
+        self.rewards.stance_progress.weight = 0.5
         self.rewards.right_arm_balance_posture.weight = -0.005
-        self.rewards.pre_stance_torso_lean.weight = -0.5
-        self.rewards.pre_stance_waist_twist.weight = -0.2
-        self.rewards.pre_stance_arm_extension.weight = -0.2
+        self.rewards.pre_stance_torso_lean.weight = -0.2
+        self.rewards.pre_stance_waist_twist.weight = -0.1
+        self.rewards.pre_stance_arm_extension.weight = -0.1
         self.rewards.pre_stance_foot_motion.weight = 0.02
-        self.rewards.hand_phase_progress.weight = 12.0
-        self.rewards.pretouch_ready_bonus.weight = 4.0
-        self.rewards.target_completion.weight = 25.0
-        self.rewards.target_hold.weight = 8.0
+        self.rewards.hand_phase_progress.weight = 3.0
+        self.rewards.pretouch_ready_bonus.weight = 1.0
+        self.rewards.target_completion.weight = 10.0
+        self.rewards.target_hold.weight = 4.0
         self.rewards.near_target_left_hand_stillness.weight = 0.5
         self.rewards.left_hand_position_tracking.weight = -0.04
-        self.rewards.left_hand_position_tracking_fine.weight = 4.0
+        self.rewards.left_hand_position_tracking_fine.weight = 1.5
         self.rewards.success_posture_bonus.weight = 8.0
-        self.rewards.undesired_contacts.weight = -2.0
+        self.rewards.undesired_contacts.weight = -0.5
 
-        self.terminations.body_support_contact.params["threshold"] = 3.0
+        self.terminations.body_support_contact = None
 
 
 @configclass

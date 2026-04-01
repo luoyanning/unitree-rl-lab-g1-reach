@@ -74,9 +74,8 @@ def _active_target_pos_base_yaw(env) -> torch.Tensor:
 
 
 def _ready_pose_w(env, ready_local_pos: tuple[float, float, float]) -> torch.Tensor:
-    robot = _robot(env)
-    ready_local = torch.tensor(ready_local_pos, dtype=torch.float32, device=env.device).unsqueeze(0).repeat(env.num_envs, 1)
-    return robot.data.root_pos_w + quat_apply(yaw_quat(robot.data.root_quat_w), ready_local)
+    del ready_local_pos
+    return env._ttc_rest_hand_w
 
 
 def _start_phase(mode: str) -> int:
@@ -111,6 +110,9 @@ def _ensure_state(env, num_targets: int):
     env._ttc_hand_object_error = torch.zeros(num_envs, device=device)
     env._ttc_prev_hand_target_error = torch.zeros(num_envs, device=device)
     env._ttc_hand_progress = torch.zeros(num_envs, device=device)
+    env._ttc_stance_anchor_valid = torch.zeros(num_envs, dtype=torch.bool, device=device)
+    env._ttc_stance_anchor_xy = torch.zeros(num_envs, 2, device=device)
+    env._ttc_rest_hand_w = torch.zeros(num_envs, 3, device=device)
     env._ttc_stance_anchor_error = torch.zeros(num_envs, device=device)
     env._ttc_base_speed = torch.zeros(num_envs, device=device)
     env._ttc_hand_speed = torch.zeros(num_envs, device=device)
@@ -304,10 +306,20 @@ def _sync_tabletop_clean_state(
     _select_current_target(env, scene_target_names)
 
     robot = _robot(env)
+    root_pos_local_xy = robot.data.root_pos_w[:, :2] - env.scene.env_origins[:, :2]
     hand_pos_w = _hand_pos_w(env)
     hand_vel_w = _hand_vel_w(env)
-    root_pos_local_xy = robot.data.root_pos_w[:, :2] - env.scene.env_origins[:, :2]
-    anchor_xy = torch.tensor(stance_anchor_xy, dtype=torch.float32, device=env.device).unsqueeze(0)
+    if torch.any(reset_ids):
+        reset_env_ids = torch.where(reset_ids)[0]
+        env._ttc_stance_anchor_xy[reset_env_ids] = root_pos_local_xy[reset_env_ids]
+        env._ttc_stance_anchor_valid[reset_env_ids] = True
+        env._ttc_rest_hand_w[reset_env_ids] = hand_pos_w[reset_env_ids]
+    default_anchor_xy = torch.tensor(stance_anchor_xy, dtype=torch.float32, device=env.device).unsqueeze(0)
+    anchor_xy = torch.where(
+        env._ttc_stance_anchor_valid.unsqueeze(-1),
+        env._ttc_stance_anchor_xy,
+        default_anchor_xy.expand(env.num_envs, -1),
+    )
     base_speed = torch.linalg.norm(robot.data.root_lin_vel_w[:, :2], dim=-1)
     hand_speed = torch.linalg.norm(hand_vel_w, dim=-1)
     torso_lean = torch.linalg.norm(robot.data.projected_gravity_b[:, :2], dim=-1)

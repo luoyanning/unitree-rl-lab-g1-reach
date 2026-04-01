@@ -29,7 +29,7 @@ TABLETOP_BLOCK_LAYOUT = (
     ((0.74, 0.12, TABLE_TOP_BLOCK_Z), (0.84, 0.58, 0.26)),
 )
 SUPPORT_CONTACT_BODY_REGEX = (
-    r"^(pelvis|torso_link|waist.*|left_shoulder_.*|left_elbow_link|left_wrist_(roll|pitch)_link|right_.*)$"
+    r"^(pelvis|torso_link|waist.*|left_elbow_link|left_wrist_(roll|pitch)_link)$"
 )
 SUPPORT_SENSOR_CFG = SceneEntityCfg("contact_forces", body_names=[SUPPORT_CONTACT_BODY_REGEX])
 STANCE_ANCHOR_XY = (0.18, 0.0)

@@ -493,6 +493,10 @@ def _sync_tabletop_clean_state(
             "stance_anchor_error": torch.zeros(env.num_envs, device=env.device),
             "support_contact_flag": torch.zeros(env.num_envs, device=env.device),
             "support_force": torch.zeros(env.num_envs, device=env.device),
+            "hand_speed": torch.zeros(env.num_envs, device=env.device),
+            "active_target_height": torch.zeros(env.num_envs, device=env.device),
+            "touch_target_height": torch.zeros(env.num_envs, device=env.device),
+            "object_height": torch.zeros(env.num_envs, device=env.device),
             "target_age_steps": torch.zeros(env.num_envs, device=env.device),
             "phase_hold_counter": torch.zeros(env.num_envs, device=env.device),
         }
@@ -511,6 +515,10 @@ def _sync_tabletop_clean_state(
         command_term.metrics["stance_anchor_error"][:] = env._ttc_stance_anchor_error
         command_term.metrics["support_contact_flag"][:] = env._ttc_support_contact.float()
         command_term.metrics["support_force"][:] = env._ttc_support_force
+        command_term.metrics["hand_speed"][:] = env._ttc_hand_speed
+        command_term.metrics["active_target_height"][:] = env._ttc_active_target_w[:, 2]
+        command_term.metrics["touch_target_height"][:] = env._ttc_touch_w[:, 2]
+        command_term.metrics["object_height"][:] = env._ttc_object_w[:, 2]
         command_term.metrics["target_age_steps"][:] = env._ttc_target_age_steps.float()
         command_term.metrics["phase_hold_counter"][:] = env._ttc_phase_hold_counter.float()
 

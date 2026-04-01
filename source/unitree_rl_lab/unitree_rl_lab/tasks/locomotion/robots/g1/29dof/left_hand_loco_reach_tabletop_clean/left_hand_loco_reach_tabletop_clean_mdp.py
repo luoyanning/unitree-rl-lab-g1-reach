@@ -89,6 +89,10 @@ def _start_phase(mode: str) -> int:
     return PHASE_BALANCE if mode == "balance" else PHASE_PRETOUCH
 
 
+def _touch_requires_recover(mode: str) -> bool:
+    return mode == "touch_recover"
+
+
 def _marker_quat(env) -> torch.Tensor:
     if not hasattr(env, "_ttc_marker_quat"):
         env._ttc_marker_quat = torch.zeros(env.num_envs, 4, device=env.device)
@@ -441,8 +445,13 @@ def _sync_tabletop_clean_state(
     if torch.any(phase_done & (phase == PHASE_TOUCH)):
         done_ids = torch.where(phase_done & (phase == PHASE_TOUCH))[0]
         env._ttc_recent_touch[done_ids] = True
-        env._ttc_recent_success[done_ids] = True
-        _advance_to_next_target(env, done_ids, mode=mode, max_targets_per_episode=max_targets_per_episode)
+        if _touch_requires_recover(mode):
+            env._ttc_phase[done_ids] = PHASE_RECOVER
+            env._ttc_phase_hold_counter[done_ids] = 0
+            env._ttc_phase_steps[done_ids] = 0
+        else:
+            env._ttc_recent_success[done_ids] = True
+            _advance_to_next_target(env, done_ids, mode=mode, max_targets_per_episode=max_targets_per_episode)
 
     if torch.any(phase_done & (phase == PHASE_RECOVER)):
         done_ids = torch.where(phase_done & (phase == PHASE_RECOVER))[0]

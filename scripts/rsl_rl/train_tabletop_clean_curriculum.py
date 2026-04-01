@@ -208,7 +208,11 @@ def find_latest_checkpoint_for_run(log_root: Path, run_name: str) -> Path | None
     return checkpoints[-1]
 
 
-def resolve_hold_stay_checkpoint(repo_root: Path, explicit_path: str | None) -> Path:
+def resolve_hold_stay_checkpoint(
+    repo_root: Path,
+    explicit_path: str | None,
+    selection_policy: str,
+) -> Path:
     if explicit_path:
         checkpoint_path = Path(explicit_path).expanduser().resolve()
         if not checkpoint_path.is_file():
@@ -216,16 +220,62 @@ def resolve_hold_stay_checkpoint(repo_root: Path, explicit_path: str | None) -> 
         return checkpoint_path
 
     log_root = repo_root / "logs" / "rsl_rl" / "unitree_g1_29dof_lefthand_locoreach_adapterholdstay_v0"
-    checkpoints = sorted(
-        (path for path in log_root.rglob("model_*.pt") if path.is_file()),
-        key=lambda path: (checkpoint_iteration(path) if checkpoint_iteration(path) is not None else -1, path.stat().st_mtime_ns),
-    )
-    if not checkpoints:
+    if not log_root.exists():
         raise FileNotFoundError(
             "Could not find any hold_stay checkpoint under logs/rsl_rl/"
             "unitree_g1_29dof_lefthand_locoreach_adapterholdstay_v0"
         )
-    return checkpoints[-1]
+
+    if selection_policy == "highest_iter":
+        checkpoints = sorted(
+            (path for path in log_root.rglob("model_*.pt") if path.is_file()),
+            key=lambda path: (
+                checkpoint_iteration(path) if checkpoint_iteration(path) is not None else -1,
+                path.stat().st_mtime_ns,
+                str(path),
+            ),
+        )
+        if not checkpoints:
+            raise FileNotFoundError(
+                "Could not find any hold_stay model_*.pt checkpoints under logs/rsl_rl/"
+                "unitree_g1_29dof_lefthand_locoreach_adapterholdstay_v0"
+            )
+        selected_checkpoint = checkpoints[-1]
+        print(
+            f"[CURRICULUM] Auto-selected hold_stay checkpoint with policy 'highest_iter': {selected_checkpoint}",
+            flush=True,
+        )
+        return selected_checkpoint
+
+    run_dirs = sorted(
+        (path for path in log_root.iterdir() if path.is_dir()),
+        key=lambda path: (path.stat().st_mtime_ns, path.name),
+    )
+    if not run_dirs:
+        raise FileNotFoundError(
+            "Found the hold_stay log root, but it does not contain any run directories with checkpoints."
+        )
+
+    for run_dir in reversed(run_dirs):
+        checkpoints = sorted(
+            (path for path in run_dir.glob("model_*.pt") if path.is_file()),
+            key=lambda path: (
+                checkpoint_iteration(path) if checkpoint_iteration(path) is not None else -1,
+                path.stat().st_mtime_ns,
+                str(path),
+            ),
+        )
+        if checkpoints:
+            selected_checkpoint = checkpoints[-1]
+            print(
+                f"[CURRICULUM] Auto-selected hold_stay checkpoint with policy 'latest_run': {selected_checkpoint}",
+                flush=True,
+            )
+            return selected_checkpoint
+
+    raise FileNotFoundError(
+        "Found hold_stay run directories, but none of them contain model_*.pt checkpoints."
+    )
 
 
 def signal_process_group(process: subprocess.Popen[str], sig: int) -> None:
@@ -411,6 +461,13 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         help="Optional explicit hold_stay checkpoint for the first pretouch stage.",
     )
     parser.add_argument(
+        "--hold_stay_selection_policy",
+        type=str,
+        default="latest_run",
+        choices=("latest_run", "highest_iter"),
+        help="How to auto-select hold_stay when --hold_stay_checkpoint is not provided.",
+    )
+    parser.add_argument(
         "--curriculum_init_checkpoint",
         type=str,
         default=None,
@@ -479,7 +536,11 @@ def main() -> int:
                 f"--curriculum_init_checkpoint does not point to a file: {next_init_checkpoint}"
             )
     elif stage_sequence[0].name == "pretouch":
-        next_init_checkpoint = resolve_hold_stay_checkpoint(repo_root, args.hold_stay_checkpoint)
+        next_init_checkpoint = resolve_hold_stay_checkpoint(
+            repo_root,
+            args.hold_stay_checkpoint,
+            args.hold_stay_selection_policy,
+        )
     else:
         raise ValueError(
             "Starting after pretouch requires --curriculum_init_checkpoint because there is no previous stage to chain from."

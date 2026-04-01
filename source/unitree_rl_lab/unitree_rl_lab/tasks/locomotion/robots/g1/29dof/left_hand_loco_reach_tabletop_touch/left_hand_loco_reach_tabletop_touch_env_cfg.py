@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import isaaclab.sim as sim_utils
+from isaaclab.managers import ObservationTermCfg as ObsTerm
+from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.terrains import TerrainImporterCfg
@@ -14,6 +16,7 @@ from ..left_hand_loco_reach_adapter_hold_stay.left_hand_loco_reach_adapter_hold_
     STATIC_TARGET_HOLD_S,
     RobotLeftHandLocoReachAdapterHoldStayEnvCfg,
 )
+from . import left_hand_loco_reach_tabletop_touch_mdp as tabletop_touch_mdp
 from ..velocity_env_cfg import RobotSceneCfg
 
 
@@ -194,6 +197,44 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
     def __post_init__(self):
         super().__post_init__()
 
+        ee_cfg = SceneEntityCfg("robot", body_names=[tabletop_touch_mdp.LEFT_HAND_BODY_NAME])
+        left_arm_cfg = SceneEntityCfg(
+            "robot",
+            joint_names=[
+                "left_shoulder_pitch_joint",
+                "left_shoulder_roll_joint",
+                "left_shoulder_yaw_joint",
+                "left_elbow_joint",
+            ],
+        )
+        right_arm_cfg = SceneEntityCfg(
+            "robot",
+            joint_names=[
+                "right_shoulder_pitch_joint",
+                "right_shoulder_roll_joint",
+                "right_shoulder_yaw_joint",
+                "right_elbow_joint",
+                "right_wrist_roll_joint",
+                "right_wrist_pitch_joint",
+                "right_wrist_yaw_joint",
+            ],
+        )
+        waist_yaw_cfg = SceneEntityCfg("robot", joint_names=["waist_yaw_joint"])
+        feet_cfg = SceneEntityCfg("robot", body_names=["left_ankle_roll_link", "right_ankle_roll_link"])
+        task_params = {
+            "success_threshold": 0.05,
+            "success_hold_steps": 10,
+            "per_target_timeout_s": TABLETOP_PER_TARGET_TIMEOUT_S,
+            "pretouch_height": 0.08,
+            "pretouch_backoff_x": 0.04,
+            "touch_height_offset": 0.02,
+            "base_speed_threshold": 0.06,
+            "hand_speed_threshold": 0.10,
+            "pre_target_switch_radius": 0.08,
+            "x_range": TABLETOP_STANCE_X_RANGE,
+            "y_range": TABLETOP_STANCE_Y_RANGE,
+        }
+
         self.scene.robot.init_state.pos = (0.18, 0.0, 0.8)
         self.scene.robot.init_state.rot = (1.0, 0.0, 0.0, 0.0)
         self.scene.env_spacing = 4.0
@@ -232,16 +273,109 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
         }
         self.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
 
-        for term_cfg in (
-            self.observations.policy.velocity_commands,
-            self.observations.critic.velocity_commands,
-        ):
-            _retarget_term_params(term_cfg)
+        self.observations.policy.velocity_commands = ObsTerm(
+            func=tabletop_touch_mdp.target_pos_command_obs,
+            params=task_params,
+        )
+        self.observations.critic.velocity_commands = ObsTerm(
+            func=tabletop_touch_mdp.target_pos_command_obs,
+            params=task_params,
+        )
 
-        for term_cfg in vars(self.rewards).values():
-            _retarget_term_params(term_cfg)
-        for term_cfg in vars(self.terminations).values():
-            _retarget_term_params(term_cfg)
+        for stale_reward_name in (
+            "post_success_stay",
+            "dwell_left_hand_stillness",
+            "ready_reach_right_arm_neutral",
+            "ready_reach_stationary",
+            "ready_reach_left_hand_stillness",
+            "ready_reach_left_hand_vertical_motion",
+            "ready_reach_left_arm_joint_acc",
+            "ready_reach_foot_shuffle",
+        ):
+            if hasattr(self.rewards, stale_reward_name):
+                setattr(self.rewards, stale_reward_name, None)
+
+        self.terminations.reach_success = None
+        self.rewards.base_target_stance = RewTerm(
+            func=tabletop_touch_mdp.target_relative_base_stance_l2,
+            weight=-1.5,
+            params=task_params,
+        )
+        self.rewards.stance_ready = RewTerm(
+            func=tabletop_touch_mdp.target_relative_base_stance_ready,
+            weight=1.5,
+            params={**task_params, "gate_std": 0.01},
+        )
+        self.rewards.stance_progress = RewTerm(
+            func=tabletop_touch_mdp.target_relative_base_stance_progress,
+            weight=2.0,
+            params=task_params,
+        )
+        self.rewards.right_arm_balance_posture = RewTerm(
+            func=tabletop_touch_mdp.pre_stance_joint_deviation_penalty,
+            weight=-0.01,
+            params={**task_params, "asset_cfg": right_arm_cfg},
+        )
+        self.rewards.pre_stance_torso_lean = RewTerm(
+            func=tabletop_touch_mdp.pre_stance_torso_lean_penalty,
+            weight=-1.5,
+            params=task_params,
+        )
+        self.rewards.pre_stance_waist_twist = RewTerm(
+            func=tabletop_touch_mdp.pre_stance_joint_deviation_penalty,
+            weight=-0.8,
+            params={**task_params, "asset_cfg": waist_yaw_cfg},
+        )
+        self.rewards.pre_stance_arm_extension = RewTerm(
+            func=tabletop_touch_mdp.pre_stance_joint_limit_penalty,
+            weight=-1.0,
+            params={**task_params, "asset_cfg": left_arm_cfg, "margin_threshold": 0.18},
+        )
+        self.rewards.pre_stance_foot_motion = RewTerm(
+            func=tabletop_touch_mdp.pre_stance_foot_motion_reward,
+            weight=0.05,
+            params={**task_params, "asset_cfg": feet_cfg},
+        )
+        self.rewards.hand_phase_progress = RewTerm(
+            func=tabletop_touch_mdp.hand_phase_progress_reward,
+            weight=10.0,
+            params={**task_params, "progress_scale": 0.04},
+        )
+        self.rewards.pretouch_ready_bonus = RewTerm(
+            func=tabletop_touch_mdp.pretouch_ready_bonus,
+            weight=2.5,
+            params=task_params,
+        )
+        self.rewards.target_completion = RewTerm(
+            func=tabletop_touch_mdp.target_completion_bonus,
+            weight=12.0,
+            params=task_params,
+        )
+        self.rewards.target_hold = RewTerm(
+            func=tabletop_touch_mdp.target_hold_reward,
+            weight=6.0,
+            params={**task_params, "asset_cfg": ee_cfg, "hold_reward_std": 0.02},
+        )
+        self.rewards.near_target_left_hand_stillness = RewTerm(
+            func=tabletop_touch_mdp.near_target_left_hand_stillness_reward,
+            weight=1.0,
+            params={**task_params, "asset_cfg": ee_cfg, "near_target_radius": 0.10, "hand_speed_scale": 0.08},
+        )
+        self.rewards.left_hand_position_tracking = RewTerm(
+            func=tabletop_touch_mdp.static_target_position_error,
+            weight=-0.08,
+            params={**task_params, "asset_cfg": ee_cfg},
+        )
+        self.rewards.left_hand_position_tracking_fine = RewTerm(
+            func=tabletop_touch_mdp.gated_position_command_error_tanh,
+            weight=12.0,
+            params={**task_params, "asset_cfg": ee_cfg, "std": 0.10, "gate_std": 0.01},
+        )
+        self.rewards.success_posture_bonus = RewTerm(
+            func=tabletop_touch_mdp.success_posture_bonus,
+            weight=4.0,
+            params={**task_params, "asset_cfg": ee_cfg, "arm_joint_cfg": left_arm_cfg},
+        )
 
         self.rewards.undesired_contacts.params["sensor_cfg"] = SceneEntityCfg(
             "contact_forces",
@@ -252,6 +386,14 @@ class RobotLeftHandLocoReachTableTopTouchEnvCfg(
 
         self.terminations.base_height.params["minimum_height"] = 0.16
         self.terminations.bad_orientation.params["limit_angle"] = 0.8
+        self.terminations.target_quota = DoneTerm(
+            func=tabletop_touch_mdp.target_success_reached,
+            params=task_params,
+        )
+        self.terminations.target_timeout = DoneTerm(
+            func=tabletop_touch_mdp.target_timeout_reached,
+            params=task_params,
+        )
         self.terminations.body_support_contact = DoneTerm(
             func=mdp.illegal_contact,
             params={

@@ -571,93 +571,651 @@ def target_pos_command_obs(
     return _task_obs(env)
 
 
-def stance_anchor_penalty(env, **kwargs):
-    target_pos_command_obs(env, **kwargs)
+_COMMON_TERM_PARAM_NAMES = (
+    "mode",
+    "scene_target_names",
+    "randomize_order",
+    "max_targets_per_episode",
+    "per_target_timeout_s",
+    "stance_anchor_xy",
+    "stance_anchor_std",
+    "stance_anchor_tolerance",
+    "base_speed_threshold",
+    "torso_lean_threshold",
+    "stability_speed_scale",
+    "stability_lean_scale",
+    "ready_local_pos",
+    "balance_radius",
+    "balance_hold_steps",
+    "pretouch_backoff_x",
+    "pretouch_height",
+    "pretouch_radius",
+    "pretouch_hold_steps",
+    "pretouch_stability_gate",
+    "touch_height_offset",
+    "touch_radius",
+    "touch_hold_steps",
+    "touch_stability_gate",
+    "recover_radius",
+    "recover_hold_steps",
+    "recover_stability_gate",
+    "hand_speed_threshold",
+    "support_sensor_cfg",
+    "support_force_threshold",
+)
+
+
+def _sync_from_locals(env, local_vars: dict, **overrides) -> None:
+    params = {name: local_vars[name] for name in _COMMON_TERM_PARAM_NAMES}
+    params.update(overrides)
+    target_pos_command_obs(env, **params)
+
+
+def stance_anchor_penalty(
+    env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
+):
+    _sync_from_locals(env, locals())
     return env._ttc_stance_anchor_error
 
 
-def stance_stability_reward(env, **kwargs):
-    target_pos_command_obs(env, **kwargs)
+def stance_stability_reward(
+    env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
+):
+    _sync_from_locals(env, locals())
     return env._ttc_stability_gate
 
 
-def phase_progress_reward(env, progress_scale: float = 0.04, **kwargs):
-    target_pos_command_obs(env, **kwargs)
+def phase_progress_reward(
+    env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
+    progress_scale: float = 0.04,
+):
+    _sync_from_locals(env, locals())
     return torch.tanh(torch.clamp(env._ttc_hand_progress, min=0.0) / max(progress_scale, 1.0e-6))
 
 
-def phase_target_tracking_reward(env, std: float = 0.08, asset_cfg: SceneEntityCfg | None = None, **kwargs):
+def phase_target_tracking_reward(
+    env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
+    std: float = 0.08,
+    asset_cfg: SceneEntityCfg | None = None,
+):
     del asset_cfg
-    target_pos_command_obs(env, **kwargs)
+    _sync_from_locals(env, locals())
     return 1.0 - torch.tanh(env._ttc_hand_target_error / max(std, 1.0e-6))
 
 
-def phase_hold_reward(env, hold_reward_std: float = 0.03, hand_speed_scale: float = 0.10, **kwargs):
-    target_pos_command_obs(env, **kwargs)
+def phase_hold_reward(
+    env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
+    hold_reward_std: float = 0.03,
+    hand_speed_scale: float = 0.10,
+):
+    _sync_from_locals(env, locals())
     near_target = torch.exp(-env._ttc_hand_target_error / max(hold_reward_std, 1.0e-6))
     hand_still = torch.exp(-env._ttc_hand_speed / max(hand_speed_scale, 1.0e-6))
     return near_target * hand_still
 
 
-def lift_intent_reward(env, lift_reference_z: float = 0.08, lift_scale: float = 0.08, **kwargs):
-    target_pos_command_obs(env, **kwargs)
+def lift_intent_reward(
+    env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
+    lift_reference_z: float = 0.08,
+    lift_scale: float = 0.08,
+):
+    _sync_from_locals(env, locals())
     hand_pos_base = _target_pos_base_yaw(env, _hand_pos_w(env))
     lift_height = torch.clamp(hand_pos_base[:, 2] - lift_reference_z, min=0.0)
     reaching_mask = env._ttc_phase == PHASE_PRETOUCH
     return reaching_mask.float() * torch.tanh(lift_height / max(lift_scale, 1.0e-6))
 
 
-def pretouch_bonus(env, **kwargs):
-    target_pos_command_obs(env, **kwargs)
+def pretouch_bonus(
+    env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
+):
+    _sync_from_locals(env, locals())
     return env._ttc_recent_pretouch.float()
 
 
-def touch_bonus(env, **kwargs):
-    target_pos_command_obs(env, **kwargs)
+def touch_bonus(
+    env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
+):
+    _sync_from_locals(env, locals())
     return env._ttc_recent_touch.float()
 
 
-def target_completion_bonus(env, **kwargs):
-    target_pos_command_obs(env, **kwargs)
+def target_completion_bonus(
+    env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
+):
+    _sync_from_locals(env, locals())
     return env._ttc_recent_success.float()
 
 
-def support_contact_penalty(env, force_scale: float = 10.0, **kwargs):
-    target_pos_command_obs(env, **kwargs)
+def support_contact_penalty(
+    env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
+    force_scale: float = 10.0,
+):
+    _sync_from_locals(env, locals())
     return torch.clamp(env._ttc_support_force / max(force_scale, 1.0e-6), min=0.0)
 
 
-def torso_lean_penalty(env, **kwargs):
-    target_pos_command_obs(env, **kwargs)
+def torso_lean_penalty(
+    env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
+):
+    _sync_from_locals(env, locals())
     return env._ttc_torso_lean
 
 
-def joint_deviation_penalty(env, asset_cfg: SceneEntityCfg, **kwargs):
-    target_pos_command_obs(env, **kwargs)
+def joint_deviation_penalty(
+    env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
+    asset_cfg: SceneEntityCfg,
+):
+    _sync_from_locals(env, locals())
     return _joint_deviation(env, asset_cfg=asset_cfg)
 
 
-def joint_limit_penalty(env, asset_cfg: SceneEntityCfg, margin_threshold: float = 0.18, **kwargs):
-    target_pos_command_obs(env, **kwargs)
+def joint_limit_penalty(
+    env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
+    asset_cfg: SceneEntityCfg,
+    margin_threshold: float = 0.18,
+):
+    _sync_from_locals(env, locals())
     return _joint_limit_pressure(env, asset_cfg=asset_cfg, margin_threshold=margin_threshold)
 
 
-def task_success_reached(env, max_targets_per_episode: int, **kwargs):
-    target_pos_command_obs(env, max_targets_per_episode=max_targets_per_episode, **kwargs)
+def task_success_reached(
+    env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
+):
+    _sync_from_locals(env, locals())
     return env._ttc_completed_targets >= max_targets_per_episode
 
 
-def task_timeout_reached(env, **kwargs):
-    target_pos_command_obs(env, **kwargs)
+def task_timeout_reached(
+    env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
+):
+    _sync_from_locals(env, locals())
     return env._ttc_timed_out
 
 
 def support_contact_termination(
     env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
     termination_force_threshold: float = 5.0,
-    **kwargs,
 ):
-    updated_kwargs = dict(kwargs)
-    updated_kwargs["support_force_threshold"] = termination_force_threshold
-    target_pos_command_obs(env, **updated_kwargs)
+    _sync_from_locals(env, locals(), support_force_threshold=termination_force_threshold)
     return env._ttc_support_contact

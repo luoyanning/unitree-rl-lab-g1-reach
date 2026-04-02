@@ -706,21 +706,34 @@ class RobotLeftHandLocoReachTableTopMultiTouchPairAnchorTightEnvCfg(
             hand_speed_threshold=0.28,
             support_force_threshold=4.0,
         )
-        self.rewards.stance_anchor.weight = -1.20
-        self.rewards.stance_stability.weight = 2.4
+        self.rewards.stance_anchor.weight = -2.0
+        self.rewards.stance_stability.weight = 3.0
         self.rewards.backward_drift.weight = -8.0
-        self.rewards.phase_progress.weight = 4.6
-        self.rewards.phase_tracking.weight = 4.6
-        self.rewards.phase_hold.weight = 6.5
+        self.rewards.phase_progress.weight = 3.5
+        self.rewards.phase_tracking.weight = 2.8
+        self.rewards.phase_hold.weight = 5.5
         self.rewards.lift_intent.weight = 0.25
         self.rewards.pretouch_bonus.weight = 2.5
         self.rewards.touch_bonus.weight = 7.0
         self.rewards.target_completion.weight = 16.0
         self.rewards.target_age.weight = -1.4
-        self.rewards.support_contact.weight = -0.45
-        self.rewards.left_hand_tracking.weight = 2.8
+        self.rewards.support_contact.weight = -1.6
+        self.rewards.left_hand_tracking.weight = 1.8
         self.rewards.phase_tracking.params["std"] = 0.08
+        self.rewards.phase_tracking.params["use_stability_gate"] = True
+        self.rewards.phase_tracking.params["block_on_support_contact"] = True
+        self.rewards.phase_hold.params["use_stability_gate"] = True
+        self.rewards.phase_hold.params["block_on_support_contact"] = True
         self.rewards.left_hand_tracking.params["std"] = 0.06
+        self.rewards.left_hand_tracking.params["use_stability_gate"] = True
+        self.rewards.left_hand_tracking.params["block_on_support_contact"] = True
+        self.terminations.body_support_contact = DoneTerm(
+            func=tabletop_clean_mdp.support_contact_termination,
+            params={
+                **self.observations.policy.velocity_commands.params,
+                "termination_force_threshold": 10.0,
+            },
+        )
 
 
 @configclass
@@ -883,18 +896,31 @@ class RobotLeftHandLocoReachTableTopFixedAcquireStayAnchorTightEnvCfg(
             hand_speed_threshold=0.24,
             support_force_threshold=6.0,
         )
-        self.rewards.stance_anchor.weight = -1.0
-        self.rewards.stance_stability.weight = 2.6
+        self.rewards.stance_anchor.weight = -1.6
+        self.rewards.stance_stability.weight = 3.0
         self.rewards.backward_drift.weight = -10.0
-        self.rewards.phase_progress.weight = 4.0
-        self.rewards.phase_tracking.weight = 5.4
-        self.rewards.phase_hold.weight = 8.8
+        self.rewards.phase_progress.weight = 3.4
+        self.rewards.phase_tracking.weight = 3.8
+        self.rewards.phase_hold.weight = 8.0
         self.rewards.target_completion.weight = 24.0
         self.rewards.target_age.weight = -0.50
-        self.rewards.support_contact.weight = -0.30
-        self.rewards.left_hand_tracking.weight = 3.2
+        self.rewards.support_contact.weight = -1.2
+        self.rewards.left_hand_tracking.weight = 2.2
         self.rewards.phase_tracking.params["std"] = 0.07
+        self.rewards.phase_tracking.params["use_stability_gate"] = True
+        self.rewards.phase_tracking.params["block_on_support_contact"] = True
+        self.rewards.phase_hold.params["use_stability_gate"] = True
+        self.rewards.phase_hold.params["block_on_support_contact"] = True
         self.rewards.left_hand_tracking.params["std"] = 0.05
+        self.rewards.left_hand_tracking.params["use_stability_gate"] = True
+        self.rewards.left_hand_tracking.params["block_on_support_contact"] = True
+        self.terminations.body_support_contact = DoneTerm(
+            func=tabletop_clean_mdp.support_contact_termination,
+            params={
+                **self.observations.policy.velocity_commands.params,
+                "termination_force_threshold": 12.0,
+            },
+        )
 
 
 @configclass

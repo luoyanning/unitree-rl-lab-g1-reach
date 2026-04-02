@@ -896,10 +896,17 @@ def phase_target_tracking_reward(
     support_force_threshold: float,
     std: float = 0.08,
     asset_cfg: SceneEntityCfg | None = None,
+    use_stability_gate: bool = False,
+    block_on_support_contact: bool = False,
 ):
     del asset_cfg
     _sync_from_locals(env, locals())
-    return torch.exp(-env._ttc_hand_target_error / max(std, 1.0e-6))
+    reward = torch.exp(-env._ttc_hand_target_error / max(std, 1.0e-6))
+    if use_stability_gate:
+        reward = reward * env._ttc_stability_gate
+    if block_on_support_contact:
+        reward = reward * (~env._ttc_support_contact).float()
+    return reward
 
 
 def phase_hold_reward(
@@ -936,11 +943,18 @@ def phase_hold_reward(
     support_force_threshold: float,
     hold_reward_std: float = 0.03,
     hand_speed_scale: float = 0.10,
+    use_stability_gate: bool = False,
+    block_on_support_contact: bool = False,
 ):
     _sync_from_locals(env, locals())
     near_target = torch.exp(-env._ttc_hand_target_error / max(hold_reward_std, 1.0e-6))
     hand_still = torch.exp(-env._ttc_hand_speed / max(hand_speed_scale, 1.0e-6))
-    return near_target * hand_still
+    reward = near_target * hand_still
+    if use_stability_gate:
+        reward = reward * env._ttc_stability_gate
+    if block_on_support_contact:
+        reward = reward * (~env._ttc_support_contact).float()
+    return reward
 
 
 def lift_intent_reward(

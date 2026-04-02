@@ -828,7 +828,6 @@ class RobotLeftHandLocoReachTableTopFixedAcquireStayPlayEnvCfg(
         self.events.reset_base.params["pose_range"] = {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)}
         self.episode_length_s = 30.0
         self.commands.base_velocity.resampling_time_range = (self.episode_length_s, self.episode_length_s)
-        self.terminations.target_quota = None
         self.terminations.target_timeout = None
         self.terminations.body_support_contact = None
 

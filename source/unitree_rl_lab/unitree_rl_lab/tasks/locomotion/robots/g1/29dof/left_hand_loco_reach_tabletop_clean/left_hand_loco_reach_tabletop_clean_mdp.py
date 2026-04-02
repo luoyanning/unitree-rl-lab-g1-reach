@@ -115,7 +115,11 @@ def _update_target_debug_visualization(env) -> None:
 
 
 def _ensure_state(env, num_targets: int):
-    if hasattr(env, "_ttc_phase") and getattr(env, "_ttc_num_targets", None) == num_targets:
+    if (
+        hasattr(env, "_ttc_phase")
+        and hasattr(env, "_ttc_task_complete")
+        and getattr(env, "_ttc_num_targets", None) == num_targets
+    ):
         return
 
     robot = _robot(env)
@@ -133,6 +137,7 @@ def _ensure_state(env, num_targets: int):
     env._ttc_phase_hold_counter = torch.zeros(num_envs, dtype=torch.long, device=device)
     env._ttc_target_age_steps = torch.zeros(num_envs, dtype=torch.long, device=device)
     env._ttc_completed_targets = torch.zeros(num_envs, dtype=torch.long, device=device)
+    env._ttc_task_complete = torch.zeros(num_envs, dtype=torch.bool, device=device)
     env._ttc_object_w = torch.zeros(num_envs, 3, device=device)
     env._ttc_pretouch_w = torch.zeros(num_envs, 3, device=device)
     env._ttc_touch_w = torch.zeros(num_envs, 3, device=device)
@@ -258,17 +263,21 @@ def _advance_to_next_target(
         return
 
     env._ttc_completed_targets[success_env_ids] += 1
-    env._ttc_target_slot[success_env_ids] += 1
-    env._ttc_target_age_steps[success_env_ids] = 0
-    env._ttc_phase_hold_counter[success_env_ids] = 0
-    env._ttc_phase_steps[success_env_ids] = 0
-    env._ttc_phase[success_env_ids] = _start_phase(mode)
-    env._ttc_prev_phase[success_env_ids] = env._ttc_phase[success_env_ids]
+    task_complete = env._ttc_completed_targets[success_env_ids] >= max_targets_per_episode
+    completed_env_ids = success_env_ids[task_complete]
+    if len(completed_env_ids) > 0:
+        env._ttc_task_complete[completed_env_ids] = True
 
-    active_more = env._ttc_completed_targets[success_env_ids] < max_targets_per_episode
-    active_env_ids = success_env_ids[active_more]
+    active_env_ids = success_env_ids[~task_complete]
     if len(active_env_ids) == 0:
         return
+
+    env._ttc_target_slot[active_env_ids] += 1
+    env._ttc_target_age_steps[active_env_ids] = 0
+    env._ttc_phase_hold_counter[active_env_ids] = 0
+    env._ttc_phase_steps[active_env_ids] = 0
+    env._ttc_phase[active_env_ids] = _start_phase(mode)
+    env._ttc_prev_phase[active_env_ids] = env._ttc_phase[active_env_ids]
 
     next_slot = env._ttc_target_slot[active_env_ids]
     env._ttc_selected_target_idx[active_env_ids] = env._ttc_target_order[active_env_ids, next_slot]
@@ -333,6 +342,7 @@ def _sync_tabletop_clean_state(
         env._ttc_phase_hold_counter[reset_env_ids] = 0
         env._ttc_target_age_steps[reset_env_ids] = 0
         env._ttc_completed_targets[reset_env_ids] = 0
+        env._ttc_task_complete[reset_env_ids] = False
         env._ttc_prev_hand_target_error[reset_env_ids] = 0.0
 
     _select_current_target(env, scene_target_names)
@@ -423,15 +433,22 @@ def _sync_tabletop_clean_state(
         & phase_gate[active_reach_mask]
         & ~support_contact[active_reach_mask]
     )
+    active_env_mask = ~env._ttc_task_complete
+    phase_success_zone &= active_env_mask
 
     env._ttc_phase_hold_counter = torch.where(
-        phase_success_zone,
-        env._ttc_phase_hold_counter + 1,
-        torch.zeros_like(env._ttc_phase_hold_counter),
+        active_env_mask,
+        torch.where(
+            phase_success_zone,
+            env._ttc_phase_hold_counter + 1,
+            torch.zeros_like(env._ttc_phase_hold_counter),
+        ),
+        env._ttc_phase_hold_counter,
     )
 
     phase_done = env._ttc_phase_hold_counter >= phase_hold_steps
     phase_done &= ~reset_ids
+    phase_done &= active_env_mask
 
     if torch.any(phase_done & (phase == PHASE_PRETOUCH)):
         done_ids = torch.where(phase_done & (phase == PHASE_PRETOUCH))[0]
@@ -468,9 +485,9 @@ def _sync_tabletop_clean_state(
 
     _select_current_target(env, scene_target_names)
 
-    env._ttc_target_age_steps += 1
+    env._ttc_target_age_steps[active_env_mask] += 1
     env._ttc_target_age_steps[reset_ids] = 0
-    env._ttc_phase_steps += 1
+    env._ttc_phase_steps[active_env_mask] += 1
     env._ttc_phase_steps[reset_ids | phase_switched] = 0
 
     per_target_timeout_steps = max(1, int(round(per_target_timeout_s / env.step_dt)))

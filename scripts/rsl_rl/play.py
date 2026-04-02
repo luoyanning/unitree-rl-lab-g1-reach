@@ -80,6 +80,26 @@ def _extract_obs(reset_result):
     return reset_result[0] if isinstance(reset_result, tuple) else reset_result
 
 
+def _set_video_camera(env_cfg):
+    if not hasattr(env_cfg, "viewer"):
+        return
+    if not hasattr(env_cfg, "scene") or not hasattr(env_cfg.scene, "robot") or not hasattr(env_cfg.scene.robot, "init_state"):
+        return
+
+    init_pos = getattr(env_cfg.scene.robot.init_state, "pos", None)
+    if init_pos is None or len(init_pos) < 3:
+        return
+
+    lookat = (float(init_pos[0]), float(init_pos[1]), max(0.65, float(init_pos[2]) - 0.15))
+    eye = (lookat[0] + 3.6, lookat[1] - 3.4, lookat[2] + 1.25)
+
+    env_cfg.viewer.origin_type = "world"
+    if hasattr(env_cfg.viewer, "asset_name"):
+        env_cfg.viewer.asset_name = None
+    env_cfg.viewer.eye = eye
+    env_cfg.viewer.lookat = lookat
+
+
 def main():
     """Play with RSL-RL agent."""
     # parse configuration
@@ -90,6 +110,8 @@ def main():
         use_fabric=not args_cli.disable_fabric,
         entry_point_key="play_env_cfg_entry_point",
     )
+    if args_cli.video:
+        _set_video_camera(env_cfg)
     agent_cfg: RslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
 
     # specify directory for logging experiments

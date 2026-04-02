@@ -8,12 +8,13 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import sys
+from importlib.metadata import version
 
 from isaaclab.app import AppLauncher
 
 # local imports
 import cli_args  # isort: skip
-from rsl_rl_compat import sanitize_runner_cfg  # isort: skip
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
@@ -21,16 +22,20 @@ parser.add_argument("--video", action="store_true", default=False, help="Record 
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
 parser.add_argument("--video_folder", type=str, default=None, help="Optional output folder for recorded play videos.")
 parser.add_argument(
-    "--use_train_env_cfg",
+    "--force_world_camera",
     action="store_true",
     default=False,
-    help="Load the task's training env config entry point instead of the play env config.",
+    help="Override the task camera with a fixed world camera centered on the robot initial pose.",
 )
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
+parser.add_argument(
+    "--agent", type=str, default="rsl_rl_cfg_entry_point", help="Name of the RL agent configuration entry point."
+)
+parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument(
     "--use_pretrained_checkpoint",
     action="store_true",
@@ -41,10 +46,13 @@ parser.add_argument("--real-time", action="store_true", default=False, help="Run
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
-args_cli = parser.parse_args()
+args_cli, hydra_args = parser.parse_known_args()
 # always enable cameras to record video
 if args_cli.video:
     args_cli.enable_cameras = True
+
+# clear out sys.argv for Hydra
+sys.argv = [sys.argv[0]] + hydra_args
 
 # launch omniverse app
 app_launcher = AppLauncher(args_cli)
@@ -57,18 +65,25 @@ import os
 import time
 import torch
 
-from rsl_rl.runners import OnPolicyRunner
+from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
-import isaaclab_tasks  # noqa: F401
-from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
+from isaaclab.envs import (
+    DirectMARLEnv,
+    DirectMARLEnvCfg,
+    DirectRLEnvCfg,
+    ManagerBasedRLEnvCfg,
+    multi_agent_to_single_agent,
+)
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
+from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
+
+import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
+from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import unitree_rl_lab.tasks  # noqa: F401
-from unitree_rl_lab.utils.parser_cfg import parse_env_cfg
 
 
 def validate_checkpoint_path(checkpoint_path: str, flag_name: str = "--checkpoint") -> str:
@@ -80,10 +95,6 @@ def validate_checkpoint_path(checkpoint_path: str, flag_name: str = "--checkpoin
             "This often happens when a shell variable accidentally captured a TensorBoard event file or run directory."
         )
     return checkpoint_path
-
-
-def _extract_obs(reset_result):
-    return reset_result[0] if isinstance(reset_result, tuple) else reset_result
 
 
 def _set_video_camera(env_cfg):
@@ -106,27 +117,32 @@ def _set_video_camera(env_cfg):
     env_cfg.viewer.lookat = lookat
 
 
-def main():
+@hydra_task_config(args_cli.task, args_cli.agent)
+def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     """Play with RSL-RL agent."""
-    # parse configuration
-    entry_point_key = "env_cfg_entry_point" if args_cli.use_train_env_cfg else "play_env_cfg_entry_point"
-    env_cfg = parse_env_cfg(
-        args_cli.task,
-        device=args_cli.device,
-        num_envs=args_cli.num_envs,
-        use_fabric=not args_cli.disable_fabric,
-        entry_point_key=entry_point_key,
-    )
-    if args_cli.video:
+    # grab task name for checkpoint path
+    task_name = args_cli.task.split(":")[-1]
+    train_task_name = task_name.replace("-Play", "")
+
+    # override configurations with non-hydra CLI arguments
+    agent_cfg: RslRlBaseRunnerCfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
+    env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
+
+    # set the environment seed
+    # note: certain randomizations occur in the environment initialization so we set the seed here
+    env_cfg.seed = agent_cfg.seed
+    env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+    if args_cli.disable_fabric:
+        env_cfg.sim.use_fabric = False
+    if args_cli.video and args_cli.force_world_camera:
         _set_video_camera(env_cfg)
-    agent_cfg: RslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
     log_root_path = os.path.abspath(log_root_path)
     print(f"[INFO] Loading experiment from directory: {log_root_path}")
     if args_cli.use_pretrained_checkpoint:
-        resume_path = get_published_pretrained_checkpoint("rsl_rl", args_cli.task)
+        resume_path = get_published_pretrained_checkpoint("rsl_rl", train_task_name)
         if not resume_path:
             print("[INFO] Unfortunately a pre-trained checkpoint is currently unavailable for this task.")
             return
@@ -137,6 +153,9 @@ def main():
 
     log_dir = os.path.dirname(resume_path)
 
+    # set the log directory for the environment (works for all environment types)
+    env_cfg.log_dir = log_dir
+
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
@@ -146,9 +165,8 @@ def main():
 
     # wrap for video recording
     if args_cli.video:
-        video_folder = args_cli.video_folder or os.path.join(log_dir, "videos", "play")
         video_kwargs = {
-            "video_folder": video_folder,
+            "video_folder": args_cli.video_folder or os.path.join(log_dir, "videos", "play"),
             "step_trigger": lambda step: step == 0,
             "video_length": args_cli.video_length,
             "disable_logger": True,
@@ -161,14 +179,11 @@ def main():
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
-    agent_cfg_dict = sanitize_runner_cfg(agent_cfg.to_dict())
     # load previously trained model
     if not hasattr(agent_cfg, "class_name") or agent_cfg.class_name == "OnPolicyRunner":
-        runner = OnPolicyRunner(env, agent_cfg_dict, log_dir=None, device=agent_cfg.device)
+        runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
     elif agent_cfg.class_name == "DistillationRunner":
-        from rsl_rl.runners import DistillationRunner
-
-        runner = DistillationRunner(env, agent_cfg_dict, log_dir=None, device=agent_cfg.device)
+        runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
     else:
         raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
     runner.load(resume_path)
@@ -200,8 +215,12 @@ def main():
 
     dt = env.unwrapped.step_dt
 
-    # reset environment so command generators / task state are initialized.
-    obs = _extract_obs(env.reset())
+    # Match the historical playback path that was known to work for these checkpoints.
+    obs = env.get_observations()
+    if version("rsl-rl-lib").startswith("2.3.") and isinstance(obs, tuple):
+        policy_ = runner.get_inference_policy(device=env.unwrapped.device)
+        policy = lambda x: policy_(x[0])  # noqa: E731
+
     timestep = 0
     # simulate environment
     while simulation_app.is_running():

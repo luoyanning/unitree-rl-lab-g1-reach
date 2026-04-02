@@ -750,6 +750,8 @@ class RobotLeftHandLocoReachTableTopFixedAcquireStayEnvCfg(
                 "pos_z": (0.00, 0.14),
             },
         }
+        # Keep this dict limited to parameters supported by the mobile acquire-stay
+        # state sync / observation / reward / termination functions.
         fixed_task_params = {
             "success_threshold": 0.055,
             "success_exit_radius": 0.09,
@@ -765,8 +767,6 @@ class RobotLeftHandLocoReachTableTopFixedAcquireStayEnvCfg(
             "adapter_post_switch_bias": 0.20,
             "adapter_min_z_blend": 0.20,
             "adapter_snap_to_target_radius": 0.12,
-            "base_speed_threshold": 0.05,
-            "hand_speed_threshold": 0.08,
         }
 
         self.left_hand_scene_target_names = ("target_block_0",)

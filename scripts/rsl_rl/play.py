@@ -46,6 +46,22 @@ parser.add_argument(
     help="Override the task camera with a fixed world camera centered on the robot initial pose.",
 )
 parser.add_argument(
+    "--camera_eye_offset",
+    type=float,
+    nargs=3,
+    default=None,
+    metavar=("X", "Y", "Z"),
+    help="Optional world-camera eye offset relative to the robot initial position.",
+)
+parser.add_argument(
+    "--camera_lookat_offset",
+    type=float,
+    nargs=3,
+    default=None,
+    metavar=("X", "Y", "Z"),
+    help="Optional world-camera lookat offset relative to the robot initial position.",
+)
+parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
@@ -119,7 +135,7 @@ def _extract_policy_obs(obs):
     return obs[0] if isinstance(obs, tuple) else obs
 
 
-def _set_video_camera(env_cfg):
+def _set_video_camera(env_cfg, eye_offset=None, lookat_offset=None):
     if not hasattr(env_cfg, "viewer"):
         return
     if not hasattr(env_cfg, "scene") or not hasattr(env_cfg.scene, "robot") or not hasattr(env_cfg.scene.robot, "init_state"):
@@ -129,8 +145,21 @@ def _set_video_camera(env_cfg):
     if init_pos is None or len(init_pos) < 3:
         return
 
-    lookat = (float(init_pos[0]), float(init_pos[1]), max(0.65, float(init_pos[2]) - 0.15))
-    eye = (lookat[0] + 3.6, lookat[1] - 3.4, lookat[2] + 1.25)
+    if lookat_offset is None:
+        lookat_offset = (0.0, 0.0, 0.65)
+    if eye_offset is None:
+        eye_offset = (2.2, -1.2, 1.15)
+
+    lookat = (
+        float(init_pos[0]) + float(lookat_offset[0]),
+        float(init_pos[1]) + float(lookat_offset[1]),
+        float(init_pos[2]) + float(lookat_offset[2]),
+    )
+    eye = (
+        float(init_pos[0]) + float(eye_offset[0]),
+        float(init_pos[1]) + float(eye_offset[1]),
+        float(init_pos[2]) + float(eye_offset[2]),
+    )
 
     env_cfg.viewer.origin_type = "world"
     if hasattr(env_cfg.viewer, "asset_name"):
@@ -278,7 +307,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if args_cli.disable_fabric:
         env_cfg.sim.use_fabric = False
     if args_cli.video and args_cli.force_world_camera:
-        _set_video_camera(env_cfg)
+        _set_video_camera(
+            env_cfg,
+            eye_offset=args_cli.camera_eye_offset,
+            lookat_offset=args_cli.camera_lookat_offset,
+        )
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)

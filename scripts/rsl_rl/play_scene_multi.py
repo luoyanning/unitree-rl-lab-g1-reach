@@ -8,7 +8,6 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
-from importlib.metadata import version
 
 from isaaclab.app import AppLauncher
 
@@ -63,6 +62,10 @@ from isaaclab_tasks.utils import get_checkpoint_path
 
 import unitree_rl_lab.tasks  # noqa: F401
 from unitree_rl_lab.utils.parser_cfg import parse_env_cfg
+
+
+def _extract_obs(reset_result):
+    return reset_result[0] if isinstance(reset_result, tuple) else reset_result
 
 
 def main():
@@ -194,10 +197,8 @@ def main():
 
     dt = env.unwrapped.step_dt
 
-    # reset environment
-    obs = env.get_observations()
-    if version("rsl-rl-lib").startswith("2.3."):
-        obs, _ = env.get_observations()
+    # reset environment so command generators / task state are initialized.
+    obs = _extract_obs(env.reset())
     timestep = 0
     # simulate environment
     while simulation_app.is_running():
@@ -207,7 +208,9 @@ def main():
             # agent stepping
             actions = policy(obs)
             # env stepping
-            obs, _, _, _ = env.step(actions)
+            obs, _, dones, _ = env.step(actions)
+            if bool(torch.as_tensor(dones).any()):
+                obs = _extract_obs(env.reset())
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video

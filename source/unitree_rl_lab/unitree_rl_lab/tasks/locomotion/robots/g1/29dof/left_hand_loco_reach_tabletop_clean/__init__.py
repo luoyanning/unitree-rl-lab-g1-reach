@@ -97,6 +97,25 @@ gym.register(
 )
 
 gym.register(
+    id="Unitree-G1-29dof-LeftHand-LocoReach-TableTopMultiTouchPairAnchorTight-Clean-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.left_hand_loco_reach_tabletop_clean_env_cfg:"
+            "RobotLeftHandLocoReachTableTopMultiTouchPairAnchorTightEnvCfg"
+        ),
+        "play_env_cfg_entry_point": (
+            f"{__name__}.left_hand_loco_reach_tabletop_clean_env_cfg:"
+            "RobotLeftHandLocoReachTableTopMultiTouchPairAnchorTightPlayEnvCfg"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{__name__}.rsl_rl_ppo_cfg:LeftHandLocoReachTableTopMultiTouchPairAnchorTightPPORunnerCfg"
+        ),
+    },
+)
+
+gym.register(
     id="Unitree-G1-29dof-LeftHand-LocoReach-TableTopMultiTouch-Clean-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
@@ -130,6 +149,25 @@ gym.register(
         ),
         "rsl_rl_cfg_entry_point": (
             f"{__name__}.rsl_rl_ppo_cfg:LeftHandLocoReachTableTopFixedAcquireStayPPORunnerCfg"
+        ),
+    },
+)
+
+gym.register(
+    id="Unitree-G1-29dof-LeftHand-LocoReach-TableTopFixedAcquireStayAnchorTight-Clean-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.left_hand_loco_reach_tabletop_clean_env_cfg:"
+            "RobotLeftHandLocoReachTableTopFixedAcquireStayAnchorTightEnvCfg"
+        ),
+        "play_env_cfg_entry_point": (
+            f"{__name__}.left_hand_loco_reach_tabletop_clean_env_cfg:"
+            "RobotLeftHandLocoReachTableTopFixedAcquireStayAnchorTightPlayEnvCfg"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{__name__}.rsl_rl_ppo_cfg:LeftHandLocoReachTableTopFixedAcquireStayAnchorTightPPORunnerCfg"
         ),
     },
 )

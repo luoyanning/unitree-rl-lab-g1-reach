@@ -287,6 +287,11 @@ class RobotLeftHandLocoReachTableTopCleanBaseEnvCfg(RobotEnvCfg):
             weight=2.5,
             params=task_params,
         )
+        self.rewards.backward_drift = RewTerm(
+            func=tabletop_clean_mdp.backward_drift_penalty,
+            weight=0.0,
+            params=task_params,
+        )
         self.rewards.phase_progress = RewTerm(
             func=tabletop_clean_mdp.phase_progress_reward,
             weight=2.0,
@@ -380,6 +385,7 @@ def _set_task_params(env_cfg: RobotLeftHandLocoReachTableTopCleanBaseEnvCfg, **u
         env_cfg.observations.critic.velocity_commands,
         env_cfg.rewards.stance_anchor,
         env_cfg.rewards.stance_stability,
+        env_cfg.rewards.backward_drift,
         env_cfg.rewards.phase_progress,
         env_cfg.rewards.phase_tracking,
         env_cfg.rewards.phase_hold,
@@ -678,6 +684,46 @@ class RobotLeftHandLocoReachTableTopMultiTouchPairCleanEnvCfg(RobotLeftHandLocoR
 
 
 @configclass
+class RobotLeftHandLocoReachTableTopMultiTouchPairAnchorTightEnvCfg(
+    RobotLeftHandLocoReachTableTopMultiTouchPairCleanEnvCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+        _set_task_params(
+            self,
+            mode="touch_recover_anchor",
+            stance_anchor_std=0.14,
+            stance_anchor_tolerance=0.07,
+            base_speed_threshold=0.24,
+            torso_lean_threshold=0.55,
+            stability_speed_scale=0.22,
+            stability_lean_scale=0.42,
+            pretouch_stability_gate=0.18,
+            touch_stability_gate=0.24,
+            recover_stability_gate=0.28,
+            touch_hold_steps=6,
+            recover_hold_steps=6,
+            hand_speed_threshold=0.28,
+            support_force_threshold=4.0,
+        )
+        self.rewards.stance_anchor.weight = -1.20
+        self.rewards.stance_stability.weight = 2.4
+        self.rewards.backward_drift.weight = -8.0
+        self.rewards.phase_progress.weight = 4.6
+        self.rewards.phase_tracking.weight = 4.6
+        self.rewards.phase_hold.weight = 6.5
+        self.rewards.lift_intent.weight = 0.25
+        self.rewards.pretouch_bonus.weight = 2.5
+        self.rewards.touch_bonus.weight = 7.0
+        self.rewards.target_completion.weight = 16.0
+        self.rewards.target_age.weight = -1.4
+        self.rewards.support_contact.weight = -0.45
+        self.rewards.left_hand_tracking.weight = 2.8
+        self.rewards.phase_tracking.params["std"] = 0.08
+        self.rewards.left_hand_tracking.params["std"] = 0.06
+
+
+@configclass
 class RobotLeftHandLocoReachTableTopMultiTouchCleanEnvCfg(RobotLeftHandLocoReachTableTopCleanBaseEnvCfg):
     def __post_init__(self):
         super().__post_init__()
@@ -818,8 +864,57 @@ class RobotLeftHandLocoReachTableTopFixedAcquireStayEnvCfg(
 
 
 @configclass
+class RobotLeftHandLocoReachTableTopFixedAcquireStayAnchorTightEnvCfg(
+    RobotLeftHandLocoReachTableTopFixedAcquireStayEnvCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+        _set_task_params(
+            self,
+            stance_anchor_std=0.14,
+            stance_anchor_tolerance=0.07,
+            base_speed_threshold=0.22,
+            torso_lean_threshold=0.55,
+            stability_speed_scale=0.20,
+            stability_lean_scale=0.40,
+            pretouch_stability_gate=0.16,
+            touch_stability_gate=0.24,
+            touch_hold_steps=10,
+            hand_speed_threshold=0.24,
+            support_force_threshold=6.0,
+        )
+        self.rewards.stance_anchor.weight = -1.0
+        self.rewards.stance_stability.weight = 2.6
+        self.rewards.backward_drift.weight = -10.0
+        self.rewards.phase_progress.weight = 4.0
+        self.rewards.phase_tracking.weight = 5.4
+        self.rewards.phase_hold.weight = 8.8
+        self.rewards.target_completion.weight = 24.0
+        self.rewards.target_age.weight = -0.50
+        self.rewards.support_contact.weight = -0.30
+        self.rewards.left_hand_tracking.weight = 3.2
+        self.rewards.phase_tracking.params["std"] = 0.07
+        self.rewards.left_hand_tracking.params["std"] = 0.05
+
+
+@configclass
 class RobotLeftHandLocoReachTableTopFixedAcquireStayPlayEnvCfg(
     RobotLeftHandLocoReachTableTopFixedAcquireStayEnvCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 16
+        self.observations.policy.enable_corruption = False
+        self.events.reset_base.params["pose_range"] = {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)}
+        self.episode_length_s = 30.0
+        self.commands.base_velocity.resampling_time_range = (self.episode_length_s, self.episode_length_s)
+        self.terminations.target_timeout = None
+        self.terminations.body_support_contact = None
+
+
+@configclass
+class RobotLeftHandLocoReachTableTopFixedAcquireStayAnchorTightPlayEnvCfg(
+    RobotLeftHandLocoReachTableTopFixedAcquireStayAnchorTightEnvCfg
 ):
     def __post_init__(self):
         super().__post_init__()
@@ -900,6 +995,20 @@ class RobotLeftHandLocoReachTableTopMultiTouchPairCleanPlayEnvCfg(
         self.terminations.body_support_contact = None
         self.terminations.target_timeout = None
         self.terminations.target_quota = None
+
+
+@configclass
+class RobotLeftHandLocoReachTableTopMultiTouchPairAnchorTightPlayEnvCfg(
+    RobotLeftHandLocoReachTableTopMultiTouchPairAnchorTightEnvCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 16
+        self.observations.policy.enable_corruption = False
+        self.events.reset_base.params["pose_range"] = {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)}
+        self.episode_length_s = 30.0
+        self.commands.base_velocity.resampling_time_range = (self.episode_length_s, self.episode_length_s)
+        self.terminations.body_support_contact = None
 
 
 @configclass

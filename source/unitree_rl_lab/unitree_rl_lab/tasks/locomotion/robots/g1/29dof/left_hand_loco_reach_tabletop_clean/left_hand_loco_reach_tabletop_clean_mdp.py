@@ -92,7 +92,11 @@ def _start_phase(mode: str) -> int:
 
 
 def _touch_requires_recover(mode: str) -> bool:
-    return mode == "touch_recover"
+    return mode.startswith("touch_recover")
+
+
+def _recover_target_uses_anchor(mode: str) -> bool:
+    return mode == "touch_recover_anchor"
 
 
 def _marker_quat(env) -> torch.Tensor:
@@ -112,6 +116,15 @@ def _update_target_debug_visualization(env) -> None:
     if not hasattr(env, "_ttc_touch_target_visualizer"):
         env._ttc_touch_target_visualizer = VisualizationMarkers(TOUCH_TARGET_MARKER_CFG)
     env._ttc_touch_target_visualizer.visualize(env._ttc_touch_w, marker_quat)
+
+
+def _anchor_ready_pose_w(env, ready_local_pos: tuple[float, float, float]) -> torch.Tensor:
+    anchor_root_pos_w = torch.zeros((env.num_envs, 3), dtype=torch.float32, device=env.device)
+    anchor_root_pos_w[:, :2] = env.scene.env_origins[:, :2] + env._ttc_stance_anchor_xy
+    anchor_root_pos_w[:, 2] = env._ttc_anchor_root_height
+    ready_local = torch.tensor(ready_local_pos, dtype=torch.float32, device=env.device).unsqueeze(0)
+    ready_local = ready_local.expand(env.num_envs, -1)
+    return anchor_root_pos_w + quat_apply(env._ttc_anchor_yaw_quat, ready_local)
 
 
 def _ensure_state(env, num_targets: int):
@@ -138,6 +151,9 @@ def _ensure_state(env, num_targets: int):
     env._ttc_target_age_steps = torch.zeros(num_envs, dtype=torch.long, device=device)
     env._ttc_completed_targets = torch.zeros(num_envs, dtype=torch.long, device=device)
     env._ttc_task_complete = torch.zeros(num_envs, dtype=torch.bool, device=device)
+    env._ttc_anchor_yaw_quat = torch.zeros(num_envs, 4, device=device)
+    env._ttc_anchor_yaw_quat[:, 0] = 1.0
+    env._ttc_anchor_root_height = torch.zeros(num_envs, device=device)
     env._ttc_object_w = torch.zeros(num_envs, 3, device=device)
     env._ttc_pretouch_w = torch.zeros(num_envs, 3, device=device)
     env._ttc_touch_w = torch.zeros(num_envs, 3, device=device)
@@ -156,6 +172,7 @@ def _ensure_state(env, num_targets: int):
     env._ttc_torso_lean = torch.zeros(num_envs, device=device)
     env._ttc_stability_gate = torch.zeros(num_envs, device=device)
     env._ttc_stable = torch.zeros(num_envs, dtype=torch.bool, device=device)
+    env._ttc_backward_drift = torch.zeros(num_envs, device=device)
     env._ttc_support_force = torch.zeros(num_envs, device=device)
     env._ttc_support_contact = torch.zeros(num_envs, dtype=torch.bool, device=device)
     env._ttc_recent_pretouch = torch.zeros(num_envs, dtype=torch.bool, device=device)
@@ -355,6 +372,8 @@ def _sync_tabletop_clean_state(
         reset_env_ids = torch.where(reset_ids)[0]
         env._ttc_stance_anchor_xy[reset_env_ids] = root_pos_local_xy[reset_env_ids]
         env._ttc_stance_anchor_valid[reset_env_ids] = True
+        env._ttc_anchor_yaw_quat[reset_env_ids] = yaw_quat(robot.data.root_quat_w[reset_env_ids])
+        env._ttc_anchor_root_height[reset_env_ids] = robot.data.root_pos_w[reset_env_ids, 2]
         env._ttc_rest_hand_w[reset_env_ids] = hand_pos_w[reset_env_ids]
     default_anchor_xy = torch.tensor(stance_anchor_xy, dtype=torch.float32, device=env.device).unsqueeze(0)
     anchor_xy = torch.where(
@@ -376,10 +395,14 @@ def _sync_tabletop_clean_state(
         & (base_speed <= base_speed_threshold)
         & (torso_lean <= torso_lean_threshold)
     )
+    backward_drift = torch.clamp(anchor_xy[:, 0] - root_pos_local_xy[:, 0], min=0.0)
     support_force = _support_force(env, support_sensor_cfg=support_sensor_cfg)
     support_contact = support_force > support_force_threshold
 
-    ready_target_w = _ready_pose_w(env, ready_local_pos=ready_local_pos)
+    if _recover_target_uses_anchor(mode):
+        ready_target_w = _anchor_ready_pose_w(env, ready_local_pos=ready_local_pos)
+    else:
+        ready_target_w = _ready_pose_w(env, ready_local_pos=ready_local_pos)
     env._ttc_pretouch_w[:] = env._ttc_object_w
     env._ttc_pretouch_w[:, 0] -= pretouch_backoff_x
     env._ttc_pretouch_w[:, 2] += pretouch_height
@@ -502,6 +525,7 @@ def _sync_tabletop_clean_state(
     env._ttc_torso_lean[:] = torso_lean
     env._ttc_stability_gate[:] = stability_gate
     env._ttc_stable[:] = stable
+    env._ttc_backward_drift[:] = backward_drift
     env._ttc_support_force[:] = support_force
     env._ttc_support_contact[:] = support_contact
 
@@ -519,6 +543,7 @@ def _sync_tabletop_clean_state(
             "hand_object_error": torch.zeros(env.num_envs, device=env.device),
             "stability_gate": torch.zeros(env.num_envs, device=env.device),
             "stance_anchor_error": torch.zeros(env.num_envs, device=env.device),
+            "backward_drift": torch.zeros(env.num_envs, device=env.device),
             "support_contact_flag": torch.zeros(env.num_envs, device=env.device),
             "support_force": torch.zeros(env.num_envs, device=env.device),
             "hand_speed": torch.zeros(env.num_envs, device=env.device),
@@ -541,6 +566,7 @@ def _sync_tabletop_clean_state(
         command_term.metrics["hand_object_error"][:] = env._ttc_hand_object_error
         command_term.metrics["stability_gate"][:] = env._ttc_stability_gate
         command_term.metrics["stance_anchor_error"][:] = env._ttc_stance_anchor_error
+        command_term.metrics["backward_drift"][:] = env._ttc_backward_drift
         command_term.metrics["support_contact_flag"][:] = env._ttc_support_contact.float()
         command_term.metrics["support_force"][:] = env._ttc_support_force
         command_term.metrics["hand_speed"][:] = env._ttc_hand_speed
@@ -757,6 +783,44 @@ def stance_stability_reward(
 ):
     _sync_from_locals(env, locals())
     return env._ttc_stability_gate
+
+
+def backward_drift_penalty(
+    env,
+    mode: str,
+    scene_target_names: Sequence[str],
+    randomize_order: bool,
+    max_targets_per_episode: int,
+    per_target_timeout_s: float,
+    stance_anchor_xy: tuple[float, float],
+    stance_anchor_std: float,
+    stance_anchor_tolerance: float,
+    base_speed_threshold: float,
+    torso_lean_threshold: float,
+    stability_speed_scale: float,
+    stability_lean_scale: float,
+    ready_local_pos: tuple[float, float, float],
+    balance_radius: float,
+    balance_hold_steps: int,
+    pretouch_backoff_x: float,
+    pretouch_height: float,
+    pretouch_radius: float,
+    pretouch_hold_steps: int,
+    pretouch_stability_gate: float,
+    touch_height_offset: float,
+    touch_radius: float,
+    touch_hold_steps: int,
+    touch_stability_gate: float,
+    recover_radius: float,
+    recover_hold_steps: int,
+    recover_stability_gate: float,
+    hand_speed_threshold: float,
+    support_sensor_cfg: SceneEntityCfg,
+    support_force_threshold: float,
+):
+    _sync_from_locals(env, locals())
+    active_phase = env._ttc_phase != PHASE_BALANCE
+    return active_phase.float() * env._ttc_backward_drift
 
 
 def phase_progress_reward(

@@ -54,6 +54,16 @@ class LeftHandLocoReachTableTopMultiTouchPairCleanPPORunnerCfg(BasePPORunnerCfg)
 
 
 @configclass
+class LeftHandLocoReachTableTopMultiTouchPairAnchorTightPPORunnerCfg(
+    LeftHandLocoReachTableTopMultiTouchPairCleanPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+        self.policy.init_noise_std = 0.025
+        self.algorithm.desired_kl = 0.0015
+
+
+@configclass
 class LeftHandLocoReachTableTopMultiTouchCleanPPORunnerCfg(BasePPORunnerCfg):
     def __post_init__(self):
         self.policy.init_noise_std = 0.03
@@ -74,3 +84,11 @@ class LeftHandLocoReachTableTopFixedAcquireStayPPORunnerCfg(
         self.algorithm.desired_kl = 0.0015
         self.algorithm.entropy_coef = 5.0e-5
         self.save_interval = 25
+
+
+@configclass
+class LeftHandLocoReachTableTopFixedAcquireStayAnchorTightPPORunnerCfg(
+    LeftHandLocoReachTableTopFixedAcquireStayPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()

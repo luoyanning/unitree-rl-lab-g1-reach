@@ -188,21 +188,46 @@ def _set_video_camera(env_cfg, eye_offset=None, lookat_offset=None):
     return eye, lookat
 
 
+def _iter_env_targets(env):
+    seen = set()
+    stack = [env]
+    while stack:
+        current = stack.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        yield current
+        for attr_name in ("env", "unwrapped"):
+            next_env = getattr(current, attr_name, None)
+            if next_env is not None and id(next_env) not in seen:
+                stack.append(next_env)
+
+
 def _get_runtime_root_pos(env):
-    scene = getattr(getattr(env, "unwrapped", env), "scene", None)
-    if scene is None:
-        return None
-    try:
-        robot = scene["robot"]
-    except Exception:
-        return None
-    root_pos_w = getattr(getattr(robot, "data", None), "root_pos_w", None)
-    if not isinstance(root_pos_w, torch.Tensor) or root_pos_w.ndim != 2 or root_pos_w.shape[0] == 0:
-        return None
-    root = root_pos_w[0].detach().cpu().tolist()
-    if len(root) < 3:
-        return None
-    return float(root[0]), float(root[1]), float(root[2])
+    for target in _iter_env_targets(env):
+        scene = getattr(target, "scene", None)
+        if scene is None:
+            continue
+        try:
+            robot = scene["robot"]
+        except Exception:
+            continue
+        root_pos_w = getattr(getattr(robot, "data", None), "root_pos_w", None)
+        if not isinstance(root_pos_w, torch.Tensor) or root_pos_w.ndim != 2 or root_pos_w.shape[0] == 0:
+            continue
+        root = root_pos_w[0].detach().cpu().tolist()
+        if len(root) < 3:
+            continue
+        return float(root[0]), float(root[1]), float(root[2])
+    return None
+
+
+def _get_runtime_sim(env):
+    for target in _iter_env_targets(env):
+        sim = getattr(target, "sim", None)
+        if sim is not None and hasattr(sim, "set_camera_view"):
+            return sim
+    return None
 
 
 def _apply_runtime_camera(env, env_cfg, eye_offset=None, lookat_offset=None):
@@ -230,8 +255,8 @@ def _apply_runtime_camera(env, env_cfg, eye_offset=None, lookat_offset=None):
     if eye is None or lookat is None:
         return False
 
-    sim = getattr(getattr(env, "unwrapped", env), "sim", None)
-    if sim is None or not hasattr(sim, "set_camera_view"):
+    sim = _get_runtime_sim(env)
+    if sim is None:
         return False
 
     try:
@@ -239,7 +264,7 @@ def _apply_runtime_camera(env, env_cfg, eye_offset=None, lookat_offset=None):
     except Exception:
         return False
 
-    print(f"[PLAY_CAMERA] runtime_world_camera eye={eye} lookat={lookat}", flush=True)
+    print(f"[PLAY_CAMERA] runtime_world_camera root={runtime_root} eye={eye} lookat={lookat}", flush=True)
     return True
 
 
@@ -381,13 +406,6 @@ def main():
 
     # Certain randomizations occur during environment construction, so seed the env config before gym.make.
     env_cfg.seed = agent_cfg.seed
-    if args_cli.video and args_cli.force_world_camera:
-        _set_video_camera(
-            env_cfg,
-            eye_offset=args_cli.camera_eye_offset,
-            lookat_offset=args_cli.camera_lookat_offset,
-        )
-
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
     log_root_path = os.path.abspath(log_root_path)
@@ -413,14 +431,6 @@ def main():
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv):
         env = multi_agent_to_single_agent(env)
-
-    if args_cli.video and args_cli.force_world_camera:
-        _apply_runtime_camera(
-            env,
-            env_cfg,
-            eye_offset=args_cli.camera_eye_offset,
-            lookat_offset=args_cli.camera_lookat_offset,
-        )
 
     # wrap for video recording
     if args_cli.video:
@@ -480,12 +490,14 @@ def main():
     obs = env.reset() if args_cli.use_env_reset else env.get_observations()
     obs = _extract_policy_obs(obs)
     if args_cli.video and args_cli.force_world_camera:
-        _apply_runtime_camera(
+        applied_camera = _apply_runtime_camera(
             env,
             env_cfg,
             eye_offset=args_cli.camera_eye_offset,
             lookat_offset=args_cli.camera_lookat_offset,
         )
+        if not applied_camera:
+            print("[PLAY_CAMERA] runtime_world_camera unavailable; falling back to task play camera.", flush=True)
     prev_frame, prev_frame_source = _render_frame(env) if args_cli.debug_steps > 0 and args_cli.video else (None, None)
 
     timestep = 0
@@ -496,13 +508,6 @@ def main():
         with torch.inference_mode():
             # agent stepping
             actions = policy(obs)
-            if args_cli.video and args_cli.force_world_camera:
-                _apply_runtime_camera(
-                    env,
-                    env_cfg,
-                    eye_offset=args_cli.camera_eye_offset,
-                    lookat_offset=args_cli.camera_lookat_offset,
-                )
             # env stepping
             obs, _, _, _ = env.step(actions)
             obs = _extract_policy_obs(obs)

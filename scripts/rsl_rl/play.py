@@ -164,7 +164,7 @@ def _format_tensor_sample(value: torch.Tensor | None, max_dim: int = 6) -> str:
     return str(rounded)
 
 
-def _print_debug_step(env, actions: torch.Tensor, step_index: int, command_name: str):
+def _print_debug_step(env, actions: torch.Tensor, step_index: int, command_name: str, frame_delta_mean: float | None = None):
     robot = None
     scene = getattr(env, "scene", None)
     if scene is not None:
@@ -176,9 +176,13 @@ def _print_debug_step(env, actions: torch.Tensor, step_index: int, command_name:
     action_l2 = float(torch.linalg.vector_norm(actions[0]).item()) if actions.ndim == 2 and actions.shape[0] > 0 else 0.0
 
     root_lin_vel = None
+    root_pos = None
     if robot is not None and hasattr(robot, "data") and hasattr(robot.data, "root_lin_vel_w"):
         root_lin_vel = robot.data.root_lin_vel_w[0].detach().cpu().tolist()
         root_lin_vel = [round(float(x), 4) for x in root_lin_vel]
+    if robot is not None and hasattr(robot, "data") and hasattr(robot.data, "root_pos_w"):
+        root_pos = robot.data.root_pos_w[0].detach().cpu().tolist()
+        root_pos = [round(float(x), 4) for x in root_pos]
 
     adapter_command = getattr(env, "_left_hand_adapter_command", None)
     command_tensor = _get_command_tensor(env, command_name)
@@ -191,13 +195,38 @@ def _print_debug_step(env, actions: torch.Tensor, step_index: int, command_name:
         f"common_step={int(getattr(env, 'common_step_counter', -1))} "
         f"action_abs_mean={action_abs_mean:.5f} "
         f"action_l2={action_l2:.5f} "
+        f"root_pos={root_pos} "
         f"root_lin_vel={root_lin_vel} "
         f"adapter_cmd={_format_tensor_sample(adapter_command)} "
         f"command_tensor={_format_tensor_sample(command_tensor)} "
         f"has_active_target={None if has_active_target is None else bool(has_active_target[0].item())} "
-        f"success_hold={None if success_hold is None else int(success_hold[0].item())}",
+        f"success_hold={None if success_hold is None else int(success_hold[0].item())} "
+        f"frame_delta_mean={None if frame_delta_mean is None else round(frame_delta_mean, 4)}",
         flush=True,
     )
+
+
+def _render_frame(env):
+    try:
+        frame = env.render()
+    except Exception:
+        return None
+    if isinstance(frame, torch.Tensor):
+        return frame.detach().cpu()
+    return frame
+
+
+def _frame_delta_mean(prev_frame, frame) -> float | None:
+    if prev_frame is None or frame is None:
+        return None
+    try:
+        prev_tensor = torch.as_tensor(prev_frame)
+        frame_tensor = torch.as_tensor(frame)
+        if prev_tensor.shape != frame_tensor.shape:
+            return None
+        return float((frame_tensor.float() - prev_tensor.float()).abs().mean().item())
+    except Exception:
+        return None
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -300,9 +329,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # Match the historical playback path that was known to work for these checkpoints.
     obs = env.reset() if args_cli.use_env_reset else env.get_observations()
-    if version("rsl-rl-lib").startswith("2.3.") and isinstance(obs, tuple):
-        policy_ = runner.get_inference_policy(device=env.unwrapped.device)
-        policy = lambda x: policy_(x[0])  # noqa: E731
+    obs = _extract_policy_obs(obs)
+    prev_frame = _render_frame(env) if args_cli.debug_steps > 0 and args_cli.video else None
 
     timestep = 0
     # simulate environment
@@ -314,8 +342,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             actions = policy(obs)
             # env stepping
             obs, _, _, _ = env.step(actions)
+            obs = _extract_policy_obs(obs)
+        frame_delta_mean = None
+        if timestep < args_cli.debug_steps and args_cli.video:
+            frame = _render_frame(env)
+            frame_delta_mean = _frame_delta_mean(prev_frame, frame)
+            prev_frame = frame
         if timestep < args_cli.debug_steps:
-            _print_debug_step(env.unwrapped, actions, timestep, args_cli.debug_command_name)
+            _print_debug_step(env.unwrapped, actions, timestep, args_cli.debug_command_name, frame_delta_mean)
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video

@@ -135,15 +135,15 @@ def _extract_policy_obs(obs):
     return obs[0] if isinstance(obs, tuple) else obs
 
 
-def _set_video_camera(env_cfg, eye_offset=None, lookat_offset=None):
+def _resolve_world_camera_pose(env_cfg, eye_offset=None, lookat_offset=None):
     if not hasattr(env_cfg, "viewer"):
-        return
+        return None, None
     if not hasattr(env_cfg, "scene") or not hasattr(env_cfg.scene, "robot") or not hasattr(env_cfg.scene.robot, "init_state"):
-        return
+        return None, None
 
     init_pos = getattr(env_cfg.scene.robot.init_state, "pos", None)
     if init_pos is None or len(init_pos) < 3:
-        return
+        return None, None
 
     if lookat_offset is None:
         lookat_offset = (0.0, 0.0, 0.65)
@@ -161,11 +161,38 @@ def _set_video_camera(env_cfg, eye_offset=None, lookat_offset=None):
         float(init_pos[2]) + float(eye_offset[2]),
     )
 
+    return eye, lookat
+
+
+def _set_video_camera(env_cfg, eye_offset=None, lookat_offset=None):
+    eye, lookat = _resolve_world_camera_pose(env_cfg, eye_offset=eye_offset, lookat_offset=lookat_offset)
+    if eye is None or lookat is None:
+        return None, None
+
     env_cfg.viewer.origin_type = "world"
     if hasattr(env_cfg.viewer, "asset_name"):
         env_cfg.viewer.asset_name = None
     env_cfg.viewer.eye = eye
     env_cfg.viewer.lookat = lookat
+    return eye, lookat
+
+
+def _apply_runtime_camera(env, env_cfg, eye_offset=None, lookat_offset=None):
+    eye, lookat = _resolve_world_camera_pose(env_cfg, eye_offset=eye_offset, lookat_offset=lookat_offset)
+    if eye is None or lookat is None:
+        return False
+
+    sim = getattr(getattr(env, "unwrapped", env), "sim", None)
+    if sim is None or not hasattr(sim, "set_camera_view"):
+        return False
+
+    try:
+        sim.set_camera_view(eye, lookat)
+    except Exception:
+        return False
+
+    print(f"[PLAY_CAMERA] runtime_world_camera eye={eye} lookat={lookat}", flush=True)
+    return True
 
 
 def _get_command_tensor(env, command_name: str):
@@ -339,6 +366,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if isinstance(env.unwrapped, DirectMARLEnv):
         env = multi_agent_to_single_agent(env)
 
+    if args_cli.video and args_cli.force_world_camera:
+        _apply_runtime_camera(
+            env,
+            env_cfg,
+            eye_offset=args_cli.camera_eye_offset,
+            lookat_offset=args_cli.camera_lookat_offset,
+        )
+
     # wrap for video recording
     if args_cli.video:
         video_kwargs = {
@@ -394,6 +429,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # Match the historical playback path that was known to work for these checkpoints.
     obs = env.reset() if args_cli.use_env_reset else env.get_observations()
     obs = _extract_policy_obs(obs)
+    if args_cli.video and args_cli.force_world_camera:
+        _apply_runtime_camera(
+            env,
+            env_cfg,
+            eye_offset=args_cli.camera_eye_offset,
+            lookat_offset=args_cli.camera_lookat_offset,
+        )
     prev_frame, prev_frame_source = _render_frame(env) if args_cli.debug_steps > 0 and args_cli.video else (None, None)
 
     timestep = 0

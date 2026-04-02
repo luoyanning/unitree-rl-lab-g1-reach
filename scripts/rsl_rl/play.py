@@ -8,6 +8,7 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import os
 
 from isaaclab.app import AppLauncher
 
@@ -90,6 +91,8 @@ args_cli = parser.parse_args()
 # always enable cameras to record video
 if args_cli.video:
     args_cli.enable_cameras = True
+    if args_cli.task and "TableTop" in args_cli.task and "Clean" in args_cli.task:
+        os.environ.setdefault("UTRL_TABLETOP_CLEAN_TARGET_VIS", "1")
 
 # launch omniverse app
 app_launcher = AppLauncher(args_cli)
@@ -98,7 +101,6 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import gymnasium as gym
-import os
 import time
 import torch
 

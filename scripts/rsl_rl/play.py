@@ -164,7 +164,14 @@ def _format_tensor_sample(value: torch.Tensor | None, max_dim: int = 6) -> str:
     return str(rounded)
 
 
-def _print_debug_step(env, actions: torch.Tensor, step_index: int, command_name: str, frame_delta_mean: float | None = None):
+def _print_debug_step(
+    env,
+    actions: torch.Tensor,
+    step_index: int,
+    command_name: str,
+    frame_delta_mean: float | None = None,
+    frame_source: str | None = None,
+):
     robot = None
     scene = getattr(env, "scene", None)
     if scene is not None:
@@ -201,19 +208,43 @@ def _print_debug_step(env, actions: torch.Tensor, step_index: int, command_name:
         f"command_tensor={_format_tensor_sample(command_tensor)} "
         f"has_active_target={None if has_active_target is None else bool(has_active_target[0].item())} "
         f"success_hold={None if success_hold is None else int(success_hold[0].item())} "
-        f"frame_delta_mean={None if frame_delta_mean is None else round(frame_delta_mean, 4)}",
+        f"frame_delta_mean={None if frame_delta_mean is None else round(frame_delta_mean, 4)} "
+        f"frame_source={frame_source}",
         flush=True,
     )
 
 
+def _iter_render_targets(env):
+    seen = set()
+    current = env
+    depth = 0
+    while current is not None and id(current) not in seen and depth < 8:
+        seen.add(id(current))
+        yield f"unwrap_depth_{depth}:{type(current).__name__}", current
+        current = getattr(current, "env", None)
+        depth += 1
+
+    unwrapped = getattr(env, "unwrapped", None)
+    if unwrapped is not None and id(unwrapped) not in seen:
+        seen.add(id(unwrapped))
+        yield f"unwrapped:{type(unwrapped).__name__}", unwrapped
+
+
 def _render_frame(env):
-    try:
-        frame = env.render()
-    except Exception:
-        return None
-    if isinstance(frame, torch.Tensor):
-        return frame.detach().cpu()
-    return frame
+    for source_name, candidate in _iter_render_targets(env):
+        render_fn = getattr(candidate, "render", None)
+        if not callable(render_fn):
+            continue
+        try:
+            frame = render_fn()
+        except Exception:
+            continue
+        if frame is None:
+            continue
+        if isinstance(frame, torch.Tensor):
+            return frame.detach().cpu(), source_name
+        return frame, source_name
+    return None, None
 
 
 def _frame_delta_mean(prev_frame, frame) -> float | None:
@@ -330,7 +361,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # Match the historical playback path that was known to work for these checkpoints.
     obs = env.reset() if args_cli.use_env_reset else env.get_observations()
     obs = _extract_policy_obs(obs)
-    prev_frame = _render_frame(env) if args_cli.debug_steps > 0 and args_cli.video else None
+    prev_frame, prev_frame_source = _render_frame(env) if args_cli.debug_steps > 0 and args_cli.video else (None, None)
 
     timestep = 0
     # simulate environment
@@ -344,12 +375,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             obs, _, _, _ = env.step(actions)
             obs = _extract_policy_obs(obs)
         frame_delta_mean = None
+        frame_source = prev_frame_source
         if timestep < args_cli.debug_steps and args_cli.video:
-            frame = _render_frame(env)
+            frame, frame_source = _render_frame(env)
             frame_delta_mean = _frame_delta_mean(prev_frame, frame)
             prev_frame = frame
+            prev_frame_source = frame_source
         if timestep < args_cli.debug_steps:
-            _print_debug_step(env.unwrapped, actions, timestep, args_cli.debug_command_name, frame_delta_mean)
+            _print_debug_step(env.unwrapped, actions, timestep, args_cli.debug_command_name, frame_delta_mean, frame_source)
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video

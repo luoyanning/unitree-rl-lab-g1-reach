@@ -11,12 +11,7 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 
-from unitree_rl_lab.tasks.locomotion import mdp
-
 from ..benchmark_v1.benchmark_env_cfg import _kinematic_cuboid
-from ..left_hand_loco_reach_adapter_acquire_tight_stay_natural_reach_settle_short.left_hand_loco_reach_adapter_acquire_tight_stay_natural_reach_settle_short_env_cfg import (
-    RobotLeftHandLocoReachAdapterAcquireTightStayNaturalReachSettleShortEnvCfg,
-)
 from ..velocity_env_cfg import RobotEnvCfg
 from ..velocity_env_cfg import RobotSceneCfg
 from . import left_hand_loco_reach_tabletop_clean_mdp as tabletop_clean_mdp
@@ -741,61 +736,47 @@ class RobotLeftHandLocoReachTableTopMultiTouchCleanEnvCfg(RobotLeftHandLocoReach
 
 @configclass
 class RobotLeftHandLocoReachTableTopFixedAcquireStayEnvCfg(
-    RobotLeftHandLocoReachAdapterAcquireTightStayNaturalReachSettleShortEnvCfg
+    RobotLeftHandLocoReachTableTopMultiTouchCleanEnvCfg
 ):
     scene: RobotLeftHandTableTopCleanSceneCfg = RobotLeftHandTableTopCleanSceneCfg(num_envs=2048, env_spacing=4.0)
 
     def __post_init__(self):
         super().__post_init__()
-
-        tabletop_mobile_regimes = {
-            "near": {
-                "pos_x": (0.34, 0.46),
-                "pos_y": (0.14, 0.26),
-                "pos_z": (-0.02, 0.06),
-            },
-            "posture": {
-                "pos_x": (0.38, 0.54),
-                "pos_y": (0.10, 0.28),
-                "pos_z": (-0.02, 0.10),
-            },
-            "far": {
-                "pos_x": (0.44, 0.62),
-                "pos_y": (0.06, 0.32),
-                "pos_z": (0.00, 0.14),
-            },
-        }
-        # Keep this dict limited to parameters supported by the mobile acquire-stay
-        # state sync / observation / reward / termination functions.
-        fixed_task_params = {
-            "success_threshold": 0.055,
-            "success_exit_radius": 0.09,
-            "success_hold_steps": 3,
-            "post_success_dwell_steps": 18,
-            "post_success_exit_radius": 0.10,
-            "per_target_timeout_s": 8.0,
-            "x_range": (0.40, 0.54),
-            "y_range": (0.10, 0.24),
-            "sample_regimes": tabletop_mobile_regimes,
-            "sample_weights": {"near": 0.60, "posture": 0.30, "far": 0.10},
-            "adapter_gate_std": 0.03,
-            "adapter_post_switch_bias": 0.20,
-            "adapter_min_z_blend": 0.20,
-            "adapter_snap_to_target_radius": 0.12,
-        }
-
-        self.left_hand_scene_target_names = ("target_block_0",)
-        self.left_hand_scene_target_randomize_order = False
         self.scene.robot.init_state.pos = (0.18, 0.0, 0.8)
         self.scene.robot.init_state.rot = (1.0, 0.0, 0.0, 0.0)
         self.scene.env_spacing = 4.0
-        self.episode_length_s = 18.0
+        self.episode_length_s = 22.0
         self.commands.base_velocity.resampling_time_range = (self.episode_length_s, self.episode_length_s)
-        self.commands.left_hand_pose.ranges.pos_x = (0.36, 0.46)
-        self.commands.left_hand_pose.ranges.pos_y = (0.14, 0.26)
-        self.commands.left_hand_pose.ranges.pos_z = (-0.02, 0.06)
+        _set_task_params(
+            self,
+            mode="touch",
+            scene_target_names=("target_block_0",),
+            randomize_order=False,
+            max_targets_per_episode=1,
+            per_target_timeout_s=12.0,
+            stance_anchor_std=0.22,
+            stance_anchor_tolerance=0.13,
+            base_speed_threshold=0.28,
+            torso_lean_threshold=0.64,
+            stability_speed_scale=0.30,
+            stability_lean_scale=0.54,
+            pretouch_backoff_x=0.02,
+            pretouch_height=0.03,
+            pretouch_radius=0.11,
+            pretouch_hold_steps=3,
+            pretouch_stability_gate=0.10,
+            touch_height_offset=0.01,
+            touch_radius=0.075,
+            touch_hold_steps=8,
+            touch_stability_gate=0.16,
+            recover_radius=0.14,
+            recover_hold_steps=4,
+            recover_stability_gate=0.18,
+            hand_speed_threshold=0.32,
+            support_force_threshold=6.0,
+        )
 
-        self.events.reset_base.params["pose_range"] = {"x": (-0.008, 0.008), "y": (-0.012, 0.012), "yaw": (-0.04, 0.04)}
+        self.events.reset_base.params["pose_range"] = {"x": (-0.02, 0.02), "y": (-0.02, 0.02), "yaw": (-0.08, 0.08)}
         self.events.reset_base.params["velocity_range"] = {
             "x": (0.0, 0.0),
             "y": (0.0, 0.0),
@@ -806,36 +787,28 @@ class RobotLeftHandLocoReachTableTopFixedAcquireStayEnvCfg(
         }
         self.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
 
-        _set_fixed_mobile_target_params(self, **fixed_task_params)
-
-        self.rewards.action_rate.weight = -0.015
-        self.rewards.base_target_stance.weight = -1.8
-        self.rewards.stance_ready.weight = 3.0
-        self.rewards.stance_progress.weight = 3.0
-        self.rewards.ready_reach_right_arm_neutral.weight = 1.2
-        self.rewards.ready_reach_stationary.weight = 3.0
-        self.rewards.pre_stance_torso_lean.weight = -1.2
-        self.rewards.pre_stance_foot_motion.weight = 0.08
-        self.rewards.target_completion.weight = 8.0
-        self.rewards.target_hold.weight = 6.0
-        self.rewards.post_success_stay.weight = 8.0
-        self.rewards.near_target_left_hand_stillness.weight = 2.0
-        self.rewards.dwell_left_hand_stillness.weight = 5.0
-        self.rewards.left_hand_position_tracking.weight = -0.10
-        self.rewards.left_hand_position_tracking_fine.weight = 10.0
-        self.rewards.success_posture_bonus.weight = 4.0
-        self.rewards.undesired_contacts.weight = -0.8
+        self.rewards.stance_anchor.weight = -0.45
+        self.rewards.stance_stability.weight = 2.2
+        self.rewards.phase_progress.weight = 4.5
+        self.rewards.phase_tracking.weight = 5.2
+        self.rewards.phase_hold.weight = 7.5
+        self.rewards.lift_intent.weight = 0.20
+        self.rewards.pretouch_bonus.weight = 3.5
+        self.rewards.touch_bonus.weight = 10.0
+        self.rewards.target_completion.weight = 26.0
+        self.rewards.target_age.weight = -0.35
+        self.rewards.support_contact.weight = -0.20
+        self.rewards.left_hand_tracking.weight = 3.0
+        self.rewards.phase_tracking.params["std"] = 0.08
+        self.rewards.left_hand_tracking.params["std"] = 0.06
 
         self.terminations.base_height.params["minimum_height"] = 0.18
-        self.terminations.bad_orientation.params["limit_angle"] = 0.75
+        self.terminations.bad_orientation.params["limit_angle"] = 0.80
         self.terminations.body_support_contact = DoneTerm(
-            func=mdp.illegal_contact,
+            func=tabletop_clean_mdp.support_contact_termination,
             params={
-                "sensor_cfg": SceneEntityCfg(
-                    "contact_forces",
-                    body_names=["torso_link", "waist.*"],
-                ),
-                "threshold": 5.0,
+                **self.observations.policy.velocity_commands.params,
+                "termination_force_threshold": 40.0,
             },
         )
 

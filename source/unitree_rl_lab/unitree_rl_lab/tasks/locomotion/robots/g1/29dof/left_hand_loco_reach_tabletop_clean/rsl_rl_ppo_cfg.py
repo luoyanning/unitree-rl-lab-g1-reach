@@ -1,8 +1,5 @@
 from isaaclab.utils import configclass
 
-from ..left_hand_loco_reach_adapter_acquire_tight_stay_natural_reach_settle_short.rsl_rl_ppo_cfg import (
-    LeftHandLocoReachAdapterAcquireTightStayNaturalReachSettleShortPPORunnerCfg,
-)
 from unitree_rl_lab.tasks.locomotion.agents.rsl_rl_ppo_cfg import BasePPORunnerCfg
 
 
@@ -68,8 +65,12 @@ class LeftHandLocoReachTableTopMultiTouchCleanPPORunnerCfg(BasePPORunnerCfg):
 
 @configclass
 class LeftHandLocoReachTableTopFixedAcquireStayPPORunnerCfg(
-    LeftHandLocoReachAdapterAcquireTightStayNaturalReachSettleShortPPORunnerCfg
+    LeftHandLocoReachTableTopMultiTouchCleanPPORunnerCfg
 ):
     def __post_init__(self):
         super().__post_init__()
+        self.policy.init_noise_std = 0.02
+        self.algorithm.learning_rate = 1.0e-5
+        self.algorithm.desired_kl = 0.0015
+        self.algorithm.entropy_coef = 5.0e-5
         self.save_interval = 25

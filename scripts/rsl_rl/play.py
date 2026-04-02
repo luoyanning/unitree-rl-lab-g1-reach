@@ -177,8 +177,45 @@ def _set_video_camera(env_cfg, eye_offset=None, lookat_offset=None):
     return eye, lookat
 
 
+def _get_runtime_root_pos(env):
+    scene = getattr(getattr(env, "unwrapped", env), "scene", None)
+    if scene is None:
+        return None
+    try:
+        robot = scene["robot"]
+    except Exception:
+        return None
+    root_pos_w = getattr(getattr(robot, "data", None), "root_pos_w", None)
+    if not isinstance(root_pos_w, torch.Tensor) or root_pos_w.ndim != 2 or root_pos_w.shape[0] == 0:
+        return None
+    root = root_pos_w[0].detach().cpu().tolist()
+    if len(root) < 3:
+        return None
+    return float(root[0]), float(root[1]), float(root[2])
+
+
 def _apply_runtime_camera(env, env_cfg, eye_offset=None, lookat_offset=None):
-    eye, lookat = _resolve_world_camera_pose(env_cfg, eye_offset=eye_offset, lookat_offset=lookat_offset)
+    runtime_root = _get_runtime_root_pos(env)
+    if runtime_root is None:
+        eye, lookat = _resolve_world_camera_pose(env_cfg, eye_offset=eye_offset, lookat_offset=lookat_offset)
+        if eye is None or lookat is None:
+            return False
+    else:
+        if lookat_offset is None:
+            lookat_offset = (0.0, 0.0, 0.65)
+        if eye_offset is None:
+            eye_offset = (2.2, -1.2, 1.15)
+        eye = (
+            runtime_root[0] + float(eye_offset[0]),
+            runtime_root[1] + float(eye_offset[1]),
+            runtime_root[2] + float(eye_offset[2]),
+        )
+        lookat = (
+            runtime_root[0] + float(lookat_offset[0]),
+            runtime_root[1] + float(lookat_offset[1]),
+            runtime_root[2] + float(lookat_offset[2]),
+        )
+
     if eye is None or lookat is None:
         return False
 

@@ -208,9 +208,7 @@ def main():
             # agent stepping
             actions = policy(obs)
             # env stepping
-            obs, _, dones, _ = env.step(actions)
-            if bool(torch.as_tensor(dones).any()):
-                obs = _extract_obs(env.reset())
+            obs, _, _, _ = env.step(actions)
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video

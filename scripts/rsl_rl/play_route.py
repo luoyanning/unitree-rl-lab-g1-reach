@@ -259,10 +259,7 @@ def main():
 
         with torch.inference_mode():
             actions = policy(obs)
-            obs, _, dones, _ = env.step(actions)
-            if bool(torch.as_tensor(dones).any()):
-                obs = _extract_obs(env.reset())
-                timestep = 0
+            obs, _, _, _ = env.step(actions)
 
         timestep += 1
         if args_cli.video and timestep >= args_cli.video_length:

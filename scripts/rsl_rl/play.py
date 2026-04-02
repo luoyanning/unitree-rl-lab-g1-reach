@@ -21,6 +21,12 @@ parser.add_argument("--video", action="store_true", default=False, help="Record 
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
 parser.add_argument("--video_folder", type=str, default=None, help="Optional output folder for recorded play videos.")
 parser.add_argument(
+    "--use_train_env_cfg",
+    action="store_true",
+    default=False,
+    help="Load the task's training env config entry point instead of the play env config.",
+)
+parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
@@ -103,12 +109,13 @@ def _set_video_camera(env_cfg):
 def main():
     """Play with RSL-RL agent."""
     # parse configuration
+    entry_point_key = "env_cfg_entry_point" if args_cli.use_train_env_cfg else "play_env_cfg_entry_point"
     env_cfg = parse_env_cfg(
         args_cli.task,
         device=args_cli.device,
         num_envs=args_cli.num_envs,
         use_fabric=not args_cli.disable_fabric,
-        entry_point_key="play_env_cfg_entry_point",
+        entry_point_key=entry_point_key,
     )
     if args_cli.video:
         _set_video_camera(env_cfg)
@@ -204,9 +211,7 @@ def main():
             # agent stepping
             actions = policy(obs)
             # env stepping
-            obs, _, dones, _ = env.step(actions)
-            if bool(torch.as_tensor(dones).any()):
-                obs = _extract_obs(env.reset())
+            obs, _, _, _ = env.step(actions)
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video

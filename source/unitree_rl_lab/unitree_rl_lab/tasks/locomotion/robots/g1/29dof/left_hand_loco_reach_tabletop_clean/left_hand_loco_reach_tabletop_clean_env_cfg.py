@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 import isaaclab.sim as sim_utils
 import isaaclab_tasks.manager_based.manipulation.reach.mdp as reach_mdp
 from isaaclab.managers import ObservationTermCfg as ObsTerm
@@ -403,6 +405,19 @@ def _set_task_params(env_cfg: RobotLeftHandLocoReachTableTopCleanBaseEnvCfg, **u
         term_cfg.params.update(updates)
 
 
+def _update_term_params_filtered(term_cfg, updates):
+    func = getattr(term_cfg, "func", None)
+    if func is None:
+        term_cfg.params.update(updates)
+        return
+
+    signature = inspect.signature(func)
+    parameters = signature.parameters
+    accepts_kwargs = any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())
+    filtered_updates = {key: value for key, value in updates.items() if accepts_kwargs or key in parameters}
+    term_cfg.params.update(filtered_updates)
+
+
 def _set_fixed_mobile_target_params(env_cfg, **updates):
     for term_cfg in (
         env_cfg.observations.policy.velocity_commands,
@@ -429,7 +444,7 @@ def _set_fixed_mobile_target_params(env_cfg, **updates):
         env_cfg.terminations.target_quota,
         env_cfg.terminations.target_timeout,
     ):
-        term_cfg.params.update(updates)
+        _update_term_params_filtered(term_cfg, updates)
 
 
 @configclass

@@ -22,6 +22,24 @@ parser.add_argument("--video", action="store_true", default=False, help="Record 
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
 parser.add_argument("--video_folder", type=str, default=None, help="Optional output folder for recorded play videos.")
 parser.add_argument(
+    "--debug_steps",
+    type=int,
+    default=0,
+    help="Print action, command, and base-motion diagnostics for the first N simulation steps.",
+)
+parser.add_argument(
+    "--use_env_reset",
+    action="store_true",
+    default=False,
+    help="Initialize playback with env.reset() instead of env.get_observations().",
+)
+parser.add_argument(
+    "--debug_command_name",
+    type=str,
+    default="left_hand_pose",
+    help="Command term name to inspect in debug output.",
+)
+parser.add_argument(
     "--force_world_camera",
     action="store_true",
     default=False,
@@ -97,6 +115,10 @@ def validate_checkpoint_path(checkpoint_path: str, flag_name: str = "--checkpoin
     return checkpoint_path
 
 
+def _extract_policy_obs(obs):
+    return obs[0] if isinstance(obs, tuple) else obs
+
+
 def _set_video_camera(env_cfg):
     if not hasattr(env_cfg, "viewer"):
         return
@@ -115,6 +137,61 @@ def _set_video_camera(env_cfg):
         env_cfg.viewer.asset_name = None
     env_cfg.viewer.eye = eye
     env_cfg.viewer.lookat = lookat
+
+
+def _get_command_tensor(env, command_name: str):
+    command_manager = getattr(env, "command_manager", None)
+    if command_manager is None:
+        return None
+    try:
+        command_term = command_manager.get_term(command_name)
+    except Exception:
+        return None
+    for attr_name in ("_command", "command"):
+        value = getattr(command_term, attr_name, None)
+        if isinstance(value, torch.Tensor) and value.ndim == 2:
+            return value
+    return None
+
+
+def _format_tensor_sample(value: torch.Tensor | None, max_dim: int = 6) -> str:
+    if value is None:
+        return "None"
+    if value.numel() == 0:
+        return "[]"
+    sample = value[0, : min(max_dim, value.shape[1])].detach().cpu().tolist()
+    rounded = [round(float(x), 4) for x in sample]
+    return str(rounded)
+
+
+def _print_debug_step(env, actions: torch.Tensor, step_index: int, command_name: str):
+    robot = env.scene["robot"] if hasattr(env, "scene") and "robot" in env.scene else None
+    action_abs_mean = float(actions.detach().abs().mean().item())
+    action_l2 = float(torch.linalg.vector_norm(actions[0]).item()) if actions.ndim == 2 and actions.shape[0] > 0 else 0.0
+
+    root_lin_vel = None
+    if robot is not None and hasattr(robot, "data") and hasattr(robot.data, "root_lin_vel_w"):
+        root_lin_vel = robot.data.root_lin_vel_w[0].detach().cpu().tolist()
+        root_lin_vel = [round(float(x), 4) for x in root_lin_vel]
+
+    adapter_command = getattr(env, "_left_hand_adapter_command", None)
+    command_tensor = _get_command_tensor(env, command_name)
+    has_active_target = getattr(env, "_left_hand_has_active_target", None)
+    success_hold = getattr(env, "_left_hand_success_hold_counter", None)
+
+    print(
+        "[PLAY_DEBUG] "
+        f"step={step_index} "
+        f"common_step={int(getattr(env, 'common_step_counter', -1))} "
+        f"action_abs_mean={action_abs_mean:.5f} "
+        f"action_l2={action_l2:.5f} "
+        f"root_lin_vel={root_lin_vel} "
+        f"adapter_cmd={_format_tensor_sample(adapter_command)} "
+        f"command_tensor={_format_tensor_sample(command_tensor)} "
+        f"has_active_target={None if has_active_target is None else bool(has_active_target[0].item())} "
+        f"success_hold={None if success_hold is None else int(success_hold[0].item())}",
+        flush=True,
+    )
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -216,7 +293,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     dt = env.unwrapped.step_dt
 
     # Match the historical playback path that was known to work for these checkpoints.
-    obs = env.get_observations()
+    obs = env.reset() if args_cli.use_env_reset else env.get_observations()
     if version("rsl-rl-lib").startswith("2.3.") and isinstance(obs, tuple):
         policy_ = runner.get_inference_policy(device=env.unwrapped.device)
         policy = lambda x: policy_(x[0])  # noqa: E731
@@ -231,11 +308,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             actions = policy(obs)
             # env stepping
             obs, _, _, _ = env.step(actions)
+        if timestep < args_cli.debug_steps:
+            _print_debug_step(env.unwrapped, actions, timestep, args_cli.debug_command_name)
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video
             if timestep == args_cli.video_length:
                 break
+        else:
+            timestep += 1
 
         # time delay for real-time evaluation
         sleep_time = dt - (time.time() - start_time)

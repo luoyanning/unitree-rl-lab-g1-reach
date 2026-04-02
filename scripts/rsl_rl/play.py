@@ -8,13 +8,12 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
-import sys
-from importlib.metadata import version
 
 from isaaclab.app import AppLauncher
 
 # local imports
 import cli_args  # isort: skip
+from rsl_rl_compat import sanitize_runner_cfg  # isort: skip
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
@@ -29,9 +28,16 @@ parser.add_argument(
 )
 parser.add_argument(
     "--use_env_reset",
+    dest="use_env_reset",
     action="store_true",
-    default=False,
-    help="Initialize playback with env.reset() instead of env.get_observations().",
+    default=True,
+    help="Reset the environment once before playback to initialize commands and task state.",
+)
+parser.add_argument(
+    "--skip_env_reset",
+    dest="use_env_reset",
+    action="store_false",
+    help="Skip the initial env.reset() and read observations directly. Only use for low-level debugging.",
 )
 parser.add_argument(
     "--debug_command_name",
@@ -80,13 +86,10 @@ parser.add_argument("--real-time", action="store_true", default=False, help="Run
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
-args_cli, hydra_args = parser.parse_known_args()
+args_cli = parser.parse_args()
 # always enable cameras to record video
 if args_cli.video:
     args_cli.enable_cameras = True
-
-# clear out sys.argv for Hydra
-sys.argv = [sys.argv[0]] + hydra_args
 
 # launch omniverse app
 app_launcher = AppLauncher(args_cli)
@@ -103,21 +106,19 @@ from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
 from isaaclab.envs import (
     DirectMARLEnv,
-    DirectMARLEnvCfg,
-    DirectRLEnvCfg,
-    ManagerBasedRLEnvCfg,
     multi_agent_to_single_agent,
 )
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
-from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
+from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
-from isaaclab_tasks.utils.hydra import hydra_task_config
+from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
 
 import unitree_rl_lab.tasks  # noqa: F401
+from unitree_rl_lab.utils.parser_cfg import parse_env_cfg
 
 
 def validate_checkpoint_path(checkpoint_path: str, flag_name: str = "--checkpoint") -> str:
@@ -133,6 +134,16 @@ def validate_checkpoint_path(checkpoint_path: str, flag_name: str = "--checkpoin
 
 def _extract_policy_obs(obs):
     return obs[0] if isinstance(obs, tuple) else obs
+
+
+def _parse_agent_cfg(task_name: str, args_cli: argparse.Namespace):
+    if args_cli.agent in (None, "rsl_rl_cfg_entry_point"):
+        return cli_args.parse_rsl_rl_cfg(task_name, args_cli)
+
+    agent_cfg = load_cfg_from_registry(task_name, args_cli.agent)
+    if getattr(agent_cfg, "experiment_name", "") == "":
+        agent_cfg.experiment_name = task_name.lower().replace("-", "_").removesuffix("_play")
+    return cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
 
 
 def _resolve_world_camera_pose(env_cfg, eye_offset=None, lookat_offset=None):
@@ -353,23 +364,23 @@ def _frame_delta_mean(prev_frame, frame) -> float | None:
         return None
 
 
-@hydra_task_config(args_cli.task, args_cli.agent)
-def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
+def main():
     """Play with RSL-RL agent."""
     # grab task name for checkpoint path
     task_name = args_cli.task.split(":")[-1]
     train_task_name = task_name.replace("-Play", "")
 
-    # override configurations with non-hydra CLI arguments
-    agent_cfg: RslRlBaseRunnerCfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
-    env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
+    env_cfg = parse_env_cfg(
+        args_cli.task,
+        device=args_cli.device,
+        num_envs=args_cli.num_envs,
+        use_fabric=not args_cli.disable_fabric,
+        entry_point_key="play_env_cfg_entry_point",
+    )
+    agent_cfg = _parse_agent_cfg(args_cli.task, args_cli)
 
-    # set the environment seed
-    # note: certain randomizations occur in the environment initialization so we set the seed here
+    # Certain randomizations occur during environment construction, so seed the env config before gym.make.
     env_cfg.seed = agent_cfg.seed
-    env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
-    if args_cli.disable_fabric:
-        env_cfg.sim.use_fabric = False
     if args_cli.video and args_cli.force_world_camera:
         _set_video_camera(
             env_cfg,
@@ -427,11 +438,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
+    agent_cfg_dict = sanitize_runner_cfg(agent_cfg.to_dict())
     # load previously trained model
     if not hasattr(agent_cfg, "class_name") or agent_cfg.class_name == "OnPolicyRunner":
-        runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+        runner = OnPolicyRunner(env, agent_cfg_dict, log_dir=None, device=agent_cfg.device)
     elif agent_cfg.class_name == "DistillationRunner":
-        runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+        runner = DistillationRunner(env, agent_cfg_dict, log_dir=None, device=agent_cfg.device)
     else:
         raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
     runner.load(resume_path)
@@ -463,7 +475,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     dt = env.unwrapped.step_dt
 
-    # Match the historical playback path that was known to work for these checkpoints.
+    if not args_cli.use_env_reset:
+        print("[INFO] Skipping initial env.reset(); playback may not initialize commands or task state.", flush=True)
     obs = env.reset() if args_cli.use_env_reset else env.get_observations()
     obs = _extract_policy_obs(obs)
     if args_cli.video and args_cli.force_world_camera:
@@ -483,6 +496,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         with torch.inference_mode():
             # agent stepping
             actions = policy(obs)
+            if args_cli.video and args_cli.force_world_camera:
+                _apply_runtime_camera(
+                    env,
+                    env_cfg,
+                    eye_offset=args_cli.camera_eye_offset,
+                    lookat_offset=args_cli.camera_lookat_offset,
+                )
             # env stepping
             obs, _, _, _ = env.step(actions)
             obs = _extract_policy_obs(obs)

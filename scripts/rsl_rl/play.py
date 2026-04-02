@@ -165,7 +165,13 @@ def _format_tensor_sample(value: torch.Tensor | None, max_dim: int = 6) -> str:
 
 
 def _print_debug_step(env, actions: torch.Tensor, step_index: int, command_name: str):
-    robot = env.scene["robot"] if hasattr(env, "scene") and "robot" in env.scene else None
+    robot = None
+    scene = getattr(env, "scene", None)
+    if scene is not None:
+        try:
+            robot = scene["robot"]
+        except Exception:
+            robot = None
     action_abs_mean = float(actions.detach().abs().mean().item())
     action_l2 = float(torch.linalg.vector_norm(actions[0]).item()) if actions.ndim == 2 and actions.shape[0] > 0 else 0.0
 

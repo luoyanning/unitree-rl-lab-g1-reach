@@ -81,8 +81,10 @@ def _active_target_pos_base_yaw(env) -> torch.Tensor:
 
 
 def _ready_pose_w(env, ready_local_pos: tuple[float, float, float]) -> torch.Tensor:
-    del ready_local_pos
-    return env._ttc_rest_hand_w
+    robot = _robot(env)
+    ready_local = torch.tensor(ready_local_pos, dtype=torch.float32, device=env.device).unsqueeze(0)
+    ready_local = ready_local.expand(env.num_envs, -1)
+    return robot.data.root_pos_w + quat_apply(yaw_quat(robot.data.root_quat_w), ready_local)
 
 
 def _start_phase(mode: str) -> int:

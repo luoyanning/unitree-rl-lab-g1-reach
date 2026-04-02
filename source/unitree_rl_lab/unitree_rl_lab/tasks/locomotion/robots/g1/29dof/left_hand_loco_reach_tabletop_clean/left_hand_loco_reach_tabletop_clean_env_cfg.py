@@ -23,17 +23,17 @@ STATIC_TARGET_HOLD_S = 1.0e9
 TABLE_TOP_BLOCK_Z = 0.805
 TABLETOP_BLOCK_NAMES = tuple(f"target_block_{index}" for index in range(4))
 TABLETOP_BLOCK_LAYOUT = (
-    ((0.62, 0.18, TABLE_TOP_BLOCK_Z), (0.90, 0.38, 0.24)),
-    ((0.66, 0.08, TABLE_TOP_BLOCK_Z), (0.24, 0.68, 0.90)),
-    ((0.72, 0.25, TABLE_TOP_BLOCK_Z), (0.26, 0.64, 0.40)),
-    ((0.74, 0.12, TABLE_TOP_BLOCK_Z), (0.84, 0.58, 0.26)),
+    ((0.62, 0.20, TABLE_TOP_BLOCK_Z), (0.90, 0.38, 0.24)),
+    ((0.70, 0.06, TABLE_TOP_BLOCK_Z), (0.24, 0.68, 0.90)),
+    ((0.82, 0.28, TABLE_TOP_BLOCK_Z), (0.26, 0.64, 0.40)),
+    ((0.90, 0.14, TABLE_TOP_BLOCK_Z), (0.84, 0.58, 0.26)),
 )
 SUPPORT_CONTACT_BODY_REGEX = (
     r"^(pelvis|torso_link|waist.*|left_elbow_link|left_wrist_(roll|pitch)_link)$"
 )
 SUPPORT_SENSOR_CFG = SceneEntityCfg("contact_forces", body_names=[SUPPORT_CONTACT_BODY_REGEX])
 STANCE_ANCHOR_XY = (0.18, 0.0)
-READY_LOCAL_POS = (0.20, 0.18, 0.18)
+READY_LOCAL_POS = (0.18, 0.22, 0.08)
 
 
 def _tabletop_block(

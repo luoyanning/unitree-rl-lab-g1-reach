@@ -19,6 +19,7 @@ from rsl_rl_compat import sanitize_runner_cfg  # isort: skip
 parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
+parser.add_argument("--video_folder", type=str, default=None, help="Optional output folder for recorded play videos.")
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
@@ -116,8 +117,9 @@ def main():
 
     # wrap for video recording
     if args_cli.video:
+        video_folder = args_cli.video_folder or os.path.join(log_dir, "videos", "play")
         video_kwargs = {
-            "video_folder": os.path.join(log_dir, "videos", "play"),
+            "video_folder": video_folder,
             "step_trigger": lambda step: step == 0,
             "video_length": args_cli.video_length,
             "disable_logger": True,

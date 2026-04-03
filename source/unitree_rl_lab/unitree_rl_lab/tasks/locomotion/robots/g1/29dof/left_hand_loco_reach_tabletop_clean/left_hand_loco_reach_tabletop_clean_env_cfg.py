@@ -966,8 +966,34 @@ class RobotLeftHandLocoReachTableTopFixedAcquireStayAnchorTightPlayEnvCfg(
         self.scene.num_envs = 16
         self.observations.policy.enable_corruption = False
         self.events.reset_base.params["pose_range"] = {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)}
-        self.episode_length_s = 30.0
+        self.episode_length_s = 40.0
         self.commands.base_velocity.resampling_time_range = (self.episode_length_s, self.episode_length_s)
+        _set_task_params(
+            self,
+            mode="touch",
+            scene_target_names=TABLETOP_BLOCK_NAMES,
+            randomize_order=False,
+            max_targets_per_episode=3,
+            stance_anchor_std=0.40,
+            stance_anchor_tolerance=0.24,
+            base_speed_threshold=0.90,
+            torso_lean_threshold=1.20,
+            stability_speed_scale=0.90,
+            stability_lean_scale=1.10,
+            pretouch_backoff_x=0.0,
+            pretouch_height=0.01,
+            pretouch_radius=0.18,
+            pretouch_hold_steps=1,
+            pretouch_stability_gate=0.0,
+            touch_radius=0.14,
+            touch_hold_steps=1,
+            touch_stability_gate=0.0,
+            recover_radius=0.18,
+            recover_hold_steps=1,
+            recover_stability_gate=0.0,
+            hand_speed_threshold=1.50,
+            support_force_threshold=8.0,
+        )
         self.terminations.target_timeout = None
         self.terminations.body_support_contact = None
 

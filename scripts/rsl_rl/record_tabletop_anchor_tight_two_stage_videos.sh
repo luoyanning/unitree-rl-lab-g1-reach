@@ -7,7 +7,7 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 cd "${REPO_ROOT}"
 
 DEFAULT_VENV="/mlp_vepfs/share/lyn/try0310/env_isaaclab"
-DEFAULT_ISAACLAB_PATH="/mlp_vepfs/share/lyn/try0310/IsaacLab"
+DEFAULT_ISAACLAB_PATH="/workspace/isaaclab"
 
 STAGE1_TASK="Unitree-G1-29dof-LeftHand-LocoReach-TableTopMultiTouchPairAnchorTight-Clean-v0"
 STAGE2_TASK="Unitree-G1-29dof-LeftHand-LocoReach-TableTopFixedAcquireStayAnchorTight-Clean-v0"
@@ -86,16 +86,8 @@ fi
 
 export OMNI_KIT_ACCEPT_EULA="${OMNI_KIT_ACCEPT_EULA:-yes}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:64}"
-if [[ ! -d "${ISAACLAB_ROOT}" && -d "${REPO_ROOT}/../IsaacLab" ]]; then
-    ISAACLAB_ROOT="${REPO_ROOT}/../IsaacLab"
-fi
+ISAACLAB_ROOT="$(resolve_isaaclab_root)"
 export ISAACLAB_PATH="${ISAACLAB_ROOT}"
-
-ISAACSIM_SETUP_CONDA_ENV_SH="${ISAACLAB_ROOT}/_isaac_sim/setup_conda_env.sh"
-if [[ -f "${ISAACSIM_SETUP_CONDA_ENV_SH}" ]]; then
-    # shellcheck disable=SC1090
-    source "${ISAACSIM_SETUP_CONDA_ENV_SH}"
-fi
 
 EXPORT_ROOT="${REPO_ROOT}/logs/video_exports"
 mkdir -p "${EXPORT_ROOT}"
@@ -163,7 +155,13 @@ abspath() {
 
 build_play_command() {
     local play_script="${REPO_ROOT}/scripts/rsl_rl/play.py"
-    printf 'python\n%s\n' "${play_script}"
+    local isaaclab_sh="${ISAACLAB_ROOT}/isaaclab.sh"
+
+    if [[ -f "${isaaclab_sh}" ]]; then
+        printf 'bash\n%s\n-p\n%s\n' "${isaaclab_sh}" "${play_script}"
+    else
+        printf 'python\n%s\n' "${play_script}"
+    fi
 }
 
 record_video() {
@@ -202,7 +200,6 @@ record_video() {
     echo "Run dir: ${run_dir}" >&2
     echo "Checkpoint: ${checkpoint}" >&2
     echo "Video dir: ${video_dir}" >&2
-    echo "Python: $(command -v python)" >&2
     echo "ISAACLAB_PATH: ${ISAACLAB_PATH}" >&2
     echo "====================================================================" >&2
 
@@ -274,3 +271,24 @@ echo "STAGE1_VIDEO_STABLE=${STAGE1_VIDEO_STABLE}"
 echo "STAGE2_VIDEO=${STAGE2_VIDEO}"
 echo "STAGE2_VIDEO_STABLE=${STAGE2_VIDEO_STABLE}"
 echo "VIDEO_MANIFEST=${MANIFEST_PATH}"
+resolve_isaaclab_root() {
+    local candidates=()
+    if [[ -n "${ISAACLAB_PATH:-}" ]]; then
+        candidates+=("${ISAACLAB_PATH}")
+    fi
+    candidates+=(
+        "/workspace/isaaclab"
+        "/mlp_vepfs/share/lyn/try0310/IsaacLab"
+        "${REPO_ROOT}/../IsaacLab"
+    )
+
+    local candidate
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "${candidate}/isaaclab.sh" ]]; then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done
+
+    printf '%s\n' "${ISAACLAB_ROOT}"
+}

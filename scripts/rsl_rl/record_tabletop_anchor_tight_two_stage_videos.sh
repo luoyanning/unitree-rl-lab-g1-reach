@@ -7,6 +7,7 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 cd "${REPO_ROOT}"
 
 DEFAULT_VENV="/mlp_vepfs/share/lyn/try0310/env_isaaclab"
+DEFAULT_ISAACLAB_PATH="/mlp_vepfs/share/lyn/try0310/IsaacLab"
 
 STAGE1_TASK="Unitree-G1-29dof-LeftHand-LocoReach-TableTopMultiTouchPairAnchorTight-Clean-v0"
 STAGE2_TASK="Unitree-G1-29dof-LeftHand-LocoReach-TableTopFixedAcquireStayAnchorTight-Clean-v0"
@@ -16,6 +17,7 @@ STAGE2_RUN_PREFIX="tabletop_fixed_anchor_tight_from_pair_r2"
 VIDEO_LENGTH="1000"
 AUTO_ACTIVATE="1"
 VENV_PATH="${ISAACLAB_VENV:-${DEFAULT_VENV}}"
+ISAACLAB_ROOT="${ISAACLAB_PATH:-${DEFAULT_ISAACLAB_PATH}}"
 
 usage() {
     cat <<'EOF'
@@ -27,6 +29,7 @@ Options:
   --stage2-run-prefix NAME   Stage-2 run name suffix to search.
   --video-length N           Number of play steps to record per video.
   --venv PATH                Virtualenv root containing bin/activate.
+  --isaaclab-path PATH       IsaacLab root containing isaaclab.sh.
   --no-activate              Do not auto-source the virtualenv.
   --help                     Show this help.
 EOF
@@ -48,6 +51,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --venv)
             VENV_PATH="$2"
+            shift 2
+            ;;
+        --isaaclab-path)
+            ISAACLAB_ROOT="$2"
             shift 2
             ;;
         --no-activate)
@@ -78,6 +85,11 @@ if [[ "${AUTO_ACTIVATE}" == "1" ]]; then
 fi
 
 export OMNI_KIT_ACCEPT_EULA="${OMNI_KIT_ACCEPT_EULA:-yes}"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:64}"
+if [[ ! -d "${ISAACLAB_ROOT}" && -d "${REPO_ROOT}/../IsaacLab" ]]; then
+    ISAACLAB_ROOT="${REPO_ROOT}/../IsaacLab"
+fi
+export ISAACLAB_PATH="${ISAACLAB_ROOT}"
 
 normalize_experiment_name() {
     local task_name="$1"
@@ -118,6 +130,17 @@ find_latest_video_in_dir() {
     find "${video_dir}" -type f -name '*.mp4' | sort | tail -1
 }
 
+build_play_command() {
+    local play_script="${REPO_ROOT}/scripts/rsl_rl/play.py"
+    local isaaclab_sh="${ISAACLAB_ROOT}/isaaclab.sh"
+
+    if [[ -f "${isaaclab_sh}" ]]; then
+        printf 'bash\n%s\n-p\n%s\n' "${isaaclab_sh}" "${play_script}"
+    else
+        printf 'python\n%s\n' "${play_script}"
+    fi
+}
+
 record_video() {
     local task="$1"
     local run_prefix="$2"
@@ -151,7 +174,9 @@ record_video() {
     echo "Video dir: ${video_dir}" >&2
     echo "====================================================================" >&2
 
-    python scripts/rsl_rl/play.py \
+    mapfile -t play_cmd < <(build_play_command)
+
+    "${play_cmd[@]}" \
         --headless \
         --task "${task}" \
         --checkpoint "${checkpoint}" \

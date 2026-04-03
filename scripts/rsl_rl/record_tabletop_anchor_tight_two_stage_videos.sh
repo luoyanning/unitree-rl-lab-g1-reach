@@ -130,6 +130,20 @@ find_latest_video_in_dir() {
     find "${video_dir}" -type f -name '*.mp4' | sort | tail -1
 }
 
+abspath() {
+    local path="$1"
+    if [[ -z "${path}" ]]; then
+        return 0
+    fi
+    local dir_path
+    dir_path="$(dirname -- "${path}")"
+    local base_name
+    base_name="$(basename -- "${path}")"
+    (
+        cd -- "${dir_path}" >/dev/null 2>&1 && printf '%s/%s\n' "$(pwd -P)" "${base_name}"
+    )
+}
+
 build_play_command() {
     local play_script="${REPO_ROOT}/scripts/rsl_rl/play.py"
     local isaaclab_sh="${ISAACLAB_ROOT}/isaaclab.sh"
@@ -162,10 +176,14 @@ record_video() {
         exit 1
     fi
 
+    run_dir="$(abspath "${run_dir}")"
+    checkpoint="$(abspath "${checkpoint}")"
+
     local stamp
     stamp="$(date +%Y%m%d_%H%M%S)"
     local video_dir="${run_dir}/videos/play_anchor_tight_${stamp}"
     mkdir -p "${video_dir}"
+    video_dir="$(abspath "${video_dir}")"
 
     echo "====================================================================" >&2
     echo "Task: ${task}" >&2
@@ -193,6 +211,7 @@ record_video() {
         echo "Failed to find recorded video under ${video_dir}" >&2
         exit 1
     fi
+    latest_video="$(abspath "${latest_video}")"
 
     printf '%s\n' "${latest_video}"
 }

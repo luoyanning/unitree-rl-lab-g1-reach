@@ -17,7 +17,7 @@ STAGE2_RUN_PREFIX="tabletop_fixed_anchor_tight_from_pair_r2"
 VIDEO_LENGTH="1000"
 AUTO_ACTIVATE="1"
 VENV_PATH="${ISAACLAB_VENV:-${DEFAULT_VENV}}"
-ISAACLAB_ROOT="${ISAACLAB_PATH:-${DEFAULT_ISAACLAB_PATH}}"
+ISAACLAB_ROOT="${DEFAULT_ISAACLAB_PATH}"
 
 usage() {
     cat <<'EOF'
@@ -37,14 +37,17 @@ EOF
 
 resolve_isaaclab_root() {
     local candidates=()
-    if [[ -n "${ISAACLAB_PATH:-}" ]]; then
-        candidates+=("${ISAACLAB_PATH}")
+    if [[ -n "${ISAACLAB_ROOT:-}" ]]; then
+        candidates+=("${ISAACLAB_ROOT}")
     fi
     candidates+=(
         "/workspace/isaaclab"
         "/mlp_vepfs/share/lyn/try0310/IsaacLab"
         "${REPO_ROOT}/../IsaacLab"
     )
+    if [[ -n "${ISAACLAB_PATH:-}" ]]; then
+        candidates+=("${ISAACLAB_PATH}")
+    fi
 
     local candidate
     for candidate in "${candidates[@]}"; do

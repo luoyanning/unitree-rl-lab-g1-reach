@@ -8,7 +8,7 @@ cd "${REPO_ROOT}"
 
 DEFAULT_INIT_CKPT="logs/rsl_rl/unitree_g1_29dof_lefthand_locoreach_adapterholdstay_v0/2026-03-17_02-12-54/model_73250.pt"
 DEFAULT_VENV="/mlp_vepfs/share/lyn/try0310/env_isaaclab"
-DEFAULT_ISAACLAB_PATH="/workspace/isaaclab"
+DEFAULT_ISAACLAB_PATH="/mlp_vepfs/share/lyn/try0310/IsaacLab"
 
 STAGE1_TASK="Unitree-G1-29dof-LeftHand-LocoReach-TableTopMultiTouchPairAnchorTight-Clean-v0"
 STAGE2_TASK="Unitree-G1-29dof-LeftHand-LocoReach-TableTopFixedAcquireStayAnchorTight-Clean-v0"
@@ -24,28 +24,6 @@ RESTART_DELAY="15"
 VENV_PATH="${ISAACLAB_VENV:-${DEFAULT_VENV}}"
 ISAACLAB_ROOT="${ISAACLAB_PATH:-${DEFAULT_ISAACLAB_PATH}}"
 AUTO_ACTIVATE="1"
-
-resolve_isaaclab_root() {
-    local candidates=()
-    if [[ -n "${ISAACLAB_PATH:-}" ]]; then
-        candidates+=("${ISAACLAB_PATH}")
-    fi
-    candidates+=(
-        "/workspace/isaaclab"
-        "/mlp_vepfs/share/lyn/try0310/IsaacLab"
-        "${REPO_ROOT}/../IsaacLab"
-    )
-
-    local candidate
-    for candidate in "${candidates[@]}"; do
-        if [[ -f "${candidate}/isaaclab.sh" ]]; then
-            printf '%s\n' "${candidate}"
-            return 0
-        fi
-    done
-
-    printf '%s\n' "${ISAACLAB_ROOT}"
-}
 
 usage() {
     cat <<'EOF'
@@ -148,7 +126,9 @@ fi
 
 export OMNI_KIT_ACCEPT_EULA="${OMNI_KIT_ACCEPT_EULA:-yes}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:64}"
-ISAACLAB_ROOT="$(resolve_isaaclab_root)"
+if [[ ! -d "${ISAACLAB_ROOT}" && -d "${REPO_ROOT}/../IsaacLab" ]]; then
+    ISAACLAB_ROOT="${REPO_ROOT}/../IsaacLab"
+fi
 export ISAACLAB_PATH="${ISAACLAB_ROOT}"
 
 normalize_experiment_name() {

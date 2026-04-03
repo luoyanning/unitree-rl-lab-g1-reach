@@ -35,6 +35,28 @@ Options:
 EOF
 }
 
+resolve_isaaclab_root() {
+    local candidates=()
+    if [[ -n "${ISAACLAB_PATH:-}" ]]; then
+        candidates+=("${ISAACLAB_PATH}")
+    fi
+    candidates+=(
+        "/workspace/isaaclab"
+        "/mlp_vepfs/share/lyn/try0310/IsaacLab"
+        "${REPO_ROOT}/../IsaacLab"
+    )
+
+    local candidate
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "${candidate}/isaaclab.sh" ]]; then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done
+
+    printf '%s\n' "${ISAACLAB_ROOT}"
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --stage1-run-prefix)
@@ -271,24 +293,3 @@ echo "STAGE1_VIDEO_STABLE=${STAGE1_VIDEO_STABLE}"
 echo "STAGE2_VIDEO=${STAGE2_VIDEO}"
 echo "STAGE2_VIDEO_STABLE=${STAGE2_VIDEO_STABLE}"
 echo "VIDEO_MANIFEST=${MANIFEST_PATH}"
-resolve_isaaclab_root() {
-    local candidates=()
-    if [[ -n "${ISAACLAB_PATH:-}" ]]; then
-        candidates+=("${ISAACLAB_PATH}")
-    fi
-    candidates+=(
-        "/workspace/isaaclab"
-        "/mlp_vepfs/share/lyn/try0310/IsaacLab"
-        "${REPO_ROOT}/../IsaacLab"
-    )
-
-    local candidate
-    for candidate in "${candidates[@]}"; do
-        if [[ -f "${candidate}/isaaclab.sh" ]]; then
-            printf '%s\n' "${candidate}"
-            return 0
-        fi
-    done
-
-    printf '%s\n' "${ISAACLAB_ROOT}"
-}

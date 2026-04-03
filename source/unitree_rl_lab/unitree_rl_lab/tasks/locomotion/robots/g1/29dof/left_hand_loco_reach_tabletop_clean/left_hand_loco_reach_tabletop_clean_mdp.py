@@ -110,9 +110,6 @@ def _update_target_debug_visualization(env) -> None:
     if not ENABLE_TABLETOP_TARGET_VIS:
         return
     marker_quat = _marker_quat(env)
-    if not hasattr(env, "_ttc_active_target_visualizer"):
-        env._ttc_active_target_visualizer = VisualizationMarkers(ACTIVE_TARGET_MARKER_CFG)
-    env._ttc_active_target_visualizer.visualize(env._ttc_active_target_w, marker_quat)
     if not hasattr(env, "_ttc_touch_target_visualizer"):
         env._ttc_touch_target_visualizer = VisualizationMarkers(TOUCH_TARGET_MARKER_CFG)
     env._ttc_touch_target_visualizer.visualize(env._ttc_touch_w, marker_quat)

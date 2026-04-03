@@ -21,12 +21,12 @@ LEFT_HAND_BODY_NAME = tabletop_clean_mdp.LEFT_HAND_BODY_NAME
 LEFT_HAND_COMMAND_NAME = "left_hand_pose"
 STATIC_TARGET_HOLD_S = 1.0e9
 TABLE_TOP_BLOCK_Z = 0.805
-TABLETOP_BLOCK_NAMES = tuple(f"target_block_{index}" for index in range(4))
+TABLETOP_BLOCK_NAMES = tuple(f"target_block_{index}" for index in range(3))
 TABLETOP_BLOCK_LAYOUT = (
-    ((0.60, 0.22, TABLE_TOP_BLOCK_Z), (0.90, 0.38, 0.24)),
-    ((0.64, 0.10, TABLE_TOP_BLOCK_Z), (0.24, 0.68, 0.90)),
-    ((0.70, 0.28, TABLE_TOP_BLOCK_Z), (0.26, 0.64, 0.40)),
-    ((0.74, 0.16, TABLE_TOP_BLOCK_Z), (0.84, 0.58, 0.26)),
+    ((0.58, 0.25, TABLE_TOP_BLOCK_Z), (0.90, 0.38, 0.24)),
+    ((0.73, 0.16, TABLE_TOP_BLOCK_Z), (0.24, 0.68, 0.90)),
+    ((0.88, 0.07, TABLE_TOP_BLOCK_Z), (0.26, 0.64, 0.40)),
+    ((2.00, -2.00, -1.00), (0.20, 0.20, 0.20)),
 )
 SUPPORT_CONTACT_BODY_REGEX = r"^(pelvis|torso_link|waist.*)$"
 SUPPORT_SENSOR_CFG = SceneEntityCfg("contact_forces", body_names=[SUPPORT_CONTACT_BODY_REGEX])
@@ -703,19 +703,26 @@ class RobotLeftHandLocoReachTableTopMultiTouchPairAnchorTightEnvCfg(
         _set_task_params(
             self,
             mode="touch_recover_anchor",
+            scene_target_names=TABLETOP_BLOCK_NAMES,
+            randomize_order=False,
+            max_targets_per_episode=3,
             complete_on_final_touch=True,
-            stance_anchor_std=0.14,
-            stance_anchor_tolerance=0.07,
-            base_speed_threshold=0.24,
-            torso_lean_threshold=0.55,
-            stability_speed_scale=0.22,
-            stability_lean_scale=0.42,
-            pretouch_stability_gate=0.18,
-            touch_stability_gate=0.24,
-            recover_stability_gate=0.28,
-            touch_hold_steps=6,
-            recover_hold_steps=6,
-            hand_speed_threshold=0.28,
+            stance_anchor_std=0.24,
+            stance_anchor_tolerance=0.14,
+            base_speed_threshold=0.45,
+            torso_lean_threshold=0.75,
+            stability_speed_scale=0.45,
+            stability_lean_scale=0.65,
+            pretouch_radius=0.14,
+            pretouch_hold_steps=2,
+            pretouch_stability_gate=0.08,
+            touch_radius=0.10,
+            touch_hold_steps=2,
+            touch_stability_gate=0.10,
+            recover_radius=0.18,
+            recover_hold_steps=2,
+            recover_stability_gate=0.12,
+            hand_speed_threshold=0.75,
             support_force_threshold=4.0,
         )
         self.rewards.stance_anchor.weight = -2.0
@@ -1046,6 +1053,32 @@ class RobotLeftHandLocoReachTableTopMultiTouchPairAnchorTightPlayEnvCfg(
         self.events.reset_base.params["pose_range"] = {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)}
         self.episode_length_s = 30.0
         self.commands.base_velocity.resampling_time_range = (self.episode_length_s, self.episode_length_s)
+        _set_task_params(
+            self,
+            mode="touch",
+            scene_target_names=TABLETOP_BLOCK_NAMES,
+            randomize_order=False,
+            max_targets_per_episode=3,
+            stance_anchor_std=0.40,
+            stance_anchor_tolerance=0.24,
+            base_speed_threshold=0.90,
+            torso_lean_threshold=1.20,
+            stability_speed_scale=0.90,
+            stability_lean_scale=1.10,
+            pretouch_backoff_x=0.0,
+            pretouch_height=0.01,
+            pretouch_radius=0.18,
+            pretouch_hold_steps=1,
+            pretouch_stability_gate=0.0,
+            touch_radius=0.14,
+            touch_hold_steps=1,
+            touch_stability_gate=0.0,
+            recover_radius=0.18,
+            recover_hold_steps=1,
+            recover_stability_gate=0.0,
+            hand_speed_threshold=1.50,
+            support_force_threshold=8.0,
+        )
         self.terminations.body_support_contact = None
 
 

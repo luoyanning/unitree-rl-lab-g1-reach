@@ -90,6 +90,8 @@ if [[ ! -d "${ISAACLAB_ROOT}" && -d "${REPO_ROOT}/../IsaacLab" ]]; then
     ISAACLAB_ROOT="${REPO_ROOT}/../IsaacLab"
 fi
 export ISAACLAB_PATH="${ISAACLAB_ROOT}"
+EXPORT_ROOT="${REPO_ROOT}/logs/video_exports"
+mkdir -p "${EXPORT_ROOT}"
 
 normalize_experiment_name() {
     local task_name="$1"
@@ -97,6 +99,13 @@ normalize_experiment_name() {
     task_name="${task_name//-/_}"
     task_name="${task_name%_play}"
     printf '%s\n' "${task_name}"
+}
+
+sanitize_name() {
+    local name="$1"
+    name="${name//\//_}"
+    name="${name// /_}"
+    printf '%s\n' "${name}"
 }
 
 find_latest_run_dir() {
@@ -213,7 +222,22 @@ record_video() {
     fi
     latest_video="$(abspath "${latest_video}")"
 
-    printf '%s\n' "${latest_video}"
+    local export_name
+    export_name="$(sanitize_name "${experiment_name}_${run_prefix}_${stamp}.mp4")"
+    local export_video="${EXPORT_ROOT}/${export_name}"
+    cp -f "${latest_video}" "${export_video}"
+    sync
+    export_video="$(abspath "${export_video}")"
+
+    if [[ ! -f "${export_video}" ]]; then
+        echo "Failed to copy recorded video to ${export_video}" >&2
+        exit 1
+    fi
+
+    echo "Exported video: ${export_video}" >&2
+    ls -lh "${export_video}" >&2
+
+    printf '%s\n' "${export_video}"
 }
 
 STAGE1_VIDEO="$(record_video "${STAGE1_TASK}" "${STAGE1_RUN_PREFIX}")"

@@ -18,6 +18,7 @@ VIDEO_LENGTH="1000"
 AUTO_ACTIVATE="1"
 VENV_PATH="${ISAACLAB_VENV:-${DEFAULT_VENV}}"
 ISAACLAB_ROOT="${ISAACLAB_PATH:-${DEFAULT_ISAACLAB_PATH}}"
+PYTHON_BIN=""
 
 usage() {
     cat <<'EOF'
@@ -90,6 +91,18 @@ if [[ ! -d "${ISAACLAB_ROOT}" && -d "${REPO_ROOT}/../IsaacLab" ]]; then
     ISAACLAB_ROOT="${REPO_ROOT}/../IsaacLab"
 fi
 export ISAACLAB_PATH="${ISAACLAB_ROOT}"
+
+if [[ -x "${VENV_PATH}/bin/python" ]]; then
+    PYTHON_BIN="${VENV_PATH}/bin/python"
+else
+    PYTHON_BIN="$(command -v python)"
+fi
+
+if [[ -z "${PYTHON_BIN}" || ! -x "${PYTHON_BIN}" ]]; then
+    echo "Python interpreter not found for recording." >&2
+    exit 1
+fi
+
 EXPORT_ROOT="${REPO_ROOT}/logs/video_exports"
 mkdir -p "${EXPORT_ROOT}"
 MANIFEST_PATH="${EXPORT_ROOT}/latest_two_stage_videos.txt"
@@ -156,13 +169,7 @@ abspath() {
 
 build_play_command() {
     local play_script="${REPO_ROOT}/scripts/rsl_rl/play.py"
-    local isaaclab_sh="${ISAACLAB_ROOT}/isaaclab.sh"
-
-    if [[ -f "${isaaclab_sh}" ]]; then
-        printf 'bash\n%s\n-p\n%s\n' "${isaaclab_sh}" "${play_script}"
-    else
-        printf 'python\n%s\n' "${play_script}"
-    fi
+    printf '%s\n%s\n' "${PYTHON_BIN}" "${play_script}"
 }
 
 record_video() {
@@ -201,9 +208,12 @@ record_video() {
     echo "Run dir: ${run_dir}" >&2
     echo "Checkpoint: ${checkpoint}" >&2
     echo "Video dir: ${video_dir}" >&2
+    echo "Python: ${PYTHON_BIN}" >&2
     echo "====================================================================" >&2
 
     mapfile -t play_cmd < <(build_play_command)
+
+    "${PYTHON_BIN}" -c "import isaacsim" >/dev/null
 
     "${play_cmd[@]}" \
         --headless \

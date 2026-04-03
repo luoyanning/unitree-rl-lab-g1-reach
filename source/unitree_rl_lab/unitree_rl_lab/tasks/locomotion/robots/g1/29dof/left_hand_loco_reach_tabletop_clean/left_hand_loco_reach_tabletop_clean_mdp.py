@@ -306,6 +306,7 @@ def _sync_tabletop_clean_state(
     scene_target_names: Sequence[str],
     randomize_order: bool,
     max_targets_per_episode: int,
+    complete_on_final_touch: bool,
     per_target_timeout_s: float,
     stance_anchor_xy: tuple[float, float],
     stance_anchor_std: float,
@@ -448,11 +449,12 @@ def _sync_tabletop_clean_state(
     )
     phase_success_zone = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
     balance_mask = phase == PHASE_BALANCE
-    phase_success_zone[balance_mask] = phase_gate[balance_mask]
+    phase_success_zone[balance_mask] = phase_gate[balance_mask] & stable[balance_mask]
     active_reach_mask = ~balance_mask
     phase_success_zone[active_reach_mask] = (
         (hand_target_error[active_reach_mask] <= phase_radius[active_reach_mask])
         & (hand_speed[active_reach_mask] <= hand_speed_threshold)
+        & stable[active_reach_mask]
         & phase_gate[active_reach_mask]
         & ~support_contact[active_reach_mask]
     )
@@ -488,9 +490,23 @@ def _sync_tabletop_clean_state(
         done_ids = torch.where(phase_done & (phase == PHASE_TOUCH))[0]
         env._ttc_recent_touch[done_ids] = True
         if _touch_requires_recover(mode):
-            env._ttc_phase[done_ids] = PHASE_RECOVER
-            env._ttc_phase_hold_counter[done_ids] = 0
-            env._ttc_phase_steps[done_ids] = 0
+            recover_ids = done_ids
+            if complete_on_final_touch:
+                final_touch_mask = (env._ttc_completed_targets[done_ids] + 1) >= max_targets_per_episode
+                final_touch_ids = done_ids[final_touch_mask]
+                recover_ids = done_ids[~final_touch_mask]
+                if len(final_touch_ids) > 0:
+                    env._ttc_recent_success[final_touch_ids] = True
+                    _advance_to_next_target(
+                        env,
+                        final_touch_ids,
+                        mode=mode,
+                        max_targets_per_episode=max_targets_per_episode,
+                    )
+            if len(recover_ids) > 0:
+                env._ttc_phase[recover_ids] = PHASE_RECOVER
+                env._ttc_phase_hold_counter[recover_ids] = 0
+                env._ttc_phase_steps[recover_ids] = 0
         else:
             env._ttc_recent_success[done_ids] = True
             _advance_to_next_target(env, done_ids, mode=mode, max_targets_per_episode=max_targets_per_episode)
@@ -542,6 +558,7 @@ def _sync_tabletop_clean_state(
             "hand_target_error": torch.zeros(env.num_envs, device=env.device),
             "hand_object_error": torch.zeros(env.num_envs, device=env.device),
             "stability_gate": torch.zeros(env.num_envs, device=env.device),
+            "stable_flag": torch.zeros(env.num_envs, device=env.device),
             "stance_anchor_error": torch.zeros(env.num_envs, device=env.device),
             "backward_drift": torch.zeros(env.num_envs, device=env.device),
             "support_contact_flag": torch.zeros(env.num_envs, device=env.device),
@@ -565,6 +582,7 @@ def _sync_tabletop_clean_state(
         command_term.metrics["hand_target_error"][:] = env._ttc_hand_target_error
         command_term.metrics["hand_object_error"][:] = env._ttc_hand_object_error
         command_term.metrics["stability_gate"][:] = env._ttc_stability_gate
+        command_term.metrics["stable_flag"][:] = env._ttc_stable.float()
         command_term.metrics["stance_anchor_error"][:] = env._ttc_stance_anchor_error
         command_term.metrics["backward_drift"][:] = env._ttc_backward_drift
         command_term.metrics["support_contact_flag"][:] = env._ttc_support_contact.float()
@@ -608,6 +626,7 @@ def target_pos_command_obs(
     scene_target_names: Sequence[str],
     randomize_order: bool,
     max_targets_per_episode: int,
+    complete_on_final_touch: bool,
     per_target_timeout_s: float,
     stance_anchor_xy: tuple[float, float],
     stance_anchor_std: float,
@@ -641,6 +660,7 @@ def target_pos_command_obs(
         scene_target_names=scene_target_names,
         randomize_order=randomize_order,
         max_targets_per_episode=max_targets_per_episode,
+        complete_on_final_touch=complete_on_final_touch,
         per_target_timeout_s=per_target_timeout_s,
         stance_anchor_xy=stance_anchor_xy,
         stance_anchor_std=stance_anchor_std,
@@ -676,6 +696,7 @@ _COMMON_TERM_PARAM_NAMES = (
     "scene_target_names",
     "randomize_order",
     "max_targets_per_episode",
+    "complete_on_final_touch",
     "per_target_timeout_s",
     "stance_anchor_xy",
     "stance_anchor_std",
@@ -706,7 +727,7 @@ _COMMON_TERM_PARAM_NAMES = (
 
 
 def _sync_from_locals(env, local_vars: dict, **overrides) -> None:
-    params = {name: local_vars[name] for name in _COMMON_TERM_PARAM_NAMES}
+    params = {name: local_vars[name] for name in _COMMON_TERM_PARAM_NAMES if name in local_vars}
     params.update(overrides)
     target_pos_command_obs(env, **params)
 

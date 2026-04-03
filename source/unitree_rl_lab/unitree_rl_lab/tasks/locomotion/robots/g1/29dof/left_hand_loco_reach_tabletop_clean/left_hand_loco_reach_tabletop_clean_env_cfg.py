@@ -112,6 +112,7 @@ def _make_task_params(
     scene_target_names: tuple[str, ...],
     randomize_order: bool,
     max_targets_per_episode: int,
+    complete_on_final_touch: bool = False,
     per_target_timeout_s: float,
     pretouch_backoff_x: float,
     pretouch_height: float,
@@ -123,6 +124,7 @@ def _make_task_params(
         "scene_target_names": scene_target_names,
         "randomize_order": randomize_order,
         "max_targets_per_episode": max_targets_per_episode,
+        "complete_on_final_touch": complete_on_final_touch,
         "per_target_timeout_s": per_target_timeout_s,
         "stance_anchor_xy": STANCE_ANCHOR_XY,
         "stance_anchor_std": 0.05,
@@ -692,6 +694,7 @@ class RobotLeftHandLocoReachTableTopMultiTouchPairAnchorTightEnvCfg(
         _set_task_params(
             self,
             mode="touch_recover_anchor",
+            complete_on_final_touch=True,
             stance_anchor_std=0.14,
             stance_anchor_tolerance=0.07,
             base_speed_threshold=0.24,

@@ -306,7 +306,6 @@ def _sync_tabletop_clean_state(
     scene_target_names: Sequence[str],
     randomize_order: bool,
     max_targets_per_episode: int,
-    complete_on_final_touch: bool,
     per_target_timeout_s: float,
     stance_anchor_xy: tuple[float, float],
     stance_anchor_std: float,
@@ -333,6 +332,7 @@ def _sync_tabletop_clean_state(
     hand_speed_threshold: float,
     support_sensor_cfg: SceneEntityCfg,
     support_force_threshold: float,
+    complete_on_final_touch: bool = False,
 ):
     if len(scene_target_names) == 0:
         raise RuntimeError("TableTop clean tasks require at least one scene target.")
@@ -626,7 +626,6 @@ def target_pos_command_obs(
     scene_target_names: Sequence[str],
     randomize_order: bool,
     max_targets_per_episode: int,
-    complete_on_final_touch: bool,
     per_target_timeout_s: float,
     stance_anchor_xy: tuple[float, float],
     stance_anchor_std: float,
@@ -653,6 +652,7 @@ def target_pos_command_obs(
     hand_speed_threshold: float,
     support_sensor_cfg: SceneEntityCfg,
     support_force_threshold: float,
+    complete_on_final_touch: bool = False,
 ):
     _sync_tabletop_clean_state(
         env,

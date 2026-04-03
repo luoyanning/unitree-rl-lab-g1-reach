@@ -92,6 +92,7 @@ fi
 export ISAACLAB_PATH="${ISAACLAB_ROOT}"
 EXPORT_ROOT="${REPO_ROOT}/logs/video_exports"
 mkdir -p "${EXPORT_ROOT}"
+MANIFEST_PATH="${EXPORT_ROOT}/latest_two_stage_videos.txt"
 
 normalize_experiment_name() {
     local task_name="$1"
@@ -165,8 +166,9 @@ build_play_command() {
 }
 
 record_video() {
-    local task="$1"
-    local run_prefix="$2"
+    local stage_label="$1"
+    local task="$2"
+    local run_prefix="$3"
 
     local experiment_name
     experiment_name="$(normalize_experiment_name "${task}")"
@@ -226,22 +228,46 @@ record_video() {
     export_name="$(sanitize_name "${experiment_name}_${run_prefix}_${stamp}.mp4")"
     local export_video="${EXPORT_ROOT}/${export_name}"
     cp -f "${latest_video}" "${export_video}"
+    local stable_video="${EXPORT_ROOT}/${stage_label}_latest.mp4"
+    cp -f "${latest_video}" "${stable_video}"
     sync
     export_video="$(abspath "${export_video}")"
+    stable_video="$(abspath "${stable_video}")"
 
     if [[ ! -f "${export_video}" ]]; then
         echo "Failed to copy recorded video to ${export_video}" >&2
         exit 1
     fi
+    if [[ ! -f "${stable_video}" ]]; then
+        echo "Failed to copy recorded video to ${stable_video}" >&2
+        exit 1
+    fi
 
     echo "Exported video: ${export_video}" >&2
     ls -lh "${export_video}" >&2
+    echo "Stable video: ${stable_video}" >&2
+    ls -lh "${stable_video}" >&2
 
-    printf '%s\n' "${export_video}"
+    printf '%s|%s\n' "${export_video}" "${stable_video}"
 }
 
-STAGE1_VIDEO="$(record_video "${STAGE1_TASK}" "${STAGE1_RUN_PREFIX}")"
-STAGE2_VIDEO="$(record_video "${STAGE2_TASK}" "${STAGE2_RUN_PREFIX}")"
+STAGE1_RESULT="$(record_video "stage1" "${STAGE1_TASK}" "${STAGE1_RUN_PREFIX}")"
+STAGE2_RESULT="$(record_video "stage2" "${STAGE2_TASK}" "${STAGE2_RUN_PREFIX}")"
+
+STAGE1_VIDEO="${STAGE1_RESULT%%|*}"
+STAGE1_VIDEO_STABLE="${STAGE1_RESULT#*|}"
+STAGE2_VIDEO="${STAGE2_RESULT%%|*}"
+STAGE2_VIDEO_STABLE="${STAGE2_RESULT#*|}"
+
+cat > "${MANIFEST_PATH}" <<EOF
+STAGE1_VIDEO=${STAGE1_VIDEO}
+STAGE1_VIDEO_STABLE=${STAGE1_VIDEO_STABLE}
+STAGE2_VIDEO=${STAGE2_VIDEO}
+STAGE2_VIDEO_STABLE=${STAGE2_VIDEO_STABLE}
+EOF
 
 echo "STAGE1_VIDEO=${STAGE1_VIDEO}"
+echo "STAGE1_VIDEO_STABLE=${STAGE1_VIDEO_STABLE}"
 echo "STAGE2_VIDEO=${STAGE2_VIDEO}"
+echo "STAGE2_VIDEO_STABLE=${STAGE2_VIDEO_STABLE}"
+echo "VIDEO_MANIFEST=${MANIFEST_PATH}"

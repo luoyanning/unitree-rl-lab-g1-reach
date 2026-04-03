@@ -91,6 +91,12 @@ if [[ ! -d "${ISAACLAB_ROOT}" && -d "${REPO_ROOT}/../IsaacLab" ]]; then
 fi
 export ISAACLAB_PATH="${ISAACLAB_ROOT}"
 
+ISAACSIM_SETUP_CONDA_ENV_SH="${ISAACLAB_ROOT}/_isaac_sim/setup_conda_env.sh"
+if [[ -f "${ISAACSIM_SETUP_CONDA_ENV_SH}" ]]; then
+    # shellcheck disable=SC1090
+    source "${ISAACSIM_SETUP_CONDA_ENV_SH}"
+fi
+
 EXPORT_ROOT="${REPO_ROOT}/logs/video_exports"
 mkdir -p "${EXPORT_ROOT}"
 MANIFEST_PATH="${EXPORT_ROOT}/latest_two_stage_videos.txt"
@@ -197,6 +203,7 @@ record_video() {
     echo "Checkpoint: ${checkpoint}" >&2
     echo "Video dir: ${video_dir}" >&2
     echo "Python: $(command -v python)" >&2
+    echo "ISAACLAB_PATH: ${ISAACLAB_PATH}" >&2
     echo "====================================================================" >&2
 
     mapfile -t play_cmd < <(build_play_command)

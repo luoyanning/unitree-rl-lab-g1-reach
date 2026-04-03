@@ -23,9 +23,9 @@ STATIC_TARGET_HOLD_S = 1.0e9
 TABLE_TOP_BLOCK_Z = 0.805
 TABLETOP_BLOCK_NAMES = tuple(f"target_block_{index}" for index in range(3))
 TABLETOP_BLOCK_LAYOUT = (
-    ((0.58, 0.25, TABLE_TOP_BLOCK_Z), (0.90, 0.38, 0.24)),
-    ((0.73, 0.16, TABLE_TOP_BLOCK_Z), (0.24, 0.68, 0.90)),
-    ((0.88, 0.07, TABLE_TOP_BLOCK_Z), (0.26, 0.64, 0.40)),
+    ((0.64, 0.21, TABLE_TOP_BLOCK_Z), (0.90, 0.38, 0.24)),
+    ((0.64, 0.00, TABLE_TOP_BLOCK_Z), (0.24, 0.68, 0.90)),
+    ((0.64, -0.21, TABLE_TOP_BLOCK_Z), (0.26, 0.64, 0.40)),
     ((2.00, -2.00, -1.00), (0.20, 0.20, 0.20)),
 )
 SUPPORT_CONTACT_BODY_REGEX = r"^(pelvis|torso_link|waist.*)$"

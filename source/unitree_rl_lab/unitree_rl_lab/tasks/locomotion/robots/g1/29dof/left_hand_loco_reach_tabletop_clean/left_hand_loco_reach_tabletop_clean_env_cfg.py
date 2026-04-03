@@ -405,7 +405,7 @@ def _set_task_params(env_cfg: RobotLeftHandLocoReachTableTopCleanBaseEnvCfg, **u
         env_cfg.terminations.target_quota,
         env_cfg.terminations.target_timeout,
     ):
-        term_cfg.params.update(updates)
+        _update_term_params_filtered(term_cfg, updates)
 
 
 def _update_term_params_filtered(term_cfg, updates):

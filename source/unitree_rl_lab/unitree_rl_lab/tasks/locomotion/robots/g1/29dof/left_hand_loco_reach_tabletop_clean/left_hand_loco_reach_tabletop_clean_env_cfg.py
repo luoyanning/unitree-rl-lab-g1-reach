@@ -112,7 +112,6 @@ def _make_task_params(
     scene_target_names: tuple[str, ...],
     randomize_order: bool,
     max_targets_per_episode: int,
-    complete_on_final_touch: bool = False,
     per_target_timeout_s: float,
     pretouch_backoff_x: float,
     pretouch_height: float,
@@ -124,7 +123,6 @@ def _make_task_params(
         "scene_target_names": scene_target_names,
         "randomize_order": randomize_order,
         "max_targets_per_episode": max_targets_per_episode,
-        "complete_on_final_touch": complete_on_final_touch,
         "per_target_timeout_s": per_target_timeout_s,
         "stance_anchor_xy": STANCE_ANCHOR_XY,
         "stance_anchor_std": 0.05,
@@ -382,9 +380,20 @@ class RobotLeftHandLocoReachTableTopCleanBaseEnvCfg(RobotEnvCfg):
 
 
 def _set_task_params(env_cfg: RobotLeftHandLocoReachTableTopCleanBaseEnvCfg, **updates):
+    observation_updates = {}
+    if "complete_on_final_touch" in updates:
+        observation_updates["complete_on_final_touch"] = updates["complete_on_final_touch"]
+        updates = {key: value for key, value in updates.items() if key != "complete_on_final_touch"}
+
     for term_cfg in (
         env_cfg.observations.policy.velocity_commands,
         env_cfg.observations.critic.velocity_commands,
+    ):
+        _update_term_params_filtered(term_cfg, updates)
+        if observation_updates:
+            _update_term_params_filtered(term_cfg, observation_updates)
+
+    for term_cfg in (
         env_cfg.rewards.stance_anchor,
         env_cfg.rewards.stance_stability,
         env_cfg.rewards.backward_drift,

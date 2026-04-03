@@ -696,7 +696,6 @@ _COMMON_TERM_PARAM_NAMES = (
     "scene_target_names",
     "randomize_order",
     "max_targets_per_episode",
-    "complete_on_final_touch",
     "per_target_timeout_s",
     "stance_anchor_xy",
     "stance_anchor_std",

@@ -17,6 +17,7 @@ from ..left_hand_loco_reach_adapter_hold_stay.left_hand_loco_reach_adapter_hold_
     RobotLeftHandLocoReachAdapterHoldStayEnvCfg,
 )
 from . import left_hand_loco_reach_tabletop_touch_mdp as tabletop_touch_mdp
+from . import left_hand_loco_reach_tabletop_touch_v1_mdp as v1_mdp
 from ..velocity_env_cfg import RobotSceneCfg
 
 
@@ -574,3 +575,271 @@ class RobotLeftHandLocoReachTableTopTouchStandTouchPlayEnvCfg(RobotLeftHandLocoR
         self.scene.num_envs = 16
         self.observations.policy.enable_corruption = False
         self.events.reset_base.params["pose_range"] = {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)}
+
+
+# =============================================================================
+# V1 — Clean from-scratch single-block touch (Stage 1)
+# =============================================================================
+# Design rationale:
+#   • No bootstrap blending, no observation phase-switching.
+#   • Hand-approach reward is ALWAYS active (no workspace gate).
+#   • Three reward layers: dense exponential approach, per-step progress,
+#     sparse completion bonus.
+#   • Body-table contact → hard termination.
+#   • Single fixed block (target_block_0).  Robot at fixed start pose.
+# =============================================================================
+
+_V1_TASK_PARAMS = {
+    "touch_radius": 0.065,
+    "touch_hold_steps": 5,
+    "touch_z_offset": 0.025,
+}
+
+_V1_STALE_REWARDS = (
+    # from hold-stay parent
+    "post_success_stay",
+    "dwell_left_hand_stillness",
+    "near_success_action_penalty",
+    "ready_reach_right_arm_neutral",
+    "ready_reach_stationary",
+    "ready_reach_left_hand_stillness",
+    "ready_reach_left_hand_vertical_motion",
+    "ready_reach_left_arm_joint_acc",
+    "ready_reach_foot_shuffle",
+    # from tabletop parent
+    "base_target_stance",
+    "stance_ready",
+    "stance_progress",
+    "right_arm_balance_posture",
+    "pre_stance_torso_lean",
+    "pre_stance_waist_twist",
+    "pre_stance_arm_extension",
+    "pre_stance_foot_motion",
+    "hand_phase_progress",
+    "pretouch_ready_bonus",
+    "target_completion",
+    "target_hold",
+    "near_target_left_hand_stillness",
+    "left_hand_position_tracking",
+    "left_hand_position_tracking_fine",
+    "success_posture_bonus",
+)
+
+_V1_STALE_TERMINATIONS = (
+    "target_quota",
+    "target_timeout",
+)
+
+
+@configclass
+class RobotLeftHandLocoReachTableTopTouchV1EnvCfg(RobotLeftHandLocoReachTableTopTouchEnvCfg):
+    """
+    Stage-1 tabletop touch: fixed single block, clean reward stack.
+
+    The robot starts directly in front of block_0.  The only task is: extend
+    the left arm and touch the block top.  No phase gating, no workspace
+    requirement, no bootstrap blending.
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # ---- scene / episode ------------------------------------------------
+        self.left_hand_scene_target_names = ("target_block_0",)
+        self.left_hand_scene_target_randomize_order = False
+        self.tabletop_bootstrap_enabled = False
+        self.episode_length_s = 12.0
+        self.scene.robot.init_state.pos = (0.18, 0.0, 0.8)
+        self.scene.robot.init_state.rot = (1.0, 0.0, 0.0, 0.0)
+
+        # Tight reset: robot always starts at the same pose so it can learn
+        # pure arm control first.
+        self.events.reset_base.params["pose_range"] = {
+            "x": (-0.005, 0.005),
+            "y": (-0.008, 0.008),
+            "yaw": (-0.02, 0.02),
+        }
+        self.events.reset_base.params["velocity_range"] = {
+            "x": (0.0, 0.0), "y": (0.0, 0.0), "z": (0.0, 0.0),
+            "roll": (0.0, 0.0), "pitch": (0.0, 0.0), "yaw": (0.0, 0.0),
+        }
+        self.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
+
+        # ---- observation: clean target vector (no phase switching) ----------
+        self.observations.policy.velocity_commands = ObsTerm(
+            func=v1_mdp.target_pos_v1_obs,
+            params=_V1_TASK_PARAMS,
+        )
+        self.observations.critic.velocity_commands = ObsTerm(
+            func=v1_mdp.target_pos_v1_obs,
+            params=_V1_TASK_PARAMS,
+        )
+
+        # ---- null all stale rewards from parent chain -----------------------
+        for name in _V1_STALE_REWARDS:
+            if hasattr(self.rewards, name):
+                setattr(self.rewards, name, None)
+
+        # ---- base-class locomotion rewards: adjust for standing task --------
+        # velocity tracking rewards → zero (robot should stay still)
+        self.rewards.track_lin_vel_xy.weight = 0.0
+        self.rewards.track_ang_vel_z.weight = 0.0
+
+        # restore simple action_rate (parent replaced with near_target version)
+        self.rewards.action_rate = RewTerm(
+            func=mdp.action_rate_l2, weight=-0.01,
+        )
+
+        # Allow arm movement: null the base joint_deviation_arms penalty
+        # (gait/feet_clearance already None from parent)
+        if hasattr(self.rewards, "joint_deviation_arms") and self.rewards.joint_deviation_arms is not None:
+            self.rewards.joint_deviation_arms = None
+
+        # Tune kept base-class rewards for standing
+        self.rewards.alive.weight = 0.2
+        self.rewards.base_linear_velocity.weight = -1.0
+        self.rewards.flat_orientation_l2.weight = -3.0
+        self.rewards.base_height.weight = -5.0
+        self.rewards.base_height.params["target_height"] = 0.78
+        self.rewards.joint_deviation_legs.weight = -0.5
+        self.rewards.joint_deviation_waists.weight = -0.3
+        self.rewards.feet_slide.weight = -0.1
+
+        # undesired_contacts: penalise body touching table (exclude left wrist
+        # and ankles — wrist is the touch organ, ankles are normal ground
+        # contact).
+        _no_wrist_no_ankle = (
+            r"^(?!left_ankle_roll_link$)(?!right_ankle_roll_link$)"
+            r"(?!left_wrist_yaw_link$).+$"
+        )
+        self.rewards.undesired_contacts.params["sensor_cfg"] = SceneEntityCfg(
+            "contact_forces", body_names=[_no_wrist_no_ankle],
+        )
+        self.rewards.undesired_contacts.params["threshold"] = 1.0
+        self.rewards.undesired_contacts.weight = -1.5
+
+        # ---- V1-specific rewards --------------------------------------------
+        self.rewards.v1_hand_approach = RewTerm(
+            func=v1_mdp.hand_approach_reward,
+            weight=8.0,
+            params={**_V1_TASK_PARAMS, "reach_std": 0.12},
+        )
+        self.rewards.v1_approach_progress = RewTerm(
+            func=v1_mdp.approach_progress_reward,
+            weight=3.0,
+            params={**_V1_TASK_PARAMS, "progress_scale": 0.04},
+        )
+        self.rewards.v1_touch_in_zone = RewTerm(
+            func=v1_mdp.touch_in_zone_reward,
+            weight=5.0,
+            params=_V1_TASK_PARAMS,
+        )
+        self.rewards.v1_touch_completion = RewTerm(
+            func=v1_mdp.touch_completion_bonus,
+            weight=20.0,
+            params=_V1_TASK_PARAMS,
+        )
+
+        # ---- null stale terminations, add clean ones ------------------------
+        for name in _V1_STALE_TERMINATIONS:
+            if hasattr(self.terminations, name):
+                setattr(self.terminations, name, None)
+
+        # Standard fall terminations (kept from base)
+        self.terminations.base_height.params["minimum_height"] = 0.16
+        self.terminations.bad_orientation.params["limit_angle"] = 0.8
+
+        # Hard termination: torso / waist leans on table
+        self.terminations.body_support_contact = DoneTerm(
+            func=mdp.illegal_contact,
+            params={
+                "sensor_cfg": SceneEntityCfg(
+                    "contact_forces",
+                    body_names=list(TABLETOP_HARD_SUPPORT_CONTACT_BODY_NAMES),
+                ),
+                "threshold": 5.0,
+            },
+        )
+
+        # ---- viewer ---------------------------------------------------------
+        self.viewer.origin_type = "world"
+        self.viewer.eye = (2.8, -2.8, 1.9)
+        self.viewer.lookat = (0.84, 0.08, 0.88)
+
+
+@configclass
+class RobotLeftHandLocoReachTableTopTouchV1PlayEnvCfg(RobotLeftHandLocoReachTableTopTouchV1EnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 16
+        self.observations.policy.enable_corruption = False
+        self.events.reset_base.params["pose_range"] = {
+            "x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0),
+        }
+
+
+# =============================================================================
+# V2 — single block, slight robot start-position randomisation (Stage 2)
+# =============================================================================
+# Same reward stack as V1 but the robot's x/y start is randomised over a
+# ±6 cm window, which effectively varies the relative block position and
+# forces the policy to generalise beyond a single fixed geometry.
+# =============================================================================
+
+@configclass
+class RobotLeftHandLocoReachTableTopTouchV2EnvCfg(RobotLeftHandLocoReachTableTopTouchV1EnvCfg):
+    """
+    Stage-2 tabletop touch: same clean rewards as V1 but with wider robot
+    start randomisation so the policy must generalise to slightly different
+    hand-to-block offsets.
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Widen start randomisation: ±6 cm in x/y, ±8° in yaw
+        self.events.reset_base.params["pose_range"] = {
+            "x": (-0.06, 0.06),
+            "y": (-0.06, 0.06),
+            "yaw": (-0.14, 0.14),
+        }
+
+        # Slightly tighter touch radius and longer hold for V2
+        _v2_params = {
+            "touch_radius": 0.055,
+            "touch_hold_steps": 6,
+            "touch_z_offset": 0.025,
+        }
+        self.observations.policy.velocity_commands = ObsTerm(
+            func=v1_mdp.target_pos_v1_obs,
+            params=_v2_params,
+        )
+        self.observations.critic.velocity_commands = ObsTerm(
+            func=v1_mdp.target_pos_v1_obs,
+            params=_v2_params,
+        )
+        for rname in (
+            "v1_hand_approach",
+            "v1_approach_progress",
+            "v1_touch_in_zone",
+            "v1_touch_completion",
+        ):
+            rew = getattr(self.rewards, rname, None)
+            if rew is not None and hasattr(rew, "params"):
+                rew.params.update(_v2_params)
+
+        for tname in ("body_support_contact",):
+            term = getattr(self.terminations, tname, None)
+            if term is not None and hasattr(term, "params"):
+                term.params.update(_v2_params)
+
+
+@configclass
+class RobotLeftHandLocoReachTableTopTouchV2PlayEnvCfg(RobotLeftHandLocoReachTableTopTouchV2EnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 16
+        self.observations.policy.enable_corruption = False
+        self.events.reset_base.params["pose_range"] = {
+            "x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0),
+        }

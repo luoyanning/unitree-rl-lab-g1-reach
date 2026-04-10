@@ -10,6 +10,7 @@ import math
 import os
 import statistics
 import time
+from html import escape
 from collections import defaultdict
 from datetime import datetime
 
@@ -125,6 +126,19 @@ parser.add_argument(
     default=False,
     help="Use a fixed world camera instead of following the robot.",
 )
+parser.add_argument(
+    "--save_trajectory_plots",
+    action="store_true",
+    default=False,
+    help="Save one top-down XY trajectory plot per evaluated episode.",
+)
+parser.add_argument(
+    "--trajectory_plot_format",
+    type=str,
+    default="svg",
+    choices=["png", "pdf", "svg"],
+    help="File format for --save_trajectory_plots outputs.",
+)
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time if possible.")
 cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
@@ -163,6 +177,8 @@ SUCCESS_DISTANCE = point_goal_env_cfg.SUCCESS_DISTANCE
 SUCCESS_DISTANCE_START = point_goal_env_cfg.SUCCESS_DISTANCE_START
 SUCCESS_HOLD_STEPS = point_goal_env_cfg.SUCCESS_HOLD_STEPS
 SUCCESS_HOLD_STEPS_START = point_goal_env_cfg.SUCCESS_HOLD_STEPS_START
+
+_PYPLOT = None
 
 
 def _parse_float_list(raw: str) -> list[float]:
@@ -264,6 +280,109 @@ def _print_summary(title: str, summary: dict[str, float]):
     print(title)
     for key, value in summary.items():
         print(f"  {key}: {_format_metric(value)}")
+
+
+def _get_pyplot():
+    global _PYPLOT
+    if _PYPLOT is None:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        _PYPLOT = plt
+    return _PYPLOT
+
+
+def _trajectory_plot_path(output_dir: str, case_index: int, case: dict[str, float], episode_index: int) -> str:
+    angle_token = f"{case['angle_deg']:+07.2f}".replace("+", "p").replace("-", "m").replace(".", "p")
+    distance_token = f"{case['distance_m']:.2f}".replace(".", "p")
+    filename = (
+        f"case_{case_index:04d}_episode_{episode_index:03d}"
+        f"_r{distance_token}_a{angle_token}.{args_cli.trajectory_plot_format}"
+    )
+    return os.path.join(output_dir, "trajectory_plots", filename)
+
+
+def _save_trajectory_plot(
+    output_dir: str,
+    case_index: int,
+    case: dict[str, float],
+    episode_index: int,
+    trajectory_xy: list[tuple[float, float]],
+    record: dict,
+):
+    if len(trajectory_xy) < 2:
+        return
+    plot_dir = os.path.join(output_dir, "trajectory_plots")
+    os.makedirs(plot_dir, exist_ok=True)
+
+    xs = [point[0] for point in trajectory_xy]
+    ys = [point[1] for point in trajectory_xy]
+    goal_x = float(case["goal_x_m"])
+    goal_y = float(case["goal_y_m"])
+    margin = 0.35
+    extent = max(max(abs(value) for value in xs + [goal_x]), max(abs(value) for value in ys + [goal_y]), 0.5) + margin
+    plot_path = _trajectory_plot_path(output_dir, case_index, case, episode_index)
+    if args_cli.trajectory_plot_format == "svg":
+        width = 800
+        height = 800
+        padding = 70
+        scale = (width - 2 * padding) / (2.0 * extent)
+
+        def project(point_x: float, point_y: float) -> tuple[float, float]:
+            pixel_x = padding + (point_x + extent) * scale
+            pixel_y = height - (padding + (point_y + extent) * scale)
+            return pixel_x, pixel_y
+
+        polyline_points = " ".join(f"{project(x, y)[0]:.2f},{project(x, y)[1]:.2f}" for x, y in trajectory_xy)
+        start_px = project(0.0, 0.0)
+        final_px = project(xs[-1], ys[-1])
+        goal_px = project(goal_x, goal_y)
+        reach_radius_px = args_cli.reach_distance * scale
+        title = (
+            f"r={case['distance_m']:.2f}m, angle={case['angle_deg']:+.1f}deg | "
+            f"final={record['final_error_m']:.3f}m, stop={record['stop_20cm']}, fall={record['fall']}"
+        )
+        svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+  <rect width="100%" height="100%" fill="white"/>
+  <text x="{width / 2:.1f}" y="32" text-anchor="middle" font-family="monospace" font-size="18">{escape(title)}</text>
+  <line x1="{padding}" y1="{height / 2:.2f}" x2="{width - padding}" y2="{height / 2:.2f}" stroke="#dddddd" stroke-width="1"/>
+  <line x1="{width / 2:.2f}" y1="{padding}" x2="{width / 2:.2f}" y2="{height - padding}" stroke="#dddddd" stroke-width="1"/>
+  <line x1="{start_px[0]:.2f}" y1="{start_px[1]:.2f}" x2="{goal_px[0]:.2f}" y2="{goal_px[1]:.2f}" stroke="#d62728" stroke-width="2" stroke-dasharray="7 6" opacity="0.45"/>
+  <circle cx="{goal_px[0]:.2f}" cy="{goal_px[1]:.2f}" r="{reach_radius_px:.2f}" fill="none" stroke="#d62728" stroke-width="2" stroke-dasharray="3 5" opacity="0.55"/>
+  <polyline points="{polyline_points}" fill="none" stroke="#1f77b4" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="{start_px[0]:.2f}" cy="{start_px[1]:.2f}" r="8" fill="#2ca02c"/>
+  <circle cx="{final_px[0]:.2f}" cy="{final_px[1]:.2f}" r="7" fill="#1f77b4"/>
+  <polygon points="{goal_px[0]:.2f},{goal_px[1] - 14:.2f} {goal_px[0] + 4:.2f},{goal_px[1] - 4:.2f} {goal_px[0] + 14:.2f},{goal_px[1] - 4:.2f} {goal_px[0] + 6:.2f},{goal_px[1] + 3:.2f} {goal_px[0] + 9:.2f},{goal_px[1] + 14:.2f} {goal_px[0]:.2f},{goal_px[1] + 8:.2f} {goal_px[0] - 9:.2f},{goal_px[1] + 14:.2f} {goal_px[0] - 6:.2f},{goal_px[1] + 3:.2f} {goal_px[0] - 14:.2f},{goal_px[1] - 4:.2f} {goal_px[0] - 4:.2f},{goal_px[1] - 4:.2f}" fill="#d62728"/>
+  <text x="{padding}" y="{height - 28}" font-family="monospace" font-size="14" fill="#555555">green=start, blue=final, red=target, dotted=reach radius</text>
+</svg>
+"""
+        with open(plot_path, "w", encoding="utf-8") as plot_file:
+            plot_file.write(svg)
+        return
+
+    plt = _get_pyplot()
+    fig, ax = plt.subplots(figsize=(6, 6), constrained_layout=True)
+    ax.plot(xs, ys, color="#1f77b4", linewidth=1.8, label="trajectory")
+    ax.scatter([0.0], [0.0], color="#2ca02c", s=45, label="start", zorder=3)
+    ax.scatter([xs[-1]], [ys[-1]], color="#1f77b4", s=35, label="final", zorder=3)
+    ax.scatter([goal_x], [goal_y], color="#d62728", marker="*", s=140, label="target", zorder=4)
+    ax.plot([0.0, goal_x], [0.0, goal_y], color="#d62728", linestyle="--", linewidth=1.0, alpha=0.45)
+    ax.add_patch(plt.Circle((goal_x, goal_y), args_cli.reach_distance, color="#d62728", fill=False, linestyle=":", alpha=0.55))
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlim(-extent, extent)
+    ax.set_ylim(-extent, extent)
+    ax.grid(True, linestyle=":", linewidth=0.7, alpha=0.5)
+    ax.set_xlabel("x from reset origin (m)")
+    ax.set_ylabel("y from reset origin (m)")
+    ax.set_title(
+        f"r={case['distance_m']:.2f}m, angle={case['angle_deg']:+.1f}deg | "
+        f"final={record['final_error_m']:.3f}m, stop={record['stop_20cm']}, fall={record['fall']}"
+    )
+    ax.legend(loc="upper right", fontsize=8)
+    fig.savefig(plot_path, dpi=160)
+    plt.close(fig)
 
 
 def _configure_benchmark_env(env_cfg, timeout_s: float):
@@ -466,6 +585,8 @@ def main():
     resume_path = _resolve_checkpoint_path(agent_cfg)
     output_dir = _get_output_dir(resume_path)
     os.makedirs(output_dir, exist_ok=True)
+    if args_cli.save_trajectory_plots:
+        os.makedirs(os.path.join(output_dir, "trajectory_plots"), exist_ok=True)
 
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
     if isinstance(env.unwrapped, DirectMARLEnv):
@@ -515,6 +636,9 @@ def main():
     if args_cli.layout == "rings" and args_cli.case_distance is None:
         print(f"  points_per_ring: {args_cli.points_per_ring}")
         print(f"  ring_angle_offset_deg: {args_cli.ring_angle_offset_deg:.2f}")
+    if args_cli.save_trajectory_plots:
+        print(f"  trajectory_plots: {os.path.join(output_dir, 'trajectory_plots')}")
+        print(f"  trajectory_plot_format: {args_cli.trajectory_plot_format}")
     print(f"  timeout_s: {args_cli.timeout_s:.2f}")
     print(f"  benchmark_progress: {args_cli.benchmark_progress:.3f}")
     for key, value in applied_schedule.items():
@@ -539,6 +663,7 @@ def main():
 
         while remaining > 0:
             batch_size = min(remaining, num_envs)
+            episode_base_index = args_cli.episodes_per_case - remaining
             active_mask = torch.zeros(num_envs, dtype=torch.bool, device=base_env.device)
             active_mask[:batch_size] = True
             obs = _maybe_tuple_obs(vec_env.reset())
@@ -550,6 +675,10 @@ def main():
             last_root_pos = robot.data.root_pos_w[:, :2].clone()
             start_distance = torch.linalg.norm(goal_pos_w[:, :2] - last_root_pos, dim=-1)
             current_heading_error = torch.abs(command_term.metrics["goal_heading_error"]).clone()
+            trajectories_xy = None
+            if args_cli.save_trajectory_plots:
+                local_root_pos = (last_root_pos[:batch_size] - env_origins_xy[:batch_size]).detach().cpu().tolist()
+                trajectories_xy = [[(float(point[0]), float(point[1]))] for point in local_root_pos]
 
             path_length = torch.zeros(num_envs, device=base_env.device)
             min_error = start_distance.clone()
@@ -586,6 +715,13 @@ def main():
                     obs, _, _, _ = vec_env.step(actions)
 
                 root_pos = robot.data.root_pos_w[:, :2].clone()
+                if trajectories_xy is not None:
+                    local_root_pos = (root_pos[:batch_size] - env_origins_xy[:batch_size]).detach().cpu().tolist()
+                    alive_for_plot = (~fall[:batch_size]).detach().cpu().tolist()
+                    for env_id, point in enumerate(local_root_pos):
+                        if alive_for_plot[env_id]:
+                            trajectories_xy[env_id].append((float(point[0]), float(point[1])))
+
                 root_lin_speed = torch.linalg.norm(robot.data.root_lin_vel_w[:, :2], dim=-1)
                 yaw_rate = torch.abs(robot.data.root_ang_vel_w[:, 2])
                 root_height = robot.data.root_pos_w[:, 2]
@@ -684,42 +820,50 @@ def main():
                 path_length_value = float(path_length[env_id].item())
                 start_distance_value = float(start_distance[env_id].item())
                 path_efficiency = min(start_distance_value / max(path_length_value, 1.0e-6), 1.0) if path_length_value > 0.0 else 0.0
-                case_records.append(
-                    {
-                        "case_index": float(case_index),
-                        "point_index": float(case["point_index"]),
-                        "distance_m": float(case["distance_m"]),
-                        "angle_deg": float(case["angle_deg"]),
-                        "start_distance_m": start_distance_value,
-                        "reach_20cm": bool(reach_20cm[env_id].item()),
-                        "stop_20cm": bool(stop_20cm[env_id].item()),
-                        "precise_stop_10cm": bool(precise_stop_10cm[env_id].item()),
-                        "heading_align_15deg": bool(heading_align_15deg[env_id].item()),
-                        "fall": bool(fall[env_id].item()),
-                        "timeout": bool(timeout[env_id].item()),
-                        "overshoot": bool(overshoot[env_id].item()),
-                        "min_error_m": float(min_error[env_id].item()),
-                        "final_error_m": float(final_error[env_id].item()),
-                        "final_stop_error_m": float(final_stop_error[env_id].item()),
-                        "final_radius_error_m": float(final_radius_error[env_id].item()),
-                        "final_stop_radius_error_m": float(final_stop_radius_error[env_id].item()),
-                        "final_target_bearing_error_deg": float(final_target_bearing_error[env_id].item()),
-                        "final_stop_target_bearing_error_deg": float(final_stop_target_bearing_error[env_id].item()),
-                        "time_to_reach_20cm_s": float(time_to_reach_20cm[env_id].item()),
-                        "time_to_stop_20cm_s": float(time_to_stop_20cm[env_id].item()),
-                        "time_to_precise_stop_10cm_s": float(time_to_precise_stop_10cm[env_id].item()),
-                        "time_to_heading_align_15deg_s": float(time_to_heading_align_15deg[env_id].item()),
-                        "path_length_m": path_length_value,
-                        "path_efficiency": float(path_efficiency),
-                        "min_heading_error_deg": float(torch.rad2deg(min_heading_error[env_id]).item()),
-                        "final_heading_error_deg": float(torch.rad2deg(final_heading_error[env_id]).item()),
-                        "final_stop_heading_error_deg": float(final_stop_heading_error[env_id].item()),
-                        "final_along_track_error_m": float(final_along_error[env_id].item()),
-                        "final_cross_track_error_m": float(final_cross_error[env_id].item()),
-                        "final_stop_along_track_error_m": float(final_stop_along_error[env_id].item()),
-                        "final_stop_cross_track_error_m": float(final_stop_cross_error[env_id].item()),
-                    }
-                )
+                record = {
+                    "case_index": float(case_index),
+                    "point_index": float(case["point_index"]),
+                    "distance_m": float(case["distance_m"]),
+                    "angle_deg": float(case["angle_deg"]),
+                    "start_distance_m": start_distance_value,
+                    "reach_20cm": bool(reach_20cm[env_id].item()),
+                    "stop_20cm": bool(stop_20cm[env_id].item()),
+                    "precise_stop_10cm": bool(precise_stop_10cm[env_id].item()),
+                    "heading_align_15deg": bool(heading_align_15deg[env_id].item()),
+                    "fall": bool(fall[env_id].item()),
+                    "timeout": bool(timeout[env_id].item()),
+                    "overshoot": bool(overshoot[env_id].item()),
+                    "min_error_m": float(min_error[env_id].item()),
+                    "final_error_m": float(final_error[env_id].item()),
+                    "final_stop_error_m": float(final_stop_error[env_id].item()),
+                    "final_radius_error_m": float(final_radius_error[env_id].item()),
+                    "final_stop_radius_error_m": float(final_stop_radius_error[env_id].item()),
+                    "final_target_bearing_error_deg": float(final_target_bearing_error[env_id].item()),
+                    "final_stop_target_bearing_error_deg": float(final_stop_target_bearing_error[env_id].item()),
+                    "time_to_reach_20cm_s": float(time_to_reach_20cm[env_id].item()),
+                    "time_to_stop_20cm_s": float(time_to_stop_20cm[env_id].item()),
+                    "time_to_precise_stop_10cm_s": float(time_to_precise_stop_10cm[env_id].item()),
+                    "time_to_heading_align_15deg_s": float(time_to_heading_align_15deg[env_id].item()),
+                    "path_length_m": path_length_value,
+                    "path_efficiency": float(path_efficiency),
+                    "min_heading_error_deg": float(torch.rad2deg(min_heading_error[env_id]).item()),
+                    "final_heading_error_deg": float(torch.rad2deg(final_heading_error[env_id]).item()),
+                    "final_stop_heading_error_deg": float(final_stop_heading_error[env_id].item()),
+                    "final_along_track_error_m": float(final_along_error[env_id].item()),
+                    "final_cross_track_error_m": float(final_cross_error[env_id].item()),
+                    "final_stop_along_track_error_m": float(final_stop_along_error[env_id].item()),
+                    "final_stop_cross_track_error_m": float(final_stop_cross_error[env_id].item()),
+                }
+                case_records.append(record)
+                if trajectories_xy is not None:
+                    _save_trajectory_plot(
+                        output_dir,
+                        case_index,
+                        case,
+                        episode_base_index + env_id,
+                        trajectories_xy[env_id],
+                        record,
+                    )
 
             remaining -= batch_size
 
@@ -781,6 +925,9 @@ def main():
         "stop_lin_vel_threshold": args_cli.stop_lin_vel_threshold,
         "stop_yaw_rate_threshold": args_cli.stop_yaw_rate_threshold,
         "heading_align_deg": args_cli.heading_align_deg,
+        "save_trajectory_plots": args_cli.save_trajectory_plots,
+        "trajectory_plot_format": args_cli.trajectory_plot_format,
+        "trajectory_plots_dir": os.path.join(output_dir, "trajectory_plots") if args_cli.save_trajectory_plots else None,
         "applied_schedule": applied_schedule,
         "overall_summary": overall_summary,
         "distance_summaries": distance_summaries,
